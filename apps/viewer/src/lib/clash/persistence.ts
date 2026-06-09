@@ -20,6 +20,8 @@ import {
   type ClashRulePreset,
   type ClashMode,
   type ClashSeverity,
+  type PropertyCondition,
+  type PropertyConditionOp,
 } from '@ifc-lite/clash';
 
 /** A built-in or user-defined clash rule preset, with editor/runtime flags. */
@@ -87,6 +89,24 @@ export function validateSelector(selector: string): string | null {
   return t ? t : null;
 }
 
+const CONDITION_OPS: PropertyConditionOp[] = ['=', '!=', '>', '<', '>=', '<=', 'contains', 'exists'];
+
+function isValidCondition(c: unknown): c is PropertyCondition {
+  if (!c || typeof c !== 'object') return false;
+  const r = c as Record<string, unknown>;
+  return (
+    typeof r.pset === 'string' && r.pset.trim().length > 0 &&
+    typeof r.property === 'string' && r.property.trim().length > 0 &&
+    typeof r.op === 'string' && CONDITION_OPS.includes(r.op as PropertyConditionOp)
+  );
+}
+
+function parseConditions(raw: unknown): PropertyCondition[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const valid = raw.filter(isValidCondition);
+  return valid.length > 0 ? valid : undefined;
+}
+
 function isValidStoredPreset(p: unknown): p is ClashPreset {
   if (!p || typeof p !== 'object') return false;
   const r = p as Record<string, unknown>;
@@ -112,16 +132,21 @@ function readStoredPresets(): ClashPreset[] {
         : [];
     return list
       .filter(isValidStoredPreset)
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        description: typeof p.description === 'string' ? p.description : '',
-        severity: p.severity,
-        selectorA: p.selectorA,
-        selectorB: p.selectorB,
-        enabled: p.enabled !== false,
-        builtin: BUILTIN_PRESET_IDS.has(p.id),
-      }));
+      .map((p) => {
+        const r = p as unknown as Record<string, unknown>;
+        return {
+          id: p.id,
+          name: p.name,
+          description: typeof p.description === 'string' ? p.description : '',
+          severity: p.severity,
+          selectorA: p.selectorA,
+          selectorB: p.selectorB,
+          enabled: p.enabled !== false,
+          builtin: BUILTIN_PRESET_IDS.has(p.id),
+          ...( parseConditions(r.whereA) ? { whereA: parseConditions(r.whereA) } : {}),
+          ...( parseConditions(r.whereB) ? { whereB: parseConditions(r.whereB) } : {}),
+        };
+      });
   } catch {
     return [];
   }
@@ -155,6 +180,15 @@ export function buildInitialPresets(): ClashPreset[] {
   return mergeStoredPresets(readStoredPresets());
 }
 
+function conditionsEqual(a: PropertyCondition[] | undefined, b: PropertyCondition[] | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((ca, i) => {
+    const cb = b[i];
+    return ca.pset === cb.pset && ca.property === cb.property && ca.op === cb.op && ca.value === cb.value;
+  });
+}
+
 function builtinDiffersFromDefault(p: ClashPreset): boolean {
   const orig = CLASH_RULE_PRESETS.find((b) => b.id === p.id);
   if (!orig) return true;
@@ -164,7 +198,9 @@ function builtinDiffersFromDefault(p: ClashPreset): boolean {
     p.severity !== orig.severity ||
     p.selectorA !== orig.selectorA ||
     p.selectorB !== orig.selectorB ||
-    p.description !== orig.description
+    p.description !== orig.description ||
+    !conditionsEqual(p.whereA, orig.whereA) ||
+    !conditionsEqual(p.whereB, orig.whereB)
   );
 }
 
@@ -294,15 +330,20 @@ export function deserializeClashConfig(blob: unknown): { presets: ClashPreset[];
   if (!blob || typeof blob !== 'object') return null;
   const b = blob as Partial<ClashFlavorConfig>;
   const storedRaw = Array.isArray(b.presets) ? b.presets : [];
-  const stored = storedRaw.filter(isValidStoredPreset).map((p) => ({
-    id: p.id,
-    name: p.name,
-    description: typeof p.description === 'string' ? p.description : '',
-    severity: p.severity,
-    selectorA: p.selectorA,
-    selectorB: p.selectorB,
-    enabled: p.enabled !== false,
-    builtin: BUILTIN_PRESET_IDS.has(p.id),
-  }));
+  const stored = storedRaw.filter(isValidStoredPreset).map((p) => {
+    const r = p as unknown as Record<string, unknown>;
+    return {
+      id: p.id,
+      name: p.name,
+      description: typeof p.description === 'string' ? p.description : '',
+      severity: p.severity,
+      selectorA: p.selectorA,
+      selectorB: p.selectorB,
+      enabled: p.enabled !== false,
+      builtin: BUILTIN_PRESET_IDS.has(p.id),
+      ...( parseConditions(r.whereA) ? { whereA: parseConditions(r.whereA) } : {}),
+      ...( parseConditions(r.whereB) ? { whereB: parseConditions(r.whereB) } : {}),
+    };
+  });
   return { presets: mergeStoredPresets(stored), settings: normalizeSettings(b.settings) };
 }

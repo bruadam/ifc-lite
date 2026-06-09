@@ -110,17 +110,19 @@ export function useClash() {
   const clear = useViewerStore((s) => s.clearClash);
 
   /** Build clash elements + merged exclusions from every loaded model. */
-  const gatherElements = useCallback((): { elements: ClashElement[]; exclusions: ExclusionSet } => {
+  const gatherElements = useCallback((rules?: ClashRule[]): { elements: ClashElement[]; exclusions: ExclusionSet } => {
     const state = useViewerStore.getState();
     const elements: ClashElement[] = [];
     const exclusions: ExclusionSet = new Set<string>();
     const federation = { toGlobalId: (modelId: string, expressId: number) => state.toGlobalId(modelId, expressId) };
+    // Only load property snapshots when at least one rule needs property conditions.
+    const loadProperties = rules?.some((r) => r.aWhere?.length || r.bWhere?.length) ?? false;
 
     for (const [modelId, model] of state.models) {
       const store = model.ifcDataStore;
       const meshes = model.geometryResult?.meshes;
       if (!store || !meshes || meshes.length === 0) continue;
-      const built = elementsFromStep({ store, meshes, modelId, federation });
+      const built = elementsFromStep({ store, meshes, modelId, federation, loadProperties });
       elements.push(...built.elements);
       for (const key of built.exclusions) exclusions.add(key);
     }
@@ -137,7 +139,7 @@ export function useClash() {
       try {
         // Let the panel paint the running state before the heavy work.
         await new Promise((resolve) => requestAnimationFrame(resolve));
-        const { elements, exclusions } = gatherElements();
+        const { elements, exclusions } = gatherElements(rules);
         if (elements.length === 0) {
           state.setClashError('No model geometry is loaded. Load an IFC model first.');
           return;

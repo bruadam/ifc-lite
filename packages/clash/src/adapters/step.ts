@@ -35,6 +35,12 @@ export interface StepAdapterOptions {
   worldTransform?: Mat4;
   /** Precompute void/host/assembly exclusions. Default true. */
   buildExclusions?: boolean;
+  /**
+   * Populate `ClashElement.properties` from the store's property table.
+   * Off by default to avoid memory overhead when no property conditions are in use.
+   * Enable when at least one rule carries `aWhere`/`bWhere` conditions.
+   */
+  loadProperties?: boolean;
 }
 
 export interface StepAdapterResult {
@@ -43,7 +49,7 @@ export interface StepAdapterResult {
 }
 
 export function elementsFromStep(options: StepAdapterOptions): StepAdapterResult {
-  const { store, meshes, modelId, federation, worldTransform, buildExclusions = true } = options;
+  const { store, meshes, modelId, federation, worldTransform, buildExclusions = true, loadProperties = false } = options;
 
   const elements: ClashElement[] = [];
   const byExpressId = new Map<number, ClashElement>();
@@ -79,6 +85,24 @@ export function elementsFromStep(options: StepAdapterOptions): StepAdapterResult
       indices: mesh.indices,
       transform: worldTransform,
     };
+
+    if (loadProperties) {
+      const psets = node.properties();
+      if (psets.length > 0) {
+        const snapshot: Record<string, Record<string, string | number | boolean | null>> = {};
+        for (const pset of psets) {
+          if (!pset.name) continue;
+          const propMap: Record<string, string | number | boolean | null> = {};
+          for (const prop of pset.properties) {
+            if (!prop.name) continue;
+            const v = prop.value;
+            propMap[prop.name] = Array.isArray(v) ? null : (v as string | number | boolean | null);
+          }
+          snapshot[pset.name] = propMap;
+        }
+        element.properties = snapshot;
+      }
+    }
 
     elements.push(element);
     byExpressId.set(expressId, element);

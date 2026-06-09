@@ -15,6 +15,7 @@ import {
   type ClashSettings,
   type ClashSeverity,
   type ClashSummary,
+  type PropertyCondition,
 } from '../types.js';
 import type { ClashKernel } from './kernel.js';
 
@@ -57,9 +58,9 @@ export async function runClash(
       const groupA: number[] = [];
       const groupB: number[] | null = rule.b ? [] : null;
       for (let i = 0; i < elements.length; i += 1) {
-        const tag = elements[i].tag;
-        if (matchesSelector(tag, rule.a)) groupA.push(i);
-        if (groupB && matchesSelector(tag, rule.b!)) groupB.push(i);
+        const el = elements[i];
+        if (matchesSelector(el.tag, rule.a) && matchesPropertyConditions(el, rule.aWhere)) groupA.push(i);
+        if (groupB && matchesSelector(el.tag, rule.b!) && matchesPropertyConditions(el, rule.bWhere)) groupB.push(i);
       }
 
       const ruleTolerance = rule.tolerance ?? tolerance;
@@ -150,6 +151,65 @@ function byKeyThenRule(x: Clash, y: Clash): number {
 
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Test whether an element satisfies every property condition (AND-semantics).
+ * Returns `true` immediately when there are no conditions (no-op path).
+ * An element with no `properties` snapshot never satisfies a non-empty list.
+ */
+function matchesPropertyConditions(
+  element: ClashElement,
+  conditions: PropertyCondition[] | undefined,
+): boolean {
+  if (!conditions || conditions.length === 0) return true;
+  const props = element.properties;
+  if (!props) return false;
+  for (const cond of conditions) {
+    const pset = props[cond.pset];
+    if (!pset) return false;
+    if (cond.op === 'exists') {
+      if (pset[cond.property] == null) return false;
+      continue;
+    }
+    const raw = pset[cond.property];
+    if (raw == null) return false;
+    const expected = cond.value;
+    switch (cond.op) {
+      case '=':
+        if (!propEquals(raw, expected)) return false;
+        break;
+      case '!=':
+        if (propEquals(raw, expected)) return false;
+        break;
+      case '>':
+        if (!(Number(raw) > Number(expected))) return false;
+        break;
+      case '<':
+        if (!(Number(raw) < Number(expected))) return false;
+        break;
+      case '>=':
+        if (!(Number(raw) >= Number(expected))) return false;
+        break;
+      case '<=':
+        if (!(Number(raw) <= Number(expected))) return false;
+        break;
+      case 'contains':
+        if (!String(raw).toLowerCase().includes(String(expected ?? '').toLowerCase())) return false;
+        break;
+    }
+  }
+  return true;
+}
+
+function propEquals(raw: string | number | boolean | null, expected: string | number | boolean | undefined): boolean {
+  if (typeof expected === 'boolean') {
+    if (typeof raw === 'boolean') return raw === expected;
+    const s = String(raw).toLowerCase();
+    return expected ? (s === 'true' || s === '1') : (s === 'false' || s === '0');
+  }
+  if (typeof expected === 'number') return Number(raw) === expected;
+  return String(raw).toLowerCase() === String(expected ?? '').toLowerCase();
 }
 
 function buildSummary(clashes: Clash[]): ClashSummary {

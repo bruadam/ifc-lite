@@ -8,7 +8,7 @@
  */
 
 import { matchesSelector } from './selectors.js';
-import type { ClashMode, ClashRule, ClashSeverity } from './types.js';
+import type { ClashMode, ClashRule, ClashSeverity, PropertyCondition } from './types.js';
 
 export type Discipline = 'ARCH' | 'STR' | 'MEP' | 'HVAC' | 'ELEC' | 'FIRE' | 'GEO';
 
@@ -63,6 +63,10 @@ export interface ClashRulePreset {
   severity: ClashSeverity;
   selectorA: string;
   selectorB: string;
+  /** Optional property conditions for group A (AND-combined with selectorA). */
+  whereA?: PropertyCondition[];
+  /** Optional property conditions for group B (AND-combined with selectorB). */
+  whereB?: PropertyCondition[];
 }
 
 export const CLASH_RULE_PRESETS: ClashRulePreset[] = [
@@ -175,6 +179,8 @@ export function rulesFromPresets(
     severity: preset.severity,
     ...(mode === 'clearance' && clearance != null ? { clearance } : {}),
     ...(reportTouch ? { reportTouch: true } : {}),
+    ...(preset.whereA?.length ? { aWhere: preset.whereA } : {}),
+    ...(preset.whereB?.length ? { bWhere: preset.whereB } : {}),
   }));
 }
 

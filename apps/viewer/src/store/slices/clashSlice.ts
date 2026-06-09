@@ -12,7 +12,7 @@
  */
 
 import type { StateCreator } from 'zustand';
-import type { ClashResult, ClashGroup, ClashMode, ClashProgress } from '@ifc-lite/clash';
+import type { ClashResult, ClashGroup, ClashMode, ClashProgress, PropertyCondition } from '@ifc-lite/clash';
 import {
   buildInitialPresets,
   defaultPresets,
@@ -40,6 +40,8 @@ export type NewClashPreset = {
   severity: ClashPreset['severity'];
   selectorA: string;
   selectorB: string;
+  whereA?: PropertyCondition[];
+  whereB?: PropertyCondition[];
 };
 
 export interface ClashSlice {
@@ -180,6 +182,8 @@ export const createClashSlice: StateCreator<ClashSlice, [], [], ClashSlice> = (s
         selectorB,
         enabled: true,
         builtin: false,
+        ...(input.whereA?.length ? { whereA: input.whereA } : {}),
+        ...(input.whereB?.length ? { whereB: input.whereB } : {}),
       };
       const next = [...get().clashPresets, preset];
       const result = savePresets(next);

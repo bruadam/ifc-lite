@@ -25,6 +25,25 @@ export type ClashStatus = 'hard' | 'clearance' | 'touch';
 export type ClashSeverity = 'critical' | 'major' | 'minor' | 'info';
 
 /**
+ * Comparison operator for a property condition.
+ * `exists` checks that the property is present and non-null (no value needed).
+ */
+export type PropertyConditionOp = '=' | '!=' | '>' | '<' | '>=' | '<=' | 'contains' | 'exists';
+
+/**
+ * A single property predicate ANDed with the type selector.
+ * `pset` is the property set name (e.g. `Pset_WallCommon`);
+ * `property` is the property name within that set.
+ */
+export interface PropertyCondition {
+  pset: string;
+  property: string;
+  op: PropertyConditionOp;
+  /** Required for all ops except `exists`. Coerced to the property's native type. */
+  value?: string | number | boolean;
+}
+
+/**
  * A representation-agnostic element fed to the clash core.
  *
  * Identity is deliberately split: a durable `key` (IfcGUID / USD prim path) for
@@ -33,6 +52,11 @@ export type ClashSeverity = 'critical' | 'major' | 'minor' | 'info';
  *
  * `positions`/`indices` are world-frame triangles (the geometry-pipeline frame,
  * Y-up, RTC-shifted). `transform` is identity unless positions are kept local.
+ *
+ * `properties` carries a flat snapshot of property sets keyed as
+ * `{ psetName: { propName: value } }`. Populated by adapters when at least one
+ * rule in the run carries `aWhere`/`bWhere` conditions; absent otherwise to avoid
+ * the memory overhead when no property filtering is needed.
  */
 export interface ClashElement {
   key: string;
@@ -45,6 +69,7 @@ export interface ClashElement {
   positions: Float32Array;
   indices: Uint32Array;
   transform?: Mat4;
+  properties?: Record<string, Record<string, string | number | boolean | null>>;
 }
 
 /** The element identity carried on a `Clash` (no geometry). */
@@ -73,6 +98,10 @@ export interface ClashRule {
   severity?: ClashSeverity;
   /** Emit `touch`-classified results instead of suppressing them. */
   reportTouch?: boolean;
+  /** Additional property conditions for group A (AND-combined with selector `a`). */
+  aWhere?: PropertyCondition[];
+  /** Additional property conditions for group B (AND-combined with selector `b`). */
+  bWhere?: PropertyCondition[];
 }
 
 /** A set of rules run together (Navisworks-style clash matrix). */

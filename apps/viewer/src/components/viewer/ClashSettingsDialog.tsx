@@ -9,9 +9,9 @@
  *  - Detection: the global knobs (mode, tolerance, clearance, cluster radius,
  *    report-touch, default grouping), each persisted on change.
  *  - Rules: the discipline-matrix preset set. Toggle / edit / reset the built-ins
- *    and add your own custom rules (type-selector A × B + severity), with a live
- *    "matches N classes" preview against the loaded model. Persisted to
- *    localStorage; shareable via export / import.
+ *    and add your own custom rules (type-selector A × B + severity + optional
+ *    property conditions), with a live "matches N classes" preview against the
+ *    loaded model. Persisted to localStorage; shareable via export / import.
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -32,8 +32,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui/toast';
 import { useViewerStore } from '@/store';
-import { matchesSelector, type ClashSeverity } from '@ifc-lite/clash';
+import { type ClashSeverity, type PropertyCondition } from '@ifc-lite/clash';
+import { discoverDataSources } from '@ifc-lite/lens';
 import { exportPresets, importPresets, type ClashPreset } from '@/lib/clash/persistence';
+import { createLensDataProvider } from '@/lib/lens';
+import { SelectorBuilder } from './SelectorBuilder';
 
 const SEVERITY: Record<ClashSeverity, { label: string; color: string }> = {
   critical: { label: 'Critical', color: '#f7768e' },
@@ -48,6 +51,8 @@ interface Draft {
   name: string;
   selectorA: string;
   selectorB: string;
+  whereA: PropertyCondition[];
+  whereB: PropertyCondition[];
   severity: ClashSeverity;
 }
 
@@ -64,6 +69,8 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
   const groupBy = useViewerStore((s) => s.clashGroupBy);
   const presets = useViewerStore((s) => s.clashPresets);
   const classes = useViewerStore((s) => s.discoveredLensData?.classes ?? null);
+  const propertySets = useViewerStore((s) => s.discoveredLensData?.propertySets ?? null);
+  const mergeDiscoveredData = useViewerStore((s) => s.mergeDiscoveredData);
 
   const setMode = useViewerStore((s) => s.setClashMode);
   const setTolerance = useViewerStore((s) => s.setClashTolerance);
@@ -81,21 +88,33 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const discoveringRef = useRef(new Set<string>());
 
-  const matchCount = useCallback(
-    (selector: string): number | null => {
-      if (!classes) return null;
-      const s = selector.trim();
-      if (!s) return null;
-      return classes.filter((c) => matchesSelector(c, s)).length;
-    },
-    [classes],
-  );
+  const handleRequestPropertyDiscovery = useCallback(() => {
+    const current = useViewerStore.getState().discoveredLensData;
+    if (!current || current.propertySets || discoveringRef.current.has('properties')) return;
+    discoveringRef.current.add('properties');
+    setTimeout(() => {
+      const { models, ifcDataStore } = useViewerStore.getState();
+      if (models.size === 0 && !ifcDataStore) return;
+      const provider = createLensDataProvider(models, ifcDataStore);
+      const result = discoverDataSources(provider, { properties: true });
+      mergeDiscoveredData(result);
+    }, 0);
+  }, [mergeDiscoveredData]);
 
   const startAdd = () =>
-    setDraft({ id: null, name: '', selectorA: '', selectorB: '', severity: 'major' });
+    setDraft({ id: null, name: '', selectorA: '', selectorB: '', whereA: [], whereB: [], severity: 'major' });
   const startEdit = (p: ClashPreset) =>
-    setDraft({ id: p.id, name: p.name, selectorA: p.selectorA, selectorB: p.selectorB, severity: p.severity });
+    setDraft({
+      id: p.id,
+      name: p.name,
+      selectorA: p.selectorA,
+      selectorB: p.selectorB,
+      whereA: p.whereA ?? [],
+      whereB: p.whereB ?? [],
+      severity: p.severity,
+    });
 
   const saveDraft = useCallback(() => {
     if (!draft) return;
@@ -105,12 +124,16 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
           selectorA: draft.selectorA,
           selectorB: draft.selectorB,
           severity: draft.severity,
+          ...(draft.whereA.length ? { whereA: draft.whereA } : { whereA: undefined }),
+          ...(draft.whereB.length ? { whereB: draft.whereB } : { whereB: undefined }),
         })
       : createPreset({
           name: draft.name,
           severity: draft.severity,
           selectorA: draft.selectorA,
           selectorB: draft.selectorB,
+          whereA: draft.whereA,
+          whereB: draft.whereB,
         });
     if (result.ok) {
       setDraft(null);
@@ -119,8 +142,17 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
     }
   }, [draft, createPreset, updatePreset]);
 
+  const conditionsValid = useCallback((conds: PropertyCondition[]) =>
+    conds.every((c) => c.pset.trim().length > 0 && c.property.trim().length > 0),
+  []);
+
   const draftValid =
-    !!draft && draft.name.trim().length > 0 && draft.selectorA.trim().length > 0 && draft.selectorB.trim().length > 0;
+    !!draft &&
+    draft.name.trim().length > 0 &&
+    draft.selectorA.trim().length > 0 &&
+    draft.selectorB.trim().length > 0 &&
+    conditionsValid(draft.whereA) &&
+    conditionsValid(draft.whereB);
 
   const onImport = useCallback(
     async (file: File) => {
@@ -151,7 +183,7 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[540px] overflow-hidden">
+      <DialogContent className="sm:max-w-[560px] overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings2 className="h-4 w-4 text-[#f7768e]" />
@@ -164,9 +196,6 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
 
         <Tabs defaultValue="detection" className="mt-1">
           <TabsList className="grid w-full grid-cols-2">
-            {/* ui/tabs TabsTrigger ships no active styling — add it per-usage,
-                matching KeyboardShortcutsDialog / ByokKeyModal, so the active tab
-                reads clearly. */}
             <TabsTrigger
               value="detection"
               className="data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm data-[state=active]:font-semibold"
@@ -257,7 +286,7 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
               </div>
             </div>
 
-            <ScrollArea className="max-h-[42vh] pr-1">
+            <ScrollArea className="max-h-[36vh] pr-1">
               <div className="space-y-1">
                 {presets.map((p) => (
                   <div
@@ -273,6 +302,11 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
                       <div className="truncate text-xs font-medium">
                         {p.name}
                         {!p.builtin && <span className="ml-1.5 text-[10px] text-muted-foreground">custom</span>}
+                        {((p.whereA?.length ?? 0) + (p.whereB?.length ?? 0)) > 0 && (
+                          <span className="ml-1.5 rounded-full bg-blue-500/15 text-blue-400 px-1.5 py-px text-[9px] font-medium tabular-nums">
+                            {(p.whereA?.length ?? 0) + (p.whereB?.length ?? 0)} filter{((p.whereA?.length ?? 0) + (p.whereB?.length ?? 0)) > 1 ? 's' : ''}
+                          </span>
+                        )}
                       </div>
                       <div className="truncate text-[10px] text-muted-foreground">
                         {p.selectorA} <span className="opacity-60">×</span> {p.selectorB}
@@ -294,7 +328,7 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
             </ScrollArea>
 
             {draft && (
-              <div className="rounded-md border border-[#f7768e]/40 bg-muted/30 p-2.5 space-y-2">
+              <div className="rounded-md border border-[#f7768e]/40 bg-muted/30 p-2.5 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium">{draft.id ? 'Edit rule' : 'New rule'}</span>
                   <button onClick={() => setDraft(null)} className="text-muted-foreground hover:text-foreground" title="Cancel">
@@ -307,23 +341,43 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
                   placeholder="Rule name (e.g. Ducts vs Beams)"
                   className="h-8 w-full rounded-md border border-border bg-transparent px-2.5 text-sm"
                 />
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                  <SelectorField
-                    value={draft.selectorA}
-                    onChange={(v) => setDraft({ ...draft, selectorA: v })}
-                    count={matchCount(draft.selectorA)}
-                    hasModel={classes !== null}
+
+                {/* ── Group A selector ─────────────────────────────────────── */}
+                <div className="rounded-md border border-border/60 bg-background/40 p-2">
+                  <SelectorBuilder
+                    selector={draft.selectorA}
+                    onSelectorChange={(v) => setDraft((d) => d ? { ...d, selectorA: v } : d)}
+                    conditions={draft.whereA}
+                    onConditionsChange={(v) => setDraft((d) => d ? { ...d, whereA: v } : d)}
+                    classes={classes}
+                    propertySets={propertySets}
+                    onRequestPropertyDiscovery={handleRequestPropertyDiscovery}
+                    label="Group A"
                     placeholder="IfcDuct*|IfcPipe*"
                   />
-                  <span className="text-xs text-muted-foreground">×</span>
-                  <SelectorField
-                    value={draft.selectorB}
-                    onChange={(v) => setDraft({ ...draft, selectorB: v })}
-                    count={matchCount(draft.selectorB)}
-                    hasModel={classes !== null}
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="h-px flex-1 bg-border" />
+                  <span>×</span>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+
+                {/* ── Group B selector ─────────────────────────────────────── */}
+                <div className="rounded-md border border-border/60 bg-background/40 p-2">
+                  <SelectorBuilder
+                    selector={draft.selectorB}
+                    onSelectorChange={(v) => setDraft((d) => d ? { ...d, selectorB: v } : d)}
+                    conditions={draft.whereB}
+                    onConditionsChange={(v) => setDraft((d) => d ? { ...d, whereB: v } : d)}
+                    classes={classes}
+                    propertySets={propertySets}
+                    onRequestPropertyDiscovery={handleRequestPropertyDiscovery}
+                    label="Group B"
                     placeholder="IfcWall*|IfcSlab"
                   />
                 </div>
+
                 <div className="flex items-center gap-2">
                   <Select value={draft.severity} onValueChange={(v) => setDraft({ ...draft, severity: v as ClashSeverity })}>
                     <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
@@ -337,10 +391,6 @@ export function ClashSettingsDialog({ trigger }: ClashSettingsDialogProps) {
                     <Check className="h-3.5 w-3.5 mr-1" /> {draft.id ? 'Save' : 'Add'}
                   </Button>
                 </div>
-                <p className="text-[10px] text-muted-foreground leading-snug">
-                  Selectors: <code>IfcWall</code>, <code>IfcPipe*</code>, <code>IfcWall|IfcSlab</code>, <code>!IfcSpace</code>, <code>*</code>.
-                  Leave B equal to A for a self-clash within one group.
-                </p>
               </div>
             )}
           </TabsContent>
@@ -377,31 +427,6 @@ function NumberField({
         className="h-8 w-24 rounded-md border border-border bg-transparent px-2 text-sm tabular-nums text-right"
       />
       {suffix && <span className="text-xs text-muted-foreground">{suffix}</span>}
-    </div>
-  );
-}
-
-/** Type-selector input with a live "matches N classes" hint. */
-function SelectorField({
-  value, onChange, count, hasModel, placeholder,
-}: { value: string; onChange: (v: string) => void; count: number | null; hasModel: boolean; placeholder: string }) {
-  return (
-    <div className="min-w-0">
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="h-8 w-full rounded-md border border-border bg-transparent px-2 text-xs font-mono"
-      />
-      <div className="mt-0.5 h-3 text-[10px] text-muted-foreground truncate">
-        {!hasModel
-          ? 'load a model to preview'
-          : count === null
-            ? ' '
-            : count > 0
-              ? `✓ matches ${count} class${count === 1 ? '' : 'es'}`
-              : 'matches no classes'}
-      </div>
     </div>
   );
 }
