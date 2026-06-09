@@ -3,29 +3,34 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * ifc-lite clash <file.ifc> [options]
+ * ifc-lite clash <file.ifc> [<file2.ifc> ...] [options]
  *
- * Detect geometric clashes between elements in an IFC model. Meshes the model
- * headlessly, maps it to representation-agnostic clash elements, then runs the
- * clash engine with either a single ad-hoc rule (--a/--b) or the standard
- * discipline matrix (--matrix). Results print as a concise human summary or
- * machine-readable JSON, and can be exported as a BCF archive (--bcf).
+ * Detect geometric clashes between elements in one or more IFC models. When
+ * multiple files are given every model's elements are pooled into a single
+ * federated set so intra-model and cross-model clashes are found together.
+ *
+ * Use --file-a / --file-b to restrict results to clashes between two specific
+ * models (cross-file coordination check).
  */
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { createHeadlessContext } from '../loader.js';
-import { getFlag, hasFlag, fatal, printJson } from '../output.js';
+import { loadIfcFile } from '../loader.js';
+import { getAllFlags, getFlag, hasFlag, fatal, printJson } from '../output.js';
 import { GeometryProcessor, type MeshData } from '@ifc-lite/geometry';
 import type { IfcDataStore } from '@ifc-lite/parser';
 import {
   createClashEngine,
   disciplineMatrixRules,
   groupClashes,
+  makeExclusionSet,
   type Clash,
   type ClashMode,
   type ClashResult,
   type ClashRule,
+  type ClashSeverity,
+  type ClashSummary,
+  type ExclusionSet,
 } from '@ifc-lite/clash';
 import { elementsFromStep } from '@ifc-lite/clash/step';
 import { createBCFFromClashResult } from '@ifc-lite/clash/bcf';
@@ -119,19 +124,69 @@ function buildRules(args: string[], mode: ClashMode, tolerance: number | undefin
   return [rule];
 }
 
-function formatClashRow(clash: Clash): string {
+/** Merge multiple ExclusionSets into one. */
+function mergeExclusionSets(sets: ExclusionSet[]): ExclusionSet {
+  if (sets.length === 1) return sets[0];
+  const merged = makeExclusionSet();
+  for (const s of sets) {
+    for (const v of s) merged.add(v);
+  }
+  return merged;
+}
+
+/**
+ * Collect file paths from positional CLI arguments, skipping known flags and
+ * their values.
+ */
+function parseFilePaths(args: string[]): string[] {
+  const VALUE_FLAGS = new Set([
+    '--mode', '--tolerance', '--clearance', '--bcf', '--group',
+    '--bcf-status', '--max-topics', '--a', '--b', '--file-a', '--file-b',
+  ]);
+  const files: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('-')) {
+      if (VALUE_FLAGS.has(args[i])) i++;
+      continue;
+    }
+    files.push(args[i]);
+  }
+  return files;
+}
+
+function rebuildSummary(clashes: Clash[]): ClashSummary {
+  const byRule: Record<string, number> = {};
+  const byTypePair: Record<string, number> = {};
+  const bySeverity: Record<ClashSeverity, number> = { critical: 0, major: 0, minor: 0, info: 0 };
+  for (const c of clashes) {
+    byRule[c.rule] = (byRule[c.rule] ?? 0) + 1;
+    const pair = [c.a.tag, c.b.tag].sort().join(' vs ');
+    byTypePair[pair] = (byTypePair[pair] ?? 0) + 1;
+    bySeverity[c.severity] += 1;
+  }
+  return { total: clashes.length, byRule, byTypePair, bySeverity };
+}
+
+function formatClashRow(clash: Clash, multiFile: boolean): string {
   const aName = clash.a.name ? `${clash.a.tag} "${clash.a.name}"` : clash.a.tag;
   const bName = clash.b.name ? `${clash.b.tag} "${clash.b.name}"` : clash.b.tag;
   const distance = clash.distance < 0
     ? `penetration ${Math.abs(clash.distance).toFixed(3)}m`
     : `gap ${clash.distance.toFixed(3)}m`;
-  return `  [${clash.severity}] ${aName} x ${bName} (${clash.status}, ${distance})`;
+  const modelInfo = multiFile && clash.a.model !== clash.b.model
+    ? ` [${clash.a.model} ↔ ${clash.b.model}]`
+    : '';
+  return `  [${clash.severity}] ${aName} x ${bName} (${clash.status}, ${distance})${modelInfo}`;
 }
 
-function printHumanSummary(result: ClashResult): void {
+function printHumanSummary(result: ClashResult, modelIds: string[]): void {
   const { summary } = result;
+  const multiFile = modelIds.length > 1;
   process.stdout.write(`\n  Clash Detection Results\n`);
   process.stdout.write(`  -----------------------\n`);
+  if (multiFile) {
+    process.stdout.write(`  Models:        ${modelIds.join(', ')}\n`);
+  }
   process.stdout.write(`  Total clashes: ${summary.total}\n`);
   process.stdout.write(`  By severity:   critical ${summary.bySeverity.critical}, major ${summary.bySeverity.major}, minor ${summary.bySeverity.minor}, info ${summary.bySeverity.info}\n`);
 
@@ -139,11 +194,25 @@ function printHumanSummary(result: ClashResult): void {
     process.stdout.write(`  Truncated:     ${result.truncated.reason} (${result.truncated.droppedPairs} pairs dropped)\n`);
   }
 
+  if (multiFile && summary.total > 0) {
+    const byModel: Record<string, number> = {};
+    for (const c of result.clashes) {
+      const key = c.a.model === c.b.model
+        ? `${c.a.model} (intra-model)`
+        : `${c.a.model} ↔ ${c.b.model}`;
+      byModel[key] = (byModel[key] ?? 0) + 1;
+    }
+    process.stdout.write(`  By model pair:\n`);
+    for (const [k, n] of Object.entries(byModel)) {
+      process.stdout.write(`    ${k}: ${n}\n`);
+    }
+  }
+
   if (summary.total > 0) {
     const shown = result.clashes.slice(0, HUMAN_CLASH_CAP);
     process.stdout.write(`\n  Top ${shown.length} of ${summary.total} clashes:\n`);
     for (const clash of shown) {
-      process.stdout.write(`${formatClashRow(clash)}\n`);
+      process.stdout.write(`${formatClashRow(clash, multiFile)}\n`);
     }
     const dropped = summary.total - shown.length;
     if (dropped > 0) {
@@ -154,9 +223,21 @@ function printHumanSummary(result: ClashResult): void {
 }
 
 export async function clashCommand(args: string[]): Promise<void> {
-  const filePath = args.find(a => !a.startsWith('-'));
-  if (!filePath) {
-    fatal('Usage: ifc-lite clash <file.ifc> [--a <selector>] [--b <selector>] [--mode hard|clearance] [--tolerance N] [--clearance N] [--matrix] [--bcf <out.bcfzip>] [--group cluster|rule|typePair|element] [--bcf-status <status>] [--max-topics N] [--json]');
+  // Support both positional file list and --file <path> repeated flag.
+  const positionalFiles = parseFilePaths(args);
+  const repeatedFiles = getAllFlags(args, '--file');
+  const filePaths = repeatedFiles.length > 0 ? repeatedFiles : positionalFiles;
+
+  if (filePaths.length === 0) {
+    fatal(
+      'Usage: ifc-lite clash <file.ifc> [<file2.ifc> ...] ' +
+      '[--a <selector>] [--b <selector>] ' +
+      '[--mode hard|clearance] [--tolerance N] [--clearance N] ' +
+      '[--matrix] ' +
+      '[--file-a <filename>] [--file-b <filename>] ' +
+      '[--bcf <out.bcfzip>] [--group cluster|rule|typePair|element] ' +
+      '[--bcf-status <status>] [--max-topics N] [--json]',
+    );
   }
 
   const jsonOutput = hasFlag(args, '--json');
@@ -168,19 +249,53 @@ export async function clashCommand(args: string[]): Promise<void> {
   const bcfStatus = getFlag(args, '--bcf-status');
   const maxTopics = parseNumberFlag(getFlag(args, '--max-topics'), '--max-topics');
 
-  const { store } = await createHeadlessContext(filePath);
+  // --file-a / --file-b restrict results to clashes between two specific models.
+  const fileAArg = getFlag(args, '--file-a');
+  const fileBArg = getFlag(args, '--file-b');
+  const fileAId = fileAArg ? basename(fileAArg) : undefined;
+  const fileBId = fileBArg ? basename(fileBArg) : undefined;
 
-  const modelId = basename(filePath);
-  if (!jsonOutput) process.stderr.write(`  Meshing ${modelId} ...\n`);
-  const meshes = await meshModel(store, modelId, filePath);
+  if ((fileAId && !fileBId) || (!fileAId && fileBId)) {
+    fatal('--file-a and --file-b must be used together');
+  }
 
-  const { elements, exclusions } = elementsFromStep({ store, meshes, modelId });
+  // Load every model, mesh it, convert to ClashElements.
+  const allElements: ReturnType<typeof elementsFromStep>['elements'] = [];
+  const allExclusionSets: ExclusionSet[] = [];
+  const modelIds: string[] = [];
 
+  for (const filePath of filePaths) {
+    const modelId = basename(filePath);
+    if (!jsonOutput) process.stderr.write(`  Loading ${modelId}...\n`);
+
+    const store = await loadIfcFile(filePath);
+    const meshes = await meshModel(store, modelId, filePath);
+    const { elements, exclusions } = elementsFromStep({ store, meshes, modelId });
+
+    allElements.push(...elements);
+    allExclusionSets.push(exclusions);
+    modelIds.push(modelId);
+
+    if (!jsonOutput) process.stderr.write(`  ${modelId}: ${elements.length} elements\n`);
+  }
+
+  if (fileAId && !modelIds.includes(fileAId)) {
+    fatal(`--file-a "${fileAId}" is not one of the loaded models (loaded: ${modelIds.join(', ')})`);
+  }
+  if (fileBId && !modelIds.includes(fileBId)) {
+    fatal(`--file-b "${fileBId}" is not one of the loaded models (loaded: ${modelIds.join(', ')})`);
+  }
+
+  const mergedExclusions = mergeExclusionSets(allExclusionSets);
   const rules = buildRules(args, mode, tolerance, clearance);
 
+  if (!jsonOutput) {
+    process.stderr.write(`  Running clash engine on ${allElements.length} elements across ${modelIds.length} model(s)...\n`);
+  }
+
   const engine = createClashEngine({ backend: 'ts' });
-  const result = await engine.run(elements, rules, {
-    exclusions,
+  const result = await engine.run(allElements, rules, {
+    exclusions: mergedExclusions,
     tolerance,
     onProgress: (p) => {
       if (!jsonOutput) {
@@ -190,12 +305,24 @@ export async function clashCommand(args: string[]): Promise<void> {
   });
   if (!jsonOutput) process.stderr.write('\n');
 
+  // Apply model-pair filter when --file-a / --file-b are given.
+  if (fileAId && fileBId) {
+    result.clashes = result.clashes.filter(
+      (c) =>
+        (c.a.model === fileAId && c.b.model === fileBId) ||
+        (c.a.model === fileBId && c.b.model === fileAId),
+    );
+    result.summary = rebuildSummary(result.clashes);
+    if (!jsonOutput) {
+      process.stderr.write(`  Filtered to ${fileAId} ↔ ${fileBId}: ${result.clashes.length} cross-model clash(es)\n`);
+    }
+  }
+
   if (bcfPath) {
     const groups = groupClashes(result, { by: bcfGroupBy });
     const project = await createBCFFromClashResult(result, groups, {
       author: 'ifc-lite clash',
       projectName: 'Clash report',
-      // Headless: no snapshots (no renderer) — viewer export embeds those.
       ...(bcfStatus ? { status: bcfStatus } : {}),
       ...(maxTopics != null ? { maxTopics } : {}),
     });
@@ -211,9 +338,14 @@ export async function clashCommand(args: string[]): Promise<void> {
     const truncated = total > clashes.length
       ? { reason: `capped at ${JSON_CLASH_CAP} clashes for display`, dropped: total - clashes.length }
       : null;
-    printJson({ summary: result.summary, truncated, clashes });
+    printJson({
+      models: modelIds,
+      summary: result.summary,
+      truncated,
+      clashes,
+    });
     return;
   }
 
-  printHumanSummary(result);
+  printHumanSummary(result, modelIds);
 }

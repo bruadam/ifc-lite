@@ -125,6 +125,37 @@ Common flags: `--start/--end/--position <x,y,z>` · `--height/--width/--depth/--
 `--name` · `--project` · `--storey` · `--elevation` · `--pset/--qset/--material <json>` ·
 `--color <r,g,b>` · `--from-json` · `--out <file>` · `--json`. Coordinates are IFC **Z-up**.
 
+## clash
+
+Detect geometric clashes (hard interpenetration or clearance violations) between elements in
+one or more IFC models. Multiple files are pooled into a single federated element set so both
+intra-model and cross-model clashes are found together.
+
+```bash
+# Single model — self-clash
+ifc-lite clash model.ifc --matrix --json
+ifc-lite clash model.ifc --a "IfcDuct*|IfcPipe*" --b "IfcWall*" --mode clearance --clearance 0.05
+
+# Multiple models — federated pool (all inter- and intra-model clashes)
+ifc-lite clash arch.ifc struct.ifc mep.ifc --matrix --json
+ifc-lite clash arch.ifc struct.ifc mep.ifc --matrix --bcf report.bcfzip
+
+# Cross-file only: restrict results to clashes between two specific files
+ifc-lite clash arch.ifc struct.ifc --file-a arch.ifc --file-b struct.ifc --matrix
+ifc-lite clash arch.ifc struct.ifc --file-a arch.ifc --file-b struct.ifc \
+  --a "IfcWall*|IfcSlab*" --b "IfcBeam*|IfcColumn*"
+
+# Using --file flag (alternative to positional args)
+ifc-lite clash --file arch.ifc --file struct.ifc --matrix --bcf out.bcfzip
+```
+
+Flags: `--a <selector>` · `--b <selector>` · `--mode hard|clearance` · `--tolerance <m>` ·
+`--clearance <m>` · `--matrix` (discipline matrix) · `--file-a <name>` · `--file-b <name>` ·
+`--bcf <out.bcfzip>` · `--group cluster|rule|typePair|element` · `--bcf-status <status>` ·
+`--max-topics <N>` · `--json`
+
+Selector grammar: `*` all · `IfcWall` exact · `IfcPipe*` wildcard · `A|B` OR · `!IfcSpace` NOT.
+
 ## merge / convert / diff / validate
 
 ```bash

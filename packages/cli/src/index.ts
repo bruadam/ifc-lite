@@ -66,7 +66,7 @@ const HELP = `
     export    <file.ifc> --format csv|json|ifc    Export data to file or stdout
     ids       <file.ifc> <rules.ids>              Validate against IDS rules
     bcf       <create|list|add-comment>           Work with BCF collaboration files
-    clash     <file.ifc> [--matrix] [--bcf F]      Detect geometric clashes between elements
+    clash     <f1.ifc> [<f2.ifc> ...] [--matrix]   Detect clashes (multi-model supported)
     create    <type> [options] --out F             Create IFC elements (30+ types)
     eval      <file.ifc> "<expression>"           Evaluate SDK expression
     run       <script.js> <file.ifc>              Execute a script against model
@@ -110,6 +110,8 @@ const HELP = `
     ifc-lite clash model.ifc --matrix --json
     ifc-lite clash model.ifc --a "IfcDuct*|IfcPipe*" --b "IfcWall*" --mode clearance --clearance 0.05
     ifc-lite clash model.ifc --matrix --bcf clashes.bcfzip
+    ifc-lite clash arch.ifc struct.ifc mep.ifc --matrix --json
+    ifc-lite clash arch.ifc struct.ifc --file-a arch.ifc --file-b struct.ifc --matrix --bcf report.bcfzip
     ifc-lite create wall --height 3 --thickness 0.2 --start 0,0,0 --end 5,0,0 --out wall.ifc
     ifc-lite create stair --number-of-risers 12 --riser-height 0.175 --width 1.2 --out stair.ifc
     ifc-lite create door --width 0.9 --height 2.1 --position 0,0,0 --out door.ifc
