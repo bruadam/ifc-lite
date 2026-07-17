@@ -24,11 +24,20 @@ export interface PluginManifest {
   readonly api: string;
   /** Allowed outbound domains. The host's fetch wrapper enforces this. */
   readonly permissions: PluginPermissions;
+  /**
+   * How the host authenticates this provider. `'preferences'` (default when
+   * omitted) renders `preferences` as a settings form. `'oauth'` renders a
+   * Connect/Disconnect button instead — the host runs the OAuth flow and
+   * exposes the resulting access token via `PluginContext.getAccessToken`.
+   */
+  readonly auth?: PluginAuthMode;
   /** Declarative preferences — the host auto-generates the settings UI. */
   readonly preferences: PluginPreference[];
   /** Contribution points. */
   readonly contributes: PluginContributions;
 }
+
+export type PluginAuthMode = 'preferences' | 'oauth';
 
 export interface PluginPermissions {
   /** Domains the provider may contact (e.g. `["field.dalux.com"]`). */
@@ -82,6 +91,12 @@ export interface PluginContext {
   /** Namespaced key-value store (IndexedDB under the hood). */
   readonly storage: KeyValueStore;
   readonly log: Logger;
+  /**
+   * Resolves to a live OAuth access token. Present only when the manifest
+   * declares `auth: 'oauth'` — the host owns the connect/refresh flow;
+   * providers just call this and set their own `Authorization` header.
+   */
+  getAccessToken?(): Promise<string>;
 }
 
 export interface KeyValueStore {

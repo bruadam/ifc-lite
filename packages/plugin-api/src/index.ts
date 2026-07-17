@@ -9,6 +9,7 @@ export type {
   FileSourceProvider,
   KeyValueStore,
   Logger,
+  PluginAuthMode,
   PluginContext,
   PluginContributions,
   PluginManifest,

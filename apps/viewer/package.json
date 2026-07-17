@@ -43,6 +43,7 @@
     "@ifc-lite/geometry": "workspace:^",
     "@ifc-lite/plugin-api": "workspace:^",
     "@ifc-lite/source-dalux": "workspace:^",
+    "@ifc-lite/source-dropbox": "workspace:^",
     "@ifc-lite/ids": "workspace:^",
     "@ifc-lite/lens": "workspace:^",
     "@ifc-lite/lists": "workspace:^",

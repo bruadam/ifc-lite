@@ -5,6 +5,7 @@
 import { describe, it, expectTypeOf } from 'vitest';
 import type {
   FileSourceProvider,
+  PluginAuthMode,
   PluginContext,
   PluginManifest,
   SourceProject,
@@ -49,5 +50,15 @@ describe('plugin-api types', () => {
     expectTypeOf<PluginManifest>().toHaveProperty('permissions');
     expectTypeOf<PluginManifest>().toHaveProperty('preferences');
     expectTypeOf<PluginManifest>().toHaveProperty('contributes');
+  });
+
+  it('PluginManifest.auth is an optional PluginAuthMode', () => {
+    expectTypeOf<PluginManifest['auth']>().toEqualTypeOf<PluginAuthMode | undefined>();
+  });
+
+  it('PluginContext.getAccessToken is optional', () => {
+    expectTypeOf<PluginContext['getAccessToken']>().toEqualTypeOf<
+      (() => Promise<string>) | undefined
+    >();
   });
 });

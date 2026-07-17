@@ -257,6 +257,7 @@ export default defineConfig({
       '@ifc-lite/ids': path.resolve(__dirname, '../../packages/ids/src'),
       '@ifc-lite/lists': path.resolve(__dirname, '../../packages/lists/src'),
       '@ifc-lite/source-dalux': path.resolve(__dirname, '../../packages/source-dalux/src'),
+      '@ifc-lite/source-dropbox': path.resolve(__dirname, '../../packages/source-dropbox/src'),
     },
   },
   server: {
@@ -275,6 +276,12 @@ export default defineConfig({
         // Single API source of truth lives at repo-root `api/chat.ts`.
         // For local dev, run `pnpm dev:api` from repo root.
         target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/api/dropbox': {
+        // OAuth routes at repo-root `api/dropbox/*.ts`. Dev-served by the
+        // same `pnpm dev:api` process, on its own port (see scripts/dev-api.ts).
+        target: 'http://localhost:3002',
         changeOrigin: true,
       },
       '/api/bsdd': {

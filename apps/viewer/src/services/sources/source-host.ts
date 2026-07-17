@@ -11,6 +11,7 @@ import type {
   SourceFile,
   SourceTag,
 } from '@ifc-lite/plugin-api';
+import { getOAuthAccessToken } from './oauth-connection.js';
 
 // ---------------------------------------------------------------------------
 // SourceHost — manages registered file-source providers and manufactures
@@ -82,6 +83,9 @@ export class SourceHost {
       getPreference: async (name: string) => preferences[name],
       storage: createNamespacedStorage(manifest.name),
       log: createPrefixedLogger(manifest.name),
+      ...(manifest.auth === 'oauth'
+        ? { getAccessToken: () => getOAuthAccessToken(manifest.name) }
+        : {}),
     };
   }
 

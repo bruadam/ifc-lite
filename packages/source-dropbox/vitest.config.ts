@@ -2,8 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import handler from '../api/chat.ts';
-import { serveWebHandler } from './lib/node-http-bridge.ts';
+import { defineConfig } from 'vitest/config';
 
-const port = parseInt(process.env.PORT ?? '3001', 10);
-serveWebHandler(port, 'dev-chat-api', handler);
+export default defineConfig({
+  test: {
+    include: ['test/**/*.test.ts'],
+  },
+});

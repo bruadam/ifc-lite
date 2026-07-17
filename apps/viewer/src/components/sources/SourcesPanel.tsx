@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { Cloud, Settings } from 'lucide-react';
 import { loadSavedSourcePrefs, saveSourcePrefs } from '@/lib/sources/preferences';
+import { isOAuthConnected } from '@/services/sources/oauth-connection';
 
 interface SourcesPanelProps {
   onClose: () => void;
@@ -124,10 +125,11 @@ export function SourcesPanel({ onClose }: SourcesPanelProps) {
 
         <ul className="divide-y">
           {providers.map((p) => {
-            const prefs = loadSavedSourcePrefs(p.manifest.name);
-            const configured = p.manifest.preferences
-              .filter((pf) => pf.required)
-              .every((pf) => !!prefs[pf.name]?.trim());
+            const configured = p.manifest.auth === 'oauth'
+              ? isOAuthConnected(p.manifest.name)
+              : p.manifest.preferences
+                .filter((pf) => pf.required)
+                .every((pf) => !!loadSavedSourcePrefs(p.manifest.name)[pf.name]?.trim());
 
             return (
               <li key={p.manifest.name} className="flex items-center gap-2 px-3 py-2">

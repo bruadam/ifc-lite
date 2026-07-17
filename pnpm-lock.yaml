@@ -177,6 +177,9 @@ importers:
       '@ifc-lite/source-dalux':
         specifier: workspace:^
         version: link:../../packages/source-dalux
+      '@ifc-lite/source-dropbox':
+        specifier: workspace:^
+        version: link:../../packages/source-dropbox
       '@ifc-lite/spatial':
         specifier: workspace:^
         version: link:../../packages/spatial
@@ -1330,6 +1333,19 @@ importers:
       dalux-build-api:
         specifier: 2.0.0
         version: 2.0.0
+    devDependencies:
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.10(@edge-runtime/vm@3.2.0)(@types/node@26.1.1)(happy-dom@20.10.6)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
+
+  packages/source-dropbox:
+    dependencies:
+      '@ifc-lite/plugin-api':
+        specifier: workspace:^
+        version: link:../plugin-api
     devDependencies:
       typescript:
         specifier: ^6.0.3

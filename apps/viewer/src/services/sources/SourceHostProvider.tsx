@@ -5,6 +5,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { SourceHost } from './source-host';
 import { DaluxBuildProvider } from '@ifc-lite/source-dalux';
+import { DropboxProvider } from '@ifc-lite/source-dropbox';
 
 const SourceHostContext = createContext<SourceHost | null>(null);
 
@@ -22,6 +23,7 @@ export function SourceHostProvider({ children }: { children: ReactNode }) {
   const host = useMemo(() => {
     const h = new SourceHost();
     h.register(new DaluxBuildProvider());
+    h.register(new DropboxProvider());
     return h;
   }, []);
 
