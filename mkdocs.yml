@@ -234,6 +234,12 @@ nav:
         - Review Workflow: architecture/layer-prs/08-review.md
         - CLI & CI: architecture/layer-prs/09-cli.md
         - Registry: architecture/layer-prs/10-registry.md
+    - Commit History:
+        - Overview: architecture/commit-history/index.md
+        - Commit-Aware Source API: architecture/commit-history/01-commit-source-api.md
+        - History UI: architecture/commit-history/02-history-ui.md
+        - Revision Resolver: architecture/commit-history/03-revision-resolver.md
+        - History Export: architecture/commit-history/04-history-export.md
   - API Reference:
     - TypeScript API: api/typescript.md
     - Rust API: api/rust.md
