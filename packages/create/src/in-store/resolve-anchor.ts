@@ -72,19 +72,23 @@ export function resolveSpatialAnchor(
   return { ownerHistoryId, bodyContextId, axisContextId, rootContextId, storeyId: storeyExpressId, storeyPlacementId, schema, lengthUnitScale };
 }
 
-/** Read source and overlay entities through the same effective ID boundary. */
-class AnchorEntityReader {
+/**
+ * Read source and overlay entities through the same effective ID boundary.
+ * Shared with `resolve-host.ts`, whose host-geometry walk needs the same
+ * overlay-aware point lookups.
+ */
+export class AnchorEntityReader {
   private readonly extractor: EntityExtractor | null;
 
   constructor(
-    private readonly store: IfcDataStore,
+    private readonly store: IfcDataStore | null,
     private readonly view: MutablePropertyView | null | undefined,
   ) {
-    this.extractor = store.source.byteLength > 0 ? new EntityExtractor(store.source) : null;
+    this.extractor = store && store.source.byteLength > 0 ? new EntityExtractor(store.source) : null;
   }
 
-  private *ids(type: string): IterableIterator<number> {
-    for (const { expressId } of iterateEffectiveEntityIds(this.store, this.view, [type])) {
+  *ids(type: string): IterableIterator<number> {
+    for (const { expressId } of iterateEffectiveEntityIds(this.store ?? { entityIndex: { byType: new Map(), byId: new Map() } }, this.view, [type])) {
       yield expressId;
     }
   }
@@ -132,11 +136,11 @@ class AnchorEntityReader {
       : null;
   }
 
-  private entity(id: number): EffectiveEntityRecord | null {
+  entity(id: number): EffectiveEntityRecord | null {
     if (this.view?.isDeleted(id)) return null;
     const created = this.view?.getNewEntity(id);
     // @raw-entity-enumeration-ok point lookup after effective enumeration; source bytes are needed only for this candidate's attributes
-    const ref = created ? undefined : this.store.entityIndex.byId.get(id);
+    const ref = created ? undefined : this.store?.entityIndex.byId.get(id);
     const source = ref && this.extractor ? this.extractor.extractEntity(ref) : null;
     const entity = created ?? source;
     if (!entity) return null;
@@ -144,6 +148,6 @@ class AnchorEntityReader {
       retype: this.view?.getEntityTypeMutation(id)?.newType,
       named: this.view?.getAttributeMutationsForEntity(id).map(({ name, value }) => [name, value] as const) ?? [],
       positional: this.view?.getPositionalMutationsForEntity(id) ?? [],
-    }, this.store.schemaVersion);
+    }, this.store?.schemaVersion);
   }
 }

@@ -16,6 +16,9 @@ Reviewed LandXML provenance is per entry, so a new producer fixture cannot
 bypass review by retaining the legacy root version. Manifest v2 is also
 accepted and may contain both historical IFC rows and reviewed LandXML rows.
 
+The public MiniBIM fixture has [pinned provenance and its complete Apache-2.0
+license](../../docs/architecture/evidence/georeferencer-mini-bim/README.md).
+
 ## Quick start
 
 ```sh
@@ -33,6 +36,12 @@ Each fetched file is verified against the manifest's SHA-256 before being
 written. The fetcher is parallel (default 6 concurrent connections; override
 with `FIXTURE_CONCURRENCY=N`) and uses streaming writes, so big fixtures don't
 buffer in memory.
+
+`buildingsmart/Viadotto_Acerno.ifc` is fetched from the buildingSMART
+Implementers Forum's commit-pinned `Viadotto Acerno.zip` and extracted locally.
+The catalogue pins both the ZIP and IFC hashes. The model is an ACCA Software
+export for MINnD; no redistribution license was declared in the source
+repository, so `fixtures:upload` excludes it from this project's release.
 
 ## Why not Git LFS?
 

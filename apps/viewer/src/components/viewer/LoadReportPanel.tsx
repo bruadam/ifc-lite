@@ -18,12 +18,13 @@
 
 import { useCallback, useMemo } from 'react';
 import { FileWarning, Download, Focus, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { buildLoadReports, downloadLoadReportJSON, type LoadReportAffectedEntity, type LoadReportSummary } from '@/lib/loadReport';
 import { cn } from '@/lib/utils';
+import { AssistantAction } from './assistant/AssistantAction';
 
 interface LoadReportPanelProps {
   onClose?: () => void;
@@ -56,13 +57,13 @@ function AffectedEntityRow({
   if (!entity.renderable) {
     // No captured bbox: nothing to frame in 3D. Show the source identity
     // only, per the issue's boundary — never invent a selection target.
-    return <div className="pl-2 text-[11px] text-muted-foreground">{label}</div>;
+    return <div className="pl-2 text-2xs text-muted-foreground">{label}</div>;
   }
   return (
     <button
       type="button"
       onClick={() => onSelect(entity)}
-      className="flex w-full items-center gap-1.5 rounded pl-2 py-0.5 text-left text-[11px] hover:bg-accent"
+      className="flex w-full items-center gap-1.5 rounded pl-2 py-0.5 text-left text-2xs hover:bg-accent"
       title={t('loadReportPanel.selectAndFrameTitle')}
     >
       <Focus className="h-3 w-3 shrink-0 text-muted-foreground" />
@@ -84,9 +85,9 @@ function ModelReportCard({
     <div className="border-b p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-sm font-medium">{report.name}</span>
-        <span className={cn('shrink-0 text-[11px] font-medium', status.className)}>{t(status.labelKey)}</span>
+        <span className={cn('shrink-0 text-2xs font-medium', status.className)}>{t(status.labelKey)}</span>
       </div>
-      <div className="mt-0.5 text-[11px] text-muted-foreground">
+      <div className="mt-0.5 text-2xs text-muted-foreground">
         {report.schemaVersion}
         {report.loadFormat ? ` · ${report.loadFormat}` : ''}
         {report.loadPath ? ` · ${report.loadPath}` : ''}
@@ -94,7 +95,7 @@ function ModelReportCard({
         {report.skipSmallCuts ? t('loadReportPanel.fastModeSuffix') : ''}
       </div>
       {report.actions.length > 0 && (
-        <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px]">
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-2xs">
           {report.actions.map((action, i) => (
             // Actions are a fixed, stable-order list built from this report's
             // own counters — no reorderable/keyed identity beyond position.
@@ -104,7 +105,7 @@ function ModelReportCard({
       )}
       {report.affectedEntities.length > 0 && (
         <div className="mt-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('loadReportPanel.affectedEntitiesLabel')}</div>
+          <div className="text-2xs uppercase tracking-wide text-muted-foreground">{t('loadReportPanel.affectedEntitiesLabel')}</div>
           {report.affectedEntities.map((entity) => (
             <AffectedEntityRow
               key={entity.productId}
@@ -146,24 +147,23 @@ export function LoadReportPanel({ onClose }: LoadReportPanelProps) {
   const handleExport = useCallback(() => downloadLoadReportJSON(reports), [reports]);
 
   return (
-    <div className="flex h-full flex-col">
+    <section aria-label={t('loadReportPanel.title')} className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b p-3">
         <FileWarning className="h-4 w-4 text-amber-600" />
         <span className="flex-1 text-sm font-medium">{t('loadReportPanel.title')}</span>
-        <Button
-          variant="ghost"
-          size="icon"
+        <AssistantAction />
+        <IconButton
+          label={t('loadReportPanel.exportJsonTitle')}
           className="h-6 w-6"
           onClick={handleExport}
           disabled={reports.length === 0}
-          title={t('loadReportPanel.exportJsonTitle')}
         >
           <Download className="h-3.5 w-3.5" />
-        </Button>
+        </IconButton>
         {onClose && (
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} title={t('loadReportPanel.closeTitle')}>
+          <IconButton label={t('loadReportPanel.closeTitle')} className="h-6 w-6" onClick={onClose}>
             <X className="h-3.5 w-3.5" />
-          </Button>
+          </IconButton>
         )}
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -175,6 +175,6 @@ export function LoadReportPanel({ onClose }: LoadReportPanelProps) {
           ))
         )}
       </div>
-    </div>
+    </section>
   );
 }

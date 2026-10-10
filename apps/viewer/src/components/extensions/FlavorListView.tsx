@@ -22,10 +22,11 @@
  * no path forward.
  */
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Camera, Copy, Download, FilePlus, Pencil, RefreshCcw, Upload, X, Check } from 'lucide-react';
 import type { Flavor } from '@ifc-lite/extensions';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { useTranslation } from '@/i18n';
 import { formatLocaleNumber } from '@/i18n/intlFormat';
@@ -80,6 +81,7 @@ export function FlavorListView({
   onCreate,
 }: FlavorListViewProps) {
   const { t, locale } = useTranslation();
+  const newFlavorNameId = useId();
   const [creating, setCreating] = useState<Creating>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -151,7 +153,7 @@ export function FlavorListView({
           modal stack inside the Flavors dialog. */}
       {creating && (
         <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
-          <label className="text-xs font-medium block mb-1">
+          <label htmlFor={newFlavorNameId} className="text-xs font-medium block mb-1">
             {creating.mode === 'snapshot'
               ? t('extensionsFlavors.flavorListView.nameSnapshotLabel', {
                   count: liveLensCount,
@@ -160,8 +162,10 @@ export function FlavorListView({
               : t('extensionsFlavors.flavorListView.nameEmptyLabel')}
           </label>
           <div className="flex items-center gap-2">
-            <Input
-              autoFocus
+            {/* The inline editor opens by explicit user action; focus starts in its text field. */}
+            {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+            <Input autoFocus
+              id={newFlavorNameId}
               value={creating.name}
               onChange={(e) => setCreating({ ...creating, name: e.target.value })}
               onKeyDown={(e) => {
@@ -231,8 +235,10 @@ export function FlavorListView({
                   <div className="flex items-center gap-2">
                     {isRenaming ? (
                       <>
-                        <Input
-                          autoFocus
+                        {/* Rename opens by explicit user action; focus starts in its text field. */}
+                        {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+                        <Input autoFocus
+                          aria-label={t('extensionsFlavors.flavorListView.renameAriaLabel', { name: localizedFlavorName(flavor, t) })}
                           value={renameValue}
                           onChange={(e) => setRenameValue(e.target.value)}
                           onKeyDown={(e) => {
@@ -241,22 +247,18 @@ export function FlavorListView({
                           }}
                           className="h-7 text-sm"
                         />
-                        <Button
-                          size="icon"
-                          variant="ghost"
+                        <IconButton
+                          label={t('extensionsFlavors.flavorListView.saveNameAriaLabel')}
                           onClick={commitRename}
-                          aria-label={t('extensionsFlavors.flavorListView.saveNameAriaLabel')}
                         >
                           <Check className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
+                        </IconButton>
+                        <IconButton
+                          label={t('extensionsFlavors.flavorListView.cancelRenameAriaLabel')}
                           onClick={cancelRename}
-                          aria-label={t('extensionsFlavors.flavorListView.cancelRenameAriaLabel')}
                         >
                           <X className="h-3.5 w-3.5" />
-                        </Button>
+                        </IconButton>
                       </>
                     ) : (
                       <>
@@ -270,13 +272,13 @@ export function FlavorListView({
                           {displayName}
                         </button>
                         {isActive && (
-                          <span className="text-[10px] uppercase tracking-wide bg-primary/20 text-primary rounded px-1.5 py-0.5 font-semibold">
+                          <span className="text-xs uppercase tracking-wide bg-primary/20 text-primary rounded px-1.5 py-0.5 font-semibold">
                             {t('extensionsFlavors.flavorListView.activeBadge')}
                           </span>
                         )}
                         {hasUncaptured && (
                           <span
-                            className="text-[10px] uppercase tracking-wide bg-amber-500/20 text-amber-700 dark:text-amber-300 rounded px-1.5 py-0.5 font-semibold"
+                            className="text-xs uppercase tracking-wide bg-amber-500/20 text-amber-700 dark:text-amber-300 rounded px-1.5 py-0.5 font-semibold"
                             title={t('extensionsFlavors.flavorListView.uncapturedTitle', {
                               count: uncapturedCount,
                               countDisplay: formatLocaleNumber(locale, uncapturedCount),
@@ -290,15 +292,15 @@ export function FlavorListView({
                       </>
                     )}
                   </div>
-                  <div className="text-[11px] text-muted-foreground font-mono break-all">
+                  <div className="text-xs text-muted-foreground font-mono break-all">
                     {flavor.id}
                   </div>
                   {displayDescription && (
-                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                    <div className="text-xs text-muted-foreground mt-0.5">
                       {displayDescription}
                     </div>
                   )}
-                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                  <div className="text-xs text-muted-foreground mt-0.5">
                     {t('extensionsFlavors.flavorListView.statsLine', {
                       ext: formatLocaleNumber(locale, flavor.extensions.length),
                       lens: formatLocaleNumber(locale, flavor.lenses.length),
@@ -319,62 +321,48 @@ export function FlavorListView({
                       {t('extensionsFlavors.flavorListView.activateButton')}
                     </Button>
                   )}
-                  <Button
-                    size="icon"
+                  <IconButton
+                    label={t('extensionsFlavors.flavorListView.captureAriaLabel', { name: displayName })}
+                    tooltip={hasUncaptured ? t('extensionsFlavors.flavorListView.captureTitleUncaptured', { name: displayName, count: formatLocaleNumber(locale, uncapturedCount) }) : t('extensionsFlavors.flavorListView.captureTitleSnapshot', { name: displayName })}
                     variant={hasUncaptured ? 'default' : 'ghost'}
                     onClick={() => onCaptureInto(flavor.id)}
                     disabled={busy}
-                    aria-label={t('extensionsFlavors.flavorListView.captureAriaLabel', { name: displayName })}
-                    title={hasUncaptured
-                      ? t('extensionsFlavors.flavorListView.captureTitleUncaptured', {
-                          name: displayName,
-                          count: formatLocaleNumber(locale, uncapturedCount),
-                        })
-                      : t('extensionsFlavors.flavorListView.captureTitleSnapshot', { name: displayName })}
                   >
                     <Camera className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
+                  </IconButton>
+                  <IconButton
+                    label={t('extensionsFlavors.flavorListView.renameAriaLabel', { name: displayName })}
+                    tooltip={t('extensionsFlavors.flavorListView.renameTitle')}
                     onClick={() => startRename(flavor)}
                     disabled={busy || isRenaming}
-                    aria-label={t('extensionsFlavors.flavorListView.renameAriaLabel', { name: displayName })}
-                    title={t('extensionsFlavors.flavorListView.renameTitle')}
                   >
                     <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
+                  </IconButton>
+                  <IconButton
+                    label={t('extensionsFlavors.flavorListView.duplicateAriaLabel', { name: displayName })}
+                    tooltip={t('extensionsFlavors.flavorListView.duplicateTitle')}
                     onClick={() => onDuplicate(flavor.id)}
                     disabled={busy}
-                    aria-label={t('extensionsFlavors.flavorListView.duplicateAriaLabel', { name: displayName })}
-                    title={t('extensionsFlavors.flavorListView.duplicateTitle')}
                   >
                     <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
+                  </IconButton>
+                  <IconButton
+                    label={t('extensionsFlavors.flavorListView.exportAriaLabel', { name: displayName })}
+                    tooltip={t('extensionsFlavors.flavorListView.exportTitle')}
                     onClick={() => onExport(flavor.id)}
                     disabled={busy}
-                    aria-label={t('extensionsFlavors.flavorListView.exportAriaLabel', { name: displayName })}
-                    title={t('extensionsFlavors.flavorListView.exportTitle')}
                   >
                     <Download className="h-3.5 w-3.5" />
-                  </Button>
+                  </IconButton>
                   {!isActive && (
-                    <Button
-                      size="icon"
-                      variant="ghost"
+                    <IconButton
+                      label={t('extensionsFlavors.flavorListView.deleteAriaLabel', { name: displayName })}
+                      tooltip={t('extensionsFlavors.flavorListView.deleteTitle')}
                       onClick={() => onDelete(flavor.id)}
                       disabled={busy}
-                      aria-label={t('extensionsFlavors.flavorListView.deleteAriaLabel', { name: displayName })}
-                      title={t('extensionsFlavors.flavorListView.deleteTitle')}
                     >
                       <X className="h-3.5 w-3.5" />
-                    </Button>
+                    </IconButton>
                   )}
                 </div>
               </li>

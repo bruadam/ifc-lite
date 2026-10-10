@@ -15,6 +15,8 @@
 
 import { isModelTagOp } from './model-tag.js';
 import { isModelFact } from './filter-model-fact.js';
+import { isListConditionRule } from './filter-list-condition.js';
+import { isMemberPath } from './subject-read-options.js';
 import type { ClassificationOp, FilterRule, StringOp, ValueOp } from './filter-rules.js';
 
 const STRING_OPS: ReadonlySet<unknown> = new Set<StringOp>([
@@ -22,7 +24,8 @@ const STRING_OPS: ReadonlySet<unknown> = new Set<StringOp>([
 ]);
 
 const VALUE_OPS: ReadonlySet<unknown> = new Set<ValueOp>([
-  'eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'notContains', 'matches', 'notMatches', 'isSet', 'isNotSet',
+  'eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'notContains', 'startsWith', 'endsWith',
+  'matches', 'notMatches', 'isSet', 'isNotSet', 'isNonEmpty', 'isNull', 'isNotNull',
 ]);
 
 const CLASSIFICATION_OPS: ReadonlySet<unknown> = new Set<ClassificationOp>([
@@ -59,6 +62,13 @@ export function isFilterRule(value: unknown): value is FilterRule {
     );
   }
   if ((kind === 'property' || kind === 'quantity') && !validReadOptions(value)) return false;
+  if (kind === 'property') {
+    const r = value as { nameCaseMode?: unknown; legacyListFirst?: unknown };
+    if (r.nameCaseMode !== undefined && r.nameCaseMode !== 'exact') return false;
+    if (r.legacyListFirst !== undefined && r.legacyListFirst !== true) return false;
+  }
+  if ((kind === 'property' || kind === 'attribute') && !validComparison(value)) return false;
+  if (kind === 'listCondition') return isListConditionRule(value);
   if (kind === 'modelFact') {
     const r = value as { fact?: unknown; op?: unknown; value?: unknown };
     return isModelFact(r.fact) && VALUE_OPS.has(r.op) && typeof r.value === 'string';
@@ -80,11 +90,24 @@ export function isFilterRule(value: unknown): value is FilterRule {
   );
 }
 
-/** `SubjectReadOptions` fields, when present, must hold a value the engine knows. */
+/** `SubjectReadOptions` fields, when present, must hold a value the engine
+ *  knows; `memberPath` only on a `property` rule. */
 function validReadOptions(value: object): boolean {
-  const r = value as { valueUnit?: unknown; inherit?: unknown };
+  const r = value as { kind?: unknown; valueUnit?: unknown; inherit?: unknown; memberPath?: unknown };
   return (r.valueUnit === undefined || r.valueUnit === 'si')
-    && (r.inherit === undefined || r.inherit === 'type' || r.inherit === 'aggregation');
+    && (r.inherit === undefined || r.inherit === 'type' || r.inherit === 'aggregation')
+    && (r.memberPath === undefined || (r.kind === 'property' && isMemberPath(r.memberPath)));
+}
+
+function validComparison(value: object): boolean {
+  const options = (value as { comparison?: unknown }).comparison;
+  if (options === undefined) return true;
+  if (options === null || typeof options !== 'object') return false;
+  const o = options as Record<string, unknown>;
+  return (o.caseMode === undefined || o.caseMode === 'fold' || o.caseMode === 'exact'
+      || o.caseMode === 'lensBoolean' || o.caseMode === 'ifcBoolean')
+    && (o.numericMode === undefined || o.numericMode === 'prefix' || o.numericMode === 'strict')
+    && o.typeMode === undefined && o.operandType === undefined;
 }
 
 export function parseFilterRules(raw: unknown): FilterRule[] {

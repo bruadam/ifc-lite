@@ -15,6 +15,19 @@ export function buildHelp(version: string): string {
   Usage: ifc-lite <command> [options]
 
   Commands:
+    match     <file> <candidates...>             Find likely model revisions
+              [--geometry] [--json] [--no-content] [--exclude-types T,...] [--threshold name=value]
+    commits   projects|models|list|show|download|diff|element|create-model|upload  Access a commit source
+              [--url URL] --project ID [--model ID] [--commit ID] [--cursor C] [--limit N]
+              download --out F; diff --base ID; element --key GlobalId; create-model --name NAME
+              upload <file.ifc> --parent ID|none --idempotency-key KEY [--message TEXT]
+              Credentials: IFC_LITE_COMMIT_URL and IFC_LITE_COMMIT_TOKEN environment variables
+    history   build|inspect|stamp|changes        Build and export model history
+              build <v1.ifc> <v2.ifc>... [--out F] [--geometry] [--by-content] [--include-artifacts]
+                [--identity-in F] [--lineage-in F] [--omit-authors]
+              inspect <package.ifchistory.zip> [--json]
+              stamp <package.ifchistory.zip> --out F [--pset NAME] [--omit-authors]
+              changes <package.ifchistory.zip> --since ID|INDEX --out F [--pset NAME] [--csv F] [--bcf F]
     info      <file.ifc>                          Model summary (schema, entities, storeys)
     query     <file.ifc> [--type T] [--json]      Query entities by type/properties/quantities
               [--select "IfcWall, Pset_WallCommon.FireRating=2HR"]  IfcOpenShell-style selector (classes union with --type; properties AND with --where)
@@ -72,13 +85,17 @@ export function buildHelp(version: string): string {
               recipe: {"models":["m.ifc"],"structural":true,"ids":["rules.ids"],"rules":["checks.rules.json"]}, paths relative to the recipe file
     check     <model.ifc>... --rules <file.rules.json>     Run a .rules.json information-validation rule set (same engine as the viewer)
               [--format json|table] [--fail-on error|warning]  exit 0 all pass / 1 any fail / 2 rule error or unreadable input
-    flow      <run|describe|validate> <graph.flow.json> [<file.ifc>] [--input k=v] [--out F]  Evaluate a node graph headlessly
+    semantic  <validate|query|assets|serve> [--json] [--out F]  Shared semantic profiles, SHACL and JSON/SPARQL providers
+              validate <records.json|graph.ttl> [--profile F] [--rdf] [--shapes F] [--graph-format turtle|nquads|jsonld]  exit 0 conforms / 1 findings
+              query --endpoint URL --host HOST [--query F] [--kind json|select|construct] [--bearer-env NAME] [--relay-provider ID] [--allow-loopback-http]
+              serve --config F --cert F --key F [--port N]  Authenticated HTTPS relay (env credential references only)
+              assets [--profile F] [--artifact schema|context|shapes|vocabulary|profile]  Generate profile artifacts
+    flow      <run|resume|review|describe|validate> <graph.flow.json> [<file.ifc>] [--input k=v] [--out F] [--checkpoint F]  Evaluate a node graph headlessly; pause and resume reviewed AI proposals
 
   Options:
     --help, -h           Show help
     --version, -v        Show version
     --json               Output as JSON (machine-readable)
-    --out <file>         Write output to file instead of stdout
     --verbose            Show parser + geometry diagnostics (stderr)
     --quiet              Errors only
     --debug              Verbose + stack traces on error
@@ -195,4 +212,68 @@ export function buildHelp(version: string): string {
 
   Learn more: https://ifclite.com
 `;
+}
+
+/**
+ * The `Commands:` block, as a map from command name to its rows (the command's
+ * own line plus any deeper-indented continuation lines).
+ *
+ * Derived from the same literal `buildHelp` returns rather than a second
+ * hand-written table: `scripts/docs/generate-docs-sections.mjs` already parses
+ * that block for the docs table, so a per-command help built any other way
+ * would be a third place to forget when a flag changes.
+ *
+ * A command row starts at exactly four spaces then the name; continuation rows
+ * are indented deeper. Long names (`diagnose-geometry`, `extract-entities`)
+ * leave only ONE space before their `<args>`, so the gap is `\s+`, not `\s{2,}`.
+ */
+function parseCommandBlock(help: string): Map<string, string[]> {
+  const block = help.match(/\n {2}Commands:\n([\s\S]*?)\n {2}Options:/);
+  const commands = new Map<string, string[]>();
+  if (!block) return commands;
+
+  let current: string[] | undefined;
+  for (const line of block[1].split('\n')) {
+    const head = line.match(/^ {4}([a-z][\w-]*)\s+\S/);
+    if (head) {
+      current = [line];
+      commands.set(head[1], current);
+    } else if (current && /^ {6,}\S/.test(line)) {
+      current.push(line);
+    } else if (line.trim() === '') {
+      current = undefined;
+    }
+  }
+  return commands;
+}
+
+/** Every command name the help text documents. */
+export function helpCommandNames(version = '0.0.0'): string[] {
+  return [...parseCommandBlock(buildHelp(version)).keys()];
+}
+
+/**
+ * Help for ONE command.
+ *
+ * `ifc-lite <command> --help` used to print the global help for all 37
+ * commands, because `index.ts` tested `args.includes('--help')` before
+ * dispatch and `args` still held the command name (#5527). The CLI's own docs
+ * tell LLM users to "discover all capabilities by running `ifc-lite --help`";
+ * there was no second level to discover.
+ *
+ * Returns `null` for a name the help text does not document, so the caller can
+ * fall back to the global help rather than print an empty section.
+ */
+export function buildCommandHelp(version: string, command: string): string | null {
+  const rows = parseCommandBlock(buildHelp(version)).get(command);
+  if (!rows) return null;
+  return [
+    ``,
+    `  ifc-lite ${command} — see \`ifc-lite --help\` for every command`,
+    ``,
+    ...rows,
+    ``,
+    `  Full reference: https://ifclite.dev/docs/guide/cli/`,
+    ``,
+  ].join('\n');
 }

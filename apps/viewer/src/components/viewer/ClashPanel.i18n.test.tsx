@@ -255,6 +255,12 @@ const NOT_RENDERED_IN_THIS_STATE: ClashPanelKey[] = [
   'clashPanel.action.show',
   'clashPanel.action.disable',
   'clashPanel.action.enable',
+  // Re-run tooltips for a rule-set / duplicate-scan result (#5818): the kind
+  // is recorded on the result by the real run (`lib/clash/run-request.ts`),
+  // which no fixture here performs. `ClashPanel.rerun-last.test.tsx` renders
+  // and asserts both.
+  'clashPanel.rerunTooltipMatrix',
+  'clashPanel.rerunTooltipDuplicates',
 ];
 
 /**
@@ -305,7 +311,7 @@ describe('ClashPanel localization (#4918)', { skip: !HAS_CATALOGUE && 'clash-pan
     useViewerStore.setState({ models: new Map() });
     const container = render(<ClashPanel onClose={() => {}} />);
     // Open the help disclosure so its four paragraphs are on screen.
-    const helpButton = [...container.querySelectorAll('button')].find((b) => b.getAttribute('title') === 'How clash detection works');
+    const helpButton = [...container.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'How clash detection works');
     assert.ok(helpButton, 'help toggle button not found');
     act(() => helpButton!.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true })));
 
@@ -365,6 +371,12 @@ describe('ClashPanel localization (#4918)', { skip: !HAS_CATALOGUE && 'clash-pan
     const expandButton = [...container.querySelectorAll('button[aria-expanded]')].find((b) => b.getAttribute('title') === 'Show both objects');
     assert.ok(expandButton, 'row expand toggle not found');
     act(() => expandButton!.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true })));
+
+    const comment = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Clash review comment"]');
+    assert.ok(comment, 'expanded clash exposes a named review comment editor (#6342)');
+    assert.equal(comment.value, 'Confirmed by MEP lead');
+    assert.ok(container.querySelector('select[aria-label="Group clashes by"]'), 'grouping control has a distinct name (#6342)');
+    assert.ok(container.querySelector('select[aria-label="Sort clashes by"]'), 'sorting control has a distinct name (#6342)');
 
     const english = chromeStrings(container);
     registerLocale(PSEUDO_LOCALE, PSEUDO);

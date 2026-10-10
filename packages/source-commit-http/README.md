@@ -107,3 +107,7 @@ error page still reaches the host as something it can branch on.
 `listContainers` and `listFiles` return empty pages and `download` throws:
 a commit service has models and commits, not folders and files. The
 corresponding 2.0.0 capability flags are all `false`.
+
+## Headless authentication
+
+Hosts that already manage a bearer token may pass `getAccessToken: async () => token` to `createCommitHttpProvider`. Such calls need only the `baseUrl` preference and do not invoke browser OIDC. Keep credentials in environment variables or a credential store. The CLI exposes this through `IFC_LITE_COMMIT_TOKEN`; its transport refuses redirects and cross-origin requests.

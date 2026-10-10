@@ -21,12 +21,12 @@
  *      Matches the convention emitted by `addWallToStore` /
  *      `IfcCreator.addIfcWall`: placement origin = wall Start,
  *      RefDirection = wall axis, profile XDim = wall length. Used for
- *      walls authored by the Add Element tool or anything else that
+ *      walls authored in the Model workspace or anything else that
  *      mirrors that shape.
  *
  * Walls that match neither shape are skipped with a recorded reason —
  * `WallExtractionResult.skipped[]` carries `{ wallId, reason }` so
- * callers (and the viewer's Auto Spaces UI) can surface why a wall
+ * callers (and the viewer's Room tool) can surface why a wall
  * didn't contribute to the planar graph.
  */
 
@@ -52,11 +52,12 @@ import {
   buildRelatingChildrenIndex,
   createOverlayLookup,
   effectiveMemberType,
-  effectiveStoreyIds,
   type OverlayLookup,
 } from './spatial-children.js';
 
 export type { OverlayWallReader };
+// Moved to `space-footprints.ts` (rings, #6232 A4b); kept here for its callers.
+export { existingSpaceFootprintsByStorey } from './space-footprints.js';
 
 export type WallSkipReason =
   | 'no-source-bytes'
@@ -100,7 +101,7 @@ export interface ExtractWallSegmentsOptions {
   /**
    * When true, the extractor emits `console.debug` messages for the
    * containment scan + per-wall extraction step. Useful for diagnosing
-   * "no enclosed regions detected" in the Auto Spaces flow.
+   * "no enclosed regions detected" in the Room tool's Auto.
    */
   debug?: boolean;
   /**
@@ -184,7 +185,7 @@ export function extractWallSegmentsForStorey(
   for (const id of dividerIds) {
     // Created dividers have no source bytes; the overlay loop below reads them.
     if (lookup.createdType(id) !== undefined) continue;
-    const result = extractWallAxisFromSource(store, extractor, id, storeyChain, log);
+    const result = extractWallAxisFromSource(store, extractor, overlay, id, storeyChain, log);
     if (result.segment) {
       segments.push(scaleSegment(result.segment, lengthUnitScale));
       contributing.push(id);
@@ -196,15 +197,21 @@ export function extractWallSegmentsForStorey(
 
   let overlayCount = 0;
   if (overlay) {
+    // Only the created dividers the spatial walk found on THIS storey: it
+    // indexes overlay-created IfcRelContainedInSpatialStructure too, and every
+    // authoring path writes one. Taking all of getNewEntities() made a wall
+    // authored on one storey a room boundary on every storey (#5642).
+    const onStorey = new Set(dividerIds);
     for (const ent of overlay.getNewEntities()) {
+      if (!onStorey.has(ent.expressId)) continue;
       // Effective class: a created wall retyped away is not a divider (#5249).
       if (!dividerTypes.has((lookup.retypeOf(ent.expressId) ?? ent.type).toLowerCase())) continue;
       overlayCount++;
       const result = extractWallAxisFromOverlay(store, extractor, overlay, ent, storeyChain, log);
       if (result.segment) {
-        // Overlay walls are authored via addWallToStore which emits
-        // metre coords — don't double-scale.
-        segments.push(result.segment);
+        // Overlay walls are authored via addWallToStore, which writes the
+        // file's native length unit like the source (#6232): scale them too.
+        segments.push(scaleSegment(result.segment, lengthUnitScale));
         contributing.push(ent.expressId);
         wallThicknesses.push(undefined); // overlay walls carry no material yet
       } else {
@@ -231,7 +238,8 @@ export function extractWallSegmentsForStorey(
     contributingWallIds: contributing,
     wallThicknesses,
     skipped,
-    considered: dividerIds.length + overlayCount,
+    // dividerIds already holds the created dividers on this storey (#5642).
+    considered: dividerIds.length,
     lengthUnitScale,
   };
 }
@@ -331,68 +339,6 @@ function collectDividerIdsOnStorey(
   return ids;
 }
 
-/**
- * Footprint polygons (model-local metres, same frame as the extracted wall
- * segments) of existing `IfcSpace` per storey — so generation can skip *only*
- * the new rooms that overlap an already-present space (per-space dedup), while
- * still adding rooms an empty part of the floor lacks. Keyed by storey
- * expressId; storeys with no resolvable space footprints are omitted.
- *
- * If the model's length-unit scale itself can't be trusted, this refuses
- * for the WHOLE store (empty map) rather than dividing every footprint by a
- * wrong factor: `storeyPlanFrame` — the write side of the same round-trip
- * (`useSpaceBake.ts` folds a new room through it, then reads existing
- * footprints back through this function to dedup against) — refuses the
- * same way per storey. A silent `?? 1` here on a genuinely degenerate scale
- * would have scaled every existing footprint to a value the write side had
- * already refused to trust, so the dedup compare would run on stale
- * coordinates with no warning that anything was wrong. An empty map means
- * dedup is skipped, matching the existing `--force` behaviour of this same
- * call site (`generateSpaces` in `generate-spaces-all.ts`) rather than
- * emitting mis-scaled polygons.
- */
-export function existingSpaceFootprintsByStorey(
-  store: IfcDataStore,
-  overlay?: OverlayWallReader,
-): Map<number, Vec2[][]> {
-  const out = new Map<number, Vec2[][]>();
-  if (!store.source) return out;
-  const extractor = new EntityExtractor(store.source);
-  const scale = safeLengthUnitScale(store.source, store.entityIndex, 'existingSpaceFootprintsByStorey');
-  if (scale === null) return out;
-  // Spaces baked earlier this session count as existing (#5249).
-  const lookup = createOverlayLookup(overlay);
-  const aggregated = buildRelatingChildrenIndex(store, extractor, lookup, 'IFCRELAGGREGATES', 4, 5);
-  const contained = buildRelatingChildrenIndex(store, extractor, lookup, 'IFCRELCONTAINEDINSPATIALSTRUCTURE', 5, 4);
-  for (const storeyId of effectiveStoreyIds(store, lookup)) {
-    const st = { expressId: storeyId };
-    const kids = [...(aggregated.get(st.expressId) ?? []), ...(contained.get(st.expressId) ?? [])];
-    // Same frame as the extracted wall segments — storey-local — so the
-    // overlap test in generate-spaces compares like with like.
-    const storeyChain = storeyPlacementChain(store, extractor, overlay, st.expressId);
-    const footprints: Vec2[][] = [];
-    for (const id of kids) {
-      if ((effectiveMemberType(store, lookup, id) ?? '').toUpperCase() !== 'IFCSPACE') continue;
-      const ent = readEntity(store, extractor, overlay, id);
-      if (!ent) continue;
-      const placementId = numericAttr(ent.attributes[5]);   // ObjectPlacement
-      const representationId = numericAttr(ent.attributes[6]); // Representation
-      if (placementId === null || representationId === null) continue;
-      const frame = frameInStoreyFrame(store, extractor, overlay, placementId, storeyChain);
-      const localPts = gatherBodyFootprintPoints(store, extractor, overlay, representationId);
-      if (!frame || !localPts || localPts.length < 3) continue;
-      // An authored (baked) space is written in metres; a parsed one is native.
-      const k = lookup.createdType(id) !== undefined ? 1 : scale;
-      footprints.push(localPts.map((p) => {
-        const w = applyFrame(frame, p);
-        return [w[0] * k, w[1] * k] as Vec2;
-      }));
-    }
-    if (footprints.length) out.set(st.expressId, footprints);
-  }
-  return out;
-}
-
 interface ExtractAttempt {
   segment: Segment | null;
   reason?: WallSkipReason;
@@ -401,26 +347,21 @@ interface ExtractAttempt {
 function extractWallAxisFromSource(
   store: IfcDataStore,
   extractor: EntityExtractor,
+  overlay: OverlayWallReader | undefined,
   wallId: number,
   storeyChain: ReadonlyMap<number, number> | null,
   log: Logger,
 ): ExtractAttempt {
-  // @raw-entity-enumeration-ok point read of one source divider; deleted ones were dropped by the effective spatial walk and created ones are read by the overlay loop
-  const ref = store.entityIndex.byId.get(wallId);
-  if (!ref) {
-    log(`wall #${wallId}: missing entity ref`);
-    return { segment: null, reason: 'no-source-bytes' };
-  }
-  const wall = extractor.extractEntity(ref);
+  const wall = readEntity(store, extractor, overlay, wallId);
   if (!wall) {
-    log(`wall #${wallId}: extractor returned null`);
+    log(`wall #${wallId}: effective entity missing`);
     return { segment: null, reason: 'wall-not-parsed' };
   }
   const placementId = numericAttr(wall.attributes[5]);
   const representationId = numericAttr(wall.attributes[6]);
   if (placementId === null) return { segment: null, reason: 'no-placement' };
   if (representationId === null) return { segment: null, reason: 'no-representation' };
-  return computeWallSegment(store, extractor, placementId, representationId, undefined, wallId, storeyChain, log);
+  return computeWallSegment(store, extractor, placementId, representationId, overlay, wallId, storeyChain, log);
 }
 
 function extractWallAxisFromOverlay(
@@ -582,7 +523,7 @@ function readPlacement2(
  * rep frame. Handles rectangle and arbitrary-(polyline-)closed profiles; skips
  * non-vertical extrusions (the profile wouldn't be a plan footprint then).
  */
-function gatherExtrudedFootprint(
+export function gatherExtrudedFootprint(
   store: IfcDataStore, extractor: EntityExtractor, overlay: OverlayWallReader | undefined,
   solid: { type?: string; attributes: IfcAttributeValue[] }, out: Vec2[],
 ): void {

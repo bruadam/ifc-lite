@@ -52,7 +52,7 @@ describe('isKnownCapability', () => {
   it.each([
     'model.read', 'model.mutate:Pset_*', 'model.create', 'model.delete',
     'viewer.read', 'viewer.colorize', 'viewer.isolate', 'viewer.fly', 'viewer.section',
-    'export.create:csv', 'storage.local', 'network.fetch:example.invalid',
+    'export.create:csv', 'storage.local', 'network.fetch:example.invalid', 'network.ai',
     'command.invoke:ext.*', 'ui.dock', 'ui.toolbar', 'ui.contextMenu', 'ui.statusBar',
   ])('recognises the catalogued capability "%s"', (raw) => {
     expect(isKnownCapability(cap(raw))).toBe(true);
@@ -109,11 +109,13 @@ describe('findCatalogueEntry', () => {
       'export.create',
       'model.mutate',
       'network.fetch',
+      'secret.read',
     ]);
   });
 
-  it('keeps model.delete and network.fetch at the red base risk', () => {
+  it('keeps model.delete, network.fetch, and secret.read at the red base risk', () => {
     expect(findCatalogueEntry(cap('model.delete'))?.baseRisk).toBe('red');
     expect(findCatalogueEntry(cap('network.fetch:example.invalid'))?.baseRisk).toBe('red');
+    expect(findCatalogueEntry(cap('secret.read:API_TOKEN'))?.baseRisk).toBe('red');
   });
 });

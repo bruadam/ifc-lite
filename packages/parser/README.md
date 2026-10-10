@@ -90,6 +90,8 @@ const material = extractMaterialsOnDemand(store, wallId);
 //   { name: 'Concrete C30/37', layers: [{ name: 'Concrete', thickness: 0.15 }, ...] }
 
 const classifications = extractClassificationsOnDemand(store, wallId);
+// Pass a native mutation view to read current classification edits before export.
+// const currentClassifications = extractClassificationsOnDemand(store, wallId, mutationView);
 //   [{ system: 'Uniclass 2015', identification: 'Pr_60_10_32', name: 'External walls', ... }]
 ```
 
@@ -106,6 +108,10 @@ if (georef?.hasGeoreference) {
   console.log(`Grid north: ${georef.mapConversion?.xAxisAbscissa}, ${georef.mapConversion?.xAxisOrdinate}`);
 }
 ```
+
+The exported, immutable `SI_PREFIX_MULTIPLIERS` table maps the exact `IfcSIPrefix`
+enumeration names to their numeric prefix factors. IFC readers and STEP compatibility writers
+share this table; an unknown prefix must be refused rather than treated as 1.
 
 ## Read cost data
 

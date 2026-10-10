@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import type { LoadTrace } from '@ifc-lite/load-trace';
 import type { IfcDataStore } from '@ifc-lite/parser';
 import type { CoordinateInfo, GeometryResult, ModelSpatialReference } from '@ifc-lite/geometry';
 import { totalYupOffset } from '@ifc-lite/geometry/world-frame';
@@ -16,6 +17,7 @@ import { LandXmlProvisionalTransaction } from './landXmlProvisionalTransaction.j
 import { LandXmlProvisionalUploadError } from './landXmlGpuTransactions.js';
 import { markLandXmlGpuUploaded } from './landXmlGpuOwnership.js';
 import { type FederatedLandXmlStreamingFinalization, FederatedLandXmlStreamingPlan } from './federatedLandXmlStreaming.js';
+import { GeoRasterBundle } from '@/lib/terrain-imagery/raster-bundle.js';
 
 interface LandXmlLoadOptions {
   file: File;
@@ -23,6 +25,8 @@ interface LandXmlLoadOptions {
   targetKind: 'primary' | 'federated';
   totalStartTime: number;
   wasHidden: boolean;
+  /** The load's trace: `ifc_model_loaded` reads its field properties off it (#6961). */
+  trace: LoadTrace;
   /**
    * #5175: opt-in linear unit for a source with no declared `<Units>`. Absent
    * by default, so a unitless source refuses exactly as it did before this
@@ -336,7 +340,7 @@ export async function loadLandXmlModel(options: LandXmlLoadOptions): Promise<voi
       load_path: 'landxml',
       total_elapsed_ms: Math.round(performance.now() - options.totalStartTime),
       was_hidden: options.wasHidden,
-    }, snapshotFromGeometry(options.fileSizeMB, result.geometryResult));
+    }, snapshotFromGeometry(options.fileSizeMB, result.geometryResult), options.trace);
     options.setLoading(false);
   } catch (error) {
     provisional.value?.rollback();
@@ -347,4 +351,17 @@ export async function loadLandXmlModel(options: LandXmlLoadOptions): Promise<voi
     options.onError(message);
     options.setLoading(false);
   }
+}
+
+/**
+ * #5942: a georeferenced raster bundle is imagery for the loaded terrain, not
+ * a model. It enters `useIfcLoader.loadFile` like every source, and this
+ * returns the drape before `loadFile` bumps the load session or resets the
+ * scene; `null` for anything else. The drape module loads only when used.
+ */
+export function drapeIfGeoRaster(file: File, setLoading: (loading: boolean) => void): Promise<void> | null {
+  if (!(file instanceof GeoRasterBundle)) return null;
+  return import('./terrainImageryDrape.js')
+    .then(({ drapeGeoRasterBundle }) => drapeGeoRasterBundle(file))
+    .finally(() => setLoading(false));
 }

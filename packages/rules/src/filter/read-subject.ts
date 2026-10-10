@@ -43,19 +43,23 @@ import {
   type IfcDataStore,
 } from '@ifc-lite/parser';
 import { RelationshipType, collectSpatialAncestors } from '@ifc-lite/data';
+import type { MutablePropertyView } from '@ifc-lite/mutations';
 import type { Subject } from '../rule-set/rule-set.js';
-import { stringifyValue, defaultStoreyName, materialNamesOf } from './filter-match.js';
+import { stringifyValue, materialNamesOf } from './filter-match.js';
+import { defaultStoreyName } from './filter-storey.js';
 import { resolveEntityPredefinedType } from './entity-predefined-type.js';
 import { readMeasureSubject } from './read-measure-subject.js';
 import { assignedGroupNames } from './filter-group-rule.js';
 import { readModelFact } from './filter-model-fact.js';
 
-/** What `readSubject` needs about the element it reads. No `mutationView` —
- *  the engine reads the model as loaded, not with live in-session edits
- *  applied (those are a follow-up; noted in the PR body). */
+/** What `readSubject` needs about the element it reads. Validation passes no
+ *  `mutationView` and reads the model as loaded; search and applicability
+ *  pass the model's live view, which `property` / `quantity` subjects read
+ *  edits through (`read-measure-subject.ts`). Other subjects read the file. */
 export interface ReadSubjectContext {
   store: IfcDataStore;
   expressId: number;
+  mutationView?: MutablePropertyView;
 }
 
 /** The result `readSubject` returns for every `Subject` kind. */
@@ -79,6 +83,25 @@ export interface SubjectValue {
    * `valueUnits`; `undefined` for a value with no unit (#5225).
    */
   valueSiScales?: ReadonlyArray<number | undefined>;
+  /**
+   * Property subjects only: one value per matched property, a list, enumerated
+   * or table value as its joined display text, where `values` holds each
+   * member (#5475). The set checks (`unique`, `aggregate`, `compare`) read
+   * a property as ONE value, so they use these; element checks match members.
+   */
+  displayValues?: ReadonlyArray<string>;
+}
+
+/** `subject` read as whole values: each property once, as the set checks compare it (#5475). */
+export function readSubjectWhole(subject: Subject, ctx: ReadSubjectContext): SubjectValue {
+  const read = readSubject(subject, ctx);
+  if (!read.displayValues) return read;
+  // Per-member unit arrays no longer line up with one value per property; drop them.
+  return {
+    present: read.displayValues.some((v) => v.trim().length > 0),
+    values: read.displayValues,
+    ...(read.unit !== undefined ? { unit: read.unit } : {}),
+  };
 }
 
 function fromStrings(values: ReadonlyArray<string | undefined>): SubjectValue {
@@ -112,10 +135,10 @@ export function readSubject(subject: Subject, ctx: ReadSubjectContext): SubjectV
     }
     case 'property':
     case 'quantity':
-      return readMeasureSubject(subject, store, expressId);
+      return readMeasureSubject(subject, store, expressId, ctx.mutationView);
     case 'classification': {
       const sys = subject.system?.trim().toLowerCase();
-      const refs = extractClassificationsOnDemand(store, expressId).filter(
+      const refs = extractClassificationsOnDemand(store, expressId, ctx.mutationView).filter(
         (r) => !r.unresolved && (!sys || (r.system ?? '').toLowerCase() === sys),
       );
       // BOTH the code AND the name per ref, not one-or-the-other — review

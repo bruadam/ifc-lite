@@ -26,16 +26,20 @@ import { PropertySetCard } from './PropertySetCard';
 import { GeoreferencingPanel } from './GeoreferencingPanel';
 import type { PropertySet } from './encodingUtils';
 import type { FederatedModel } from '@/store/types';
-import { extractGeoreferencingOnDemand, extractLengthUnitScale, extractProjectUnits, ProjectUnits, type IfcDataStore } from '@ifc-lite/parser';
+import { extractGeoreferencingOnDemand, extractProjectUnits, ProjectUnits, type IfcDataStore } from '@ifc-lite/parser';
 import { useViewerStore } from '@/store';
+import { getIfcLengthUnitScale } from '@/lib/geo/effective-georef';
 import { computeModelStats } from './modelMetadataStats';
 import { collectEffectivePhysicalEntityIds } from '@/lib/physical-objects';
 import { useTranslation } from '@/i18n';
 import { formatLocaleDate, formatLocaleNumber } from '@/i18n/intlFormat';
 import { EXPRESS_DESCRIPTION_ATTRIBUTE, EXPRESS_GLOBAL_ID_ATTRIBUTE, EXPRESS_NAME_ATTRIBUTE } from './express-labels';
 import { LandXmlModelSourceNavigation } from './LandXmlModelSourceNavigation';
+import { TerrainImageryCard } from './TerrainImageryCard';
 import { effectiveClassificationSystems } from './effective-classification-systems';
 import { normalizeMutationModelId } from '@/sdk/adapters/mutation-view';
+import { useStreamingThrottled } from '@/hooks/useStreamingThrottled';
+import { isModelStreaming } from '@/lib/streaming-refresh';
 
 /** Model metadata panel - displays file info, schema version, entity counts, etc. */
 export function ModelMetadataPanel({ model }: { model: FederatedModel }) {
@@ -95,14 +99,22 @@ export function ModelMetadataPanel({ model }: { model: FederatedModel }) {
 
   // Count storeys and elements — see `modelMetadataStats.ts` for what
   // "Elements with Geometry" means and why raw `byStorey` membership isn't it.
+  // The count walks every mesh, so while this model's geometry streams it
+  // follows the held geometry rather than every publish (#6411). Only this
+  // model's own streaming geometry is held: another model, or this one
+  // finishing, passes at once.
+  const statsGeometry = useStreamingThrottled(
+    { modelId: model.id, geometry: model.geometryResult, streaming: isModelStreaming(model) },
+    (held, next) => held.modelId === next.modelId && held.streaming && next.streaming,
+  ).geometry;
   const stats = useMemo(
-    () => computeModelStats(dataStore, model.geometryResult, {
+    () => computeModelStats(dataStore, statsGeometry, {
       mutationView,
       physicalIds,
       // A completed cache hit may validly contain no geometry result. That is
       // a known-empty model, unlike the same null while streaming.
       geometryReady:
-        model.geometryResult != null ||
+        statsGeometry != null ||
         model.loadState === 'complete' ||
         model.geometryLoadState === 'complete',
       toLocalId: (globalId) => {
@@ -113,7 +125,7 @@ export function ModelMetadataPanel({ model }: { model: FederatedModel }) {
         return ref?.modelId === model.id ? ref.expressId : undefined;
       },
     }),
-    [dataStore, fromGlobalId, model.geometryLoadState, model.geometryResult, model.id, model.loadState, mutationView, physicalIds],
+    [dataStore, fromGlobalId, model.geometryLoadState, statsGeometry, model.id, model.loadState, mutationView, physicalIds],
   );
 
   // Extract georeferencing info
@@ -121,19 +133,20 @@ export function ModelMetadataPanel({ model }: { model: FederatedModel }) {
     if (!dataStore) return null;
     const info = extractGeoreferencingOnDemand(dataStore as IfcDataStore);
     return info?.hasGeoreference ? info : null;
-  }, [dataStore]);
+  }, [dataStore, dataStore?.georeferencing]);
 
   // Extract length unit scale
   const unitInfo = useMemo(() => {
-    if (!dataStore?.source?.length || !dataStore?.entityIndex) return null;
-    const scale = extractLengthUnitScale(dataStore.source, dataStore.entityIndex);
+    if (!dataStore) return null;
+    if (dataStore.lengthUnitScale === undefined && (!dataStore.source?.length || !dataStore.entityIndex)) return null;
+    const scale = getIfcLengthUnitScale(dataStore);
     let unitName = t('properties.modelMetadata.unit.meters');
     if (Math.abs(scale - 0.001) < 0.0001) unitName = t('properties.modelMetadata.unit.millimeters');
     else if (Math.abs(scale - 0.01) < 0.001) unitName = t('properties.modelMetadata.unit.centimeters');
     else if (Math.abs(scale - 0.0254) < 0.001) unitName = t('properties.modelMetadata.unit.inches');
     else if (Math.abs(scale - 0.3048) < 0.01) unitName = t('properties.modelMetadata.unit.feet');
     return { scale, unitName };
-  }, [dataStore, t, revision]);
+  }, [dataStore, dataStore?.lengthUnitScale, t, revision]);
 
   // The file's declared units, for rendering unit suffixes on project
   // property values (issue #1573).
@@ -178,7 +191,7 @@ export function ModelMetadataPanel({ model }: { model: FederatedModel }) {
 
         {/* Schema badge */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono bg-primary/10 border border-primary/30 px-2 py-1 text-primary font-bold uppercase">
+          <span className="text-2xs font-mono bg-primary/10 border border-primary/30 px-2 py-1 text-primary font-bold uppercase">
             {model.sourceSchema ?? model.schemaVersion}
           </span>
         </div>
@@ -272,7 +285,7 @@ export function ModelMetadataPanel({ model }: { model: FederatedModel }) {
                 <div className="flex items-center gap-3 px-3 py-2">
                   <Hash className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                   <span className="text-xs text-zinc-500">{EXPRESS_GLOBAL_ID_ATTRIBUTE}</span>
-                  <code className="text-[10px] font-mono text-zinc-600 dark:text-zinc-400 ml-auto truncate max-w-[60%]">
+                  <code className="text-2xs font-mono text-zinc-600 dark:text-zinc-400 ml-auto truncate max-w-[60%]">
                     {projectData.globalId}
                   </code>
                 </div>
@@ -332,6 +345,8 @@ export function ModelMetadataPanel({ model }: { model: FederatedModel }) {
             )}
           </div>
         </div>
+
+        {model.sourceSchema && model.landXmlDocument && <TerrainImageryCard model={model} />}
 
         {model.sourceSchema && model.landXmlDocument && <LandXmlModelSourceNavigation
           modelId={model.id}

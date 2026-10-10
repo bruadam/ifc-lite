@@ -122,9 +122,10 @@
         );
     }
 
-    /// `DELETE /api/v1/cache/{hash}` (issue #3636) must remove every entry
-    /// fanned out under one hash -- the bare request key plus the `-json-v2`,
-    /// `-parquet-v5`, `-symbolic-v1`-shaped suffixes a real parse writes --
+    /// `DELETE /api/v1/cache/{key}` (issue #3636) hands this the file hash its
+    /// request `cache_key` resolves to (#5750), and must remove every entry
+    /// fanned out under that hash -- the bare request key plus the `-json-v2`,
+    /// `-parquet-v8`, `-symbolic-v1`-shaped suffixes a real parse writes --
     /// while a DIFFERENT hash's entries (the control) survive untouched.
     #[tokio::test]
     async fn remove_by_key_prefix_deletes_every_suffixed_entry_for_one_hash_only() {
@@ -139,7 +140,7 @@
             .await
             .unwrap();
         cache
-            .set_bytes(&format!("{hash}-default-parquet-v5"), b"parquet-entry")
+            .set_bytes(&format!("{hash}-default-parquet-v8"), b"parquet-entry")
             .await
             .unwrap();
         cache
@@ -163,7 +164,7 @@
             .unwrap()
             .is_none());
         assert!(cache
-            .get_bytes(&format!("{hash}-default-parquet-v5"))
+            .get_bytes(&format!("{hash}-default-parquet-v8"))
             .await
             .unwrap()
             .is_none());
@@ -182,10 +183,11 @@
 
     /// The `-` separator in `remove_by_key_prefix` exists specifically to
     /// reject a TRUNCATED prefix: `"abc"` must not match `"abc123-..."`
-    /// entries just because it is a string prefix of the key. A client
-    /// sending `DELETE /api/v1/cache/abc` (a truncated or mistyped hash)
-    /// must not be able to reach a hash it never had -- it should delete
-    /// nothing, and the real entry must stay readable.
+    /// entries just because it is a string prefix of the key. The route now
+    /// refuses a truncated key with `400` before it gets here (#5750), so
+    /// this pins the second line of defence: a truncated prefix handed to
+    /// `remove_by_key_prefix` directly must still delete nothing, and the
+    /// real entry must stay readable.
     #[tokio::test]
     async fn remove_by_key_prefix_does_not_match_a_truncated_prefix() {
         let (cache, _dir) = fresh_cache("prefix-removal-truncated").await;

@@ -49,6 +49,10 @@ import type { ClashRule } from '@ifc-lite/clash';
 import type { CoordinateInfo, GeometryResult, MeshData } from '@ifc-lite/geometry';
 import { useViewerStore, type FederatedModel } from '@/store';
 import { useClash } from './useClash.js';
+import { startActivityRecorders, resetActivityRecordersForTest } from '@/lib/activity/activity-recorders';
+import { useActivityJournal, activityCanceller, cancelActivity } from '@/lib/activity/activity-journal';
+import { render, click, cleanup } from '@/test/render';
+import { ActivityTrayList } from '@/components/viewer/activity/ActivityTrayList';
 
 // ─── Fixture: N mutually-overlapping unit boxes (real narrow-phase work) ───
 
@@ -120,7 +124,7 @@ function geometry(meshes: MeshData[]): GeometryResult {
   return { meshes, totalTriangles: 12 * meshes.length, totalVertices: 8 * meshes.length, coordinateInfo };
 }
 
-function model(id: string, store: IfcDataStore, meshes: MeshData[]): FederatedModel {
+function model(id: string, store: IfcDataStore, meshes: MeshData[], idOffset = 0): FederatedModel {
   return {
     id,
     name: `${id}.ifc`,
@@ -131,7 +135,7 @@ function model(id: string, store: IfcDataStore, meshes: MeshData[]): FederatedMo
     schemaVersion: 'IFC4',
     loadedAt: 0,
     fileSize: 0,
-    idOffset: 0,
+    idOffset,
     maxExpressId: WALL_COUNT,
   };
 }
@@ -150,11 +154,12 @@ function Probe(): null {
 
 let root: Root | null = null;
 
-async function seed(): Promise<void> {
+async function seed(modelCount: 1 | 2 = 1): Promise<void> {
   const store = await parse(wallsBody(WALL_COUNT));
   const meshes: MeshData[] = [];
   for (let i = 0; i < WALL_COUNT; i += 1) meshes.push(boxMesh(i + 1, i));
   const models = new Map<string, FederatedModel>([['A', model('A', store, meshes)]]);
+  if (modelCount === 2) models.set('B', model('B', store, [], 1_000_000));
   useViewerStore.setState({
     models,
     activeModelId: 'A',
@@ -200,6 +205,30 @@ afterEach(async () => {
 });
 
 describe('useClash - concurrent-run supersession (#2802)', () => {
+  for (const modelCount of [1, 2] as const) {
+    it(`cancelRun() keeps the previous result after a live engine abort with ${modelCount} model(s) (#5831)`, async () => {
+      await seed(modelCount);
+      await act(async () => { await api!.runDuplicates(); });
+      const previous = useViewerStore.getState().clashResult;
+      assert.ok(previous, 'a prior result should be visible during re-run');
+
+      let cancelled = false;
+      const unsub = fireAtNarrowPhase(() => {
+        cancelled = true;
+        api!.cancelRun();
+      });
+      await act(async () => { await api!.run([ALL_RULE]); });
+      unsub();
+
+      assert.equal(cancelled, true, 'the real engine should reach narrow-phase work');
+      const state = useViewerStore.getState();
+      assert.equal(state.clashRunning, false);
+      assert.equal(state.clashProgress, null);
+      assert.equal(state.clashError, null);
+      assert.strictEqual(state.clashResult, previous, 'cancel must retain the prior result');
+    });
+  }
+
   it('a later runDuplicates() that finishes first must not be overwritten by an earlier, slower run() finishing after it', async () => {
     await seed();
 
@@ -229,4 +258,167 @@ describe('useClash - concurrent-run supersession (#2802)', () => {
         'overwrite it just because it lands last.',
     );
   });
+});
+
+
+// Stated invariant: 200 parsed IFC walls with mutually overlapping closed
+// boxes exercise the real native broad/narrow loops and their yield points.
+describe('owned native clash activity cancellation (#7110)', () => {
+  let stopRecorders = () => {};
+  beforeEach(() => {
+    resetActivityRecordersForTest();
+    stopRecorders = startActivityRecorders(useViewerStore);
+  });
+  afterEach(() => {
+    stopRecorders();
+    cleanup();
+    sessionStorage.clear();
+  });
+
+  for (const modelCount of [1, 2] as const) {
+    it(`mounted tray Cancel aborts the real narrow phase with ${modelCount} models`, async () => {
+      await seed(modelCount);
+      await act(async () => { await api!.runDuplicates(); });
+      const previous = useViewerStore.getState().clashResult;
+      const ui = render(<ActivityTrayList onOpened={() => {}} />);
+      let cancelled = false;
+      const detach = fireAtNarrowPhase(() => {
+        const button = [...ui.querySelectorAll('button')].find(candidate => candidate.textContent === 'Cancel');
+        assert.ok(button, 'the mounted tray must expose native check cancellation');
+        click(button);
+        cancelled = true;
+      });
+      try { await act(async () => { await api!.run([ALL_RULE]); }); }
+      finally { detach(); }
+      assert.equal(cancelled, true);
+      assert.equal(useViewerStore.getState().clashResult, previous);
+      assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['completed', 'cancelled']);
+      assert.equal(useViewerStore.getState().clashError, null);
+      assert.equal(useViewerStore.getState().clashRunning, false);
+      assert.equal(activityCanceller(useActivityJournal.getState().jobs.at(-1)!.id), null);
+    });
+  }
+
+  for (const path of ['duplicates', 'preset'] as const) {
+    it(`tray cancels ${path} preparation before geometry is examined`, async () => {
+      await seed();
+      let pending: Promise<void> | undefined;
+      act(() => {
+        pending = path === 'duplicates' ? api!.runDuplicates() : api!.runPreset(useViewerStore.getState().clashPresets[0].id);
+      });
+      const job = useActivityJournal.getState().jobs.at(-1)!;
+      assert.equal(job.outcome, 'running');
+      assert.ok(activityCanceller(job.id));
+      act(() => cancelActivity(job.id));
+      assert.equal(useViewerStore.getState().clashRunning, false);
+      await act(async () => { await pending; });
+      assert.equal(useViewerStore.getState().clashResult, null);
+      assert.equal(useActivityJournal.getState().jobs.at(-1)?.outcome, 'cancelled');
+      assert.equal(activityCanceller(job.id), null);
+      assert.equal(useViewerStore.getState().clashRunning, false);
+    });
+  }
+
+  it('a completed preset transfers preparation ownership into one completed native activity', async () => {
+    await seed();
+    await act(async () => { await api!.runPreset(useViewerStore.getState().clashPresets[0].id); });
+    assert.ok(useViewerStore.getState().clashResult);
+    assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['completed']);
+    assert.equal(useViewerStore.getState().clashRunning, false);
+  });
+
+  it('a superseded row and retained callback cannot cancel the newer native job', async () => {
+    await seed();
+    let newer: Promise<void> | undefined;
+    let called = false;
+    const detach = fireAtNarrowPhase(() => {
+      const oldJob = useActivityJournal.getState().jobs.at(-1)!;
+      const oldCancel = activityCanceller(oldJob.id);
+      assert.ok(oldCancel);
+      newer = api!.runDuplicates();
+      const current = useActivityJournal.getState().jobs.at(-1)!;
+      assert.notEqual(current.id, oldJob.id);
+      oldCancel();
+      assert.equal(useViewerStore.getState().clashRunning, true, 'retained old authority cannot clear the new owner');
+      assert.ok(activityCanceller(current.id));
+      assert.equal(activityCanceller(oldJob.id), null, 'a superseded row has no live registry entry');
+      called = true;
+    });
+    try { await act(async () => { await api!.run([ALL_RULE]); await newer; }); }
+    finally { detach(); }
+    assert.equal(called, true);
+    assert.equal(useViewerStore.getState().clashResult?.rulesRun[0].id, 'duplicates');
+    assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['cancelled', 'completed']);
+    assert.equal(useViewerStore.getState().clashRunning, false);
+  });
+
+  it('closing the owning panel leaves a native background run cancellable from its tray row', async () => {
+    await seed();
+    let pending: Promise<void> | undefined;
+    act(() => { pending = api!.runDuplicates(); });
+    const job = useActivityJournal.getState().jobs.at(-1)!;
+    const current = root!;
+    root = null;
+    act(() => current.unmount());
+    assert.equal(job.outcome, 'running');
+    assert.ok(activityCanceller(job.id), 'panel closure must not orphan the native cancel authority');
+    act(() => cancelActivity(job.id));
+    await act(async () => { await pending; });
+    assert.equal(useViewerStore.getState().clashResult, null);
+    assert.equal(useActivityJournal.getState().jobs.at(-1)?.outcome, 'cancelled');
+    assert.equal(activityCanceller(job.id), null);
+    assert.equal(useViewerStore.getState().clashRunning, false);
+  });
+
+  it('clearing native results records one cancelled job without a replacement phantom row (#7110)', async () => {
+    await seed();
+    let pending: Promise<void> | undefined;
+    act(() => { pending = api!.runDuplicates(); });
+    act(() => api!.clearAll());
+    await act(async () => { await pending; });
+    assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['cancelled']);
+    assert.equal(useViewerStore.getState().clashRunning, false);
+    assert.equal(useViewerStore.getState().clashResult, null);
+  });
+
+
+  it('an older mounted panel cannot cancel the newer hook owner or mislabel its native result (#7110)', async () => {
+    await seed();
+    const oldOwner = api!;
+    let other: ClashApi | undefined;
+    function OtherOwner() { other = useClash(); return null; }
+    render(<OtherOwner />);
+    assert.ok(other);
+    let first: Promise<void> | undefined;
+    let second: Promise<void> | undefined;
+    act(() => { first = oldOwner.runDuplicates(); second = other!.runDuplicates(); });
+    const currentJob = useActivityJournal.getState().jobs.at(-1)!;
+    assert.ok(activityCanceller(currentJob.id));
+    act(() => oldOwner.cancelRun());
+    assert.equal(useViewerStore.getState().clashRunning, true, "older panel cancellation cannot clear the current owner's running state");
+    assert.ok(activityCanceller(currentJob.id));
+    await act(async () => { await first; await second; });
+    assert.equal(useViewerStore.getState().clashResult?.rulesRun[0].id, 'duplicates');
+    assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['cancelled', 'completed']);
+    assert.equal(useViewerStore.getState().clashRunning, false);
+  });
+
+
+  it('workspace Clear from another mounted panel cancels the actual owner and cannot resurrect results (#7110)', async () => {
+    await seed();
+    const otherPanel = api!;
+    let owner: ClashApi | undefined;
+    function Owner() { owner = useClash(); return null; }
+    render(<Owner />);
+    assert.ok(owner);
+    let pending: Promise<void> | undefined;
+    act(() => { pending = owner!.runDuplicates(); });
+    act(() => otherPanel.clearAll());
+    await act(async () => { await pending; });
+    assert.equal(useViewerStore.getState().clashRunning, false);
+    assert.equal(useViewerStore.getState().clashResult, null);
+    assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['cancelled']);
+    assert.equal(activityCanceller(useActivityJournal.getState().jobs[0].id), null);
+  });
+
 });

@@ -128,6 +128,7 @@ export const bcfEn = {
 
   // BCFTopicDetail.tsx
   'bcf.topicDetail.zoomToTopicAria': 'Zoom to topic',
+  'bcf.topicDetail.backToTopics': 'Back to topics',
   'bcf.topicDetail.zoomTo': 'Zoom to',
   'bcf.topicDetail.editTopic': 'Edit topic',
   'bcf.topicDetail.deleteTopicAria': 'Delete topic',
@@ -160,6 +161,7 @@ export const bcfEn = {
   'bcf.topicDetail.cancelViewpointCommentAria': 'Cancel viewpoint comment',
   'bcf.topicDetail.addCommentOnViewpointPlaceholder': 'Add comment on viewpoint...',
   'bcf.topicDetail.addCommentPlaceholder': 'Add a comment...',
+  'bcf.topicDetail.commentInputLabel': 'Comment',
   'bcf.topicDetail.sendCommentAria': 'Send comment',
   'bcf.topicDetail.deleteConfirmTitle': 'Delete Topic?',
   'bcf.topicDetail.deleteConfirmBody':
@@ -181,14 +183,18 @@ export const bcfEn = {
   'bcf.panel.title': 'BCF Topics',
   'bcf.panel.importTitle': 'Import BCF',
   'bcf.panel.exportTitle': 'Export BCF',
+  'bcf.panel.formatBcfzip': 'BCF',
   'bcf.panel.hideMarkers': 'Hide 3D markers',
   'bcf.panel.showMarkers': 'Show 3D markers',
   'bcf.panel.setAuthorTitle': 'Set author',
   'bcf.panel.setAuthorHeading': 'Set Author Email',
+  'bcf.panel.authorEmailLabel': 'Author email',
   'bcf.panel.importDialogTitle': 'Import BCF File',
   'bcf.panel.bcfFilterName': 'BCF Files',
   'bcf.panel.allFilesFilterName': 'All Files',
   'bcf.panel.untitledTopic': 'Untitled',
   'bcf.panel.importError': 'Failed to import BCF file',
   'bcf.panel.exportError': 'Failed to export BCF file',
+  'bcf.panel.busy': 'Processing BCF file…',
+  'bcf.panel.captureViewpointFailed': 'Could not capture a viewpoint. Wait for the model to finish loading, then try again.',
 } as const satisfies Record<string, TranslationValue>;

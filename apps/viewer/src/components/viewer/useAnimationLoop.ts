@@ -18,12 +18,16 @@ import { flushPlacementGeometry } from '@/lib/model-placement/bounds-revision';
 import { useEffect, type MutableRefObject, type RefObject } from 'react';
 import type { Renderer, VisualEnhancementOptions, LightingEnvironment } from '@ifc-lite/renderer';
 import type { CoordinateInfo } from '@ifc-lite/geometry';
-import type { SectionPlane } from '@/store';
+import { useViewerStore, type SectionPlane } from '@/store';
+import { hoverOutlineTarget } from './useHoverOutline';
 import { chartAwareRendererSelectionFromStore } from '@/lib/charts/renderer-selection';
+import { preserveClashPaintInSelection } from '@/lib/clash/renderer-selection';
+import { sectionRenderClip } from '@/lib/section/section-render-clip';
 import { projectToCssScreen } from '../../utils/projectScreen.js';
 import { getContributionCullConfig } from '../../utils/renderCullConfig.js';
 import { getLodScreenPx } from '../../utils/lodConfig.js';
 import { runGpuUpload } from './gpu-upload-guard';
+import { fieldTelemetry } from '@/lib/perf/fieldTelemetryLoader';
 /** Sun cast-shadow render options, driven by the Environment panel (#2670). */
 export interface SunShadowSettings {
   enabled: boolean;
@@ -169,6 +173,7 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
 
       const deltaTime = currentTime - lastFrameTimeRef.current;
       lastFrameTimeRef.current = currentTime;
+      fieldTelemetry?.noteNavigateFrame(deltaTime, isInteractingRef.current); // #6961 ifc_navigate (null until a load)
 
       // 1. Drain mesh queue (streaming GPU uploads)
       let queueFlushed = false;
@@ -179,7 +184,7 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
           // Contained like the residency drain below: an uncaught throw here
           // skips the tail-position requestAnimationFrame(animate) that re-arms
           // this loop, so rendering would stop permanently.
-          queueFlushed = runGpuUpload('flushPending:raf', () => flushPlacementGeometry(scene, device, pipeline)) ?? false;
+          queueFlushed = runGpuUpload('flushPending:raf', () => flushPlacementGeometry(scene, device, pipeline, isInteractingRef.current)) ?? false;
           if (queueFlushed) {
             renderer.clearCaches();
           }
@@ -189,8 +194,7 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
       // 1b. Rebuild GPU-evicted batches the last frame asked for (residency
       // budget, issue #1682 phase 3a). Time-budgeted; requests a render so
       // the restored batches appear on the next frame. Guarded like the
-      // instanced-shard drain: an uncaught throw here (e.g. buffer creation
-      // on a lost device) would kill the rAF loop and blank the canvas.
+      // instanced-shard drain: an uncaught throw here (e.g. buffer creation on a lost device) would kill the rAF loop.
       if (scene.hasResidencyRestoreWork()) {
         try {
           const device = renderer.getGPUDevice();
@@ -241,12 +245,13 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
       // interaction throttle still caps the cadence via `throttled`.
       const willRender =
         (isAnimating || renderRequested || queueFlushed || isInteractingRef.current) && !throttled;
-
       if (willRender) {
         renderer.consumeRenderRequest();
         const renderStart = performance.now();
-        const selection = chartAwareRendererSelectionFromStore(
-          selectedEntityIdRef.current, selectedEntityIdsRef.current, scene.getColorOverrides());
+        const appliedColors = scene.getColorOverrides();
+        const selection = preserveClashPaintInSelection(
+          chartAwareRendererSelectionFromStore(selectedEntityIdRef.current, selectedEntityIdsRef.current, appliedColors),
+          clashHighlightColorsRef.current, appliedColors);
         // Belt for the renderer's own device-loss latch (#2229). render()
         // contains its failures and degrades to a quiet skip, but this loop
         // must survive even a render-path throw it does not yet contain:
@@ -274,26 +279,9 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
             contributionCull,
             lod,
             buildingRotation: coordinateInfoRef.current?.buildingRotation,
-            sectionPlane: activeToolRef.current === 'section' ? {
-              axis: sectionPlaneRef.current.axis,
-              position: sectionPlaneRef.current.position,
-              enabled: sectionPlaneRef.current.enabled,
-              flipped: sectionPlaneRef.current.flipped,
-              // Cap rendering settings — the renderer reads these to draw the
-              // filled, hatched cut surfaces.
-              showCap: sectionPlaneRef.current.showCap,
-              showOutlines: sectionPlaneRef.current.showOutlines,
-              capStyle: sectionPlaneRef.current.capStyle,
-              min: sectionRangeRef.current?.min,
-              max: sectionRangeRef.current?.max,
-              // Custom (face-picked) plane override (issue #243). When set
-              // the renderer uses these verbatim and ignores axis/position/
-              // min/max for the clip math; cap polygons are still emitted
-              // through the same Section2DOverlayRenderer with a custom
-              // basis so the silhouette lands on the tilted plane.
-              normal:   sectionPlaneRef.current.custom?.normal,
-              distance: sectionPlaneRef.current.custom?.distance,
-            } : undefined,
+            // The cut: a plane or clip box (#5513), gated on the visibility toggle (#5893); an uncut preview only
+            // inside the Section tool (#6374).
+            ...sectionRenderClip(useViewerStore.getState().sceneState.section.visible, sectionPlaneRef.current, sectionRangeRef.current, useViewerStore.getState().activeTool), ...hoverOutlineTarget(),
             terrainClipY: terrainClipYRef.current ?? undefined,
           });
         } catch (err) {
@@ -314,8 +302,8 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
             // else, rethrowing on NEITHER branch — so reaching here means the
             // throw was never contained by the renderer at all. It also may
             // never have entered `render()`: the try covers the argument
-            // literal above, whose ~25 ref reads (`sectionPlaneRef.current.axis`
-            // and friends) run before the call.
+            // literal above, whose ref reads (`sectionRenderClip(...)` and
+            // friends) run before the call.
             console.warn(
               '[useAnimationLoop] render() threw (keeping the loop alive). ' +
               'render() is contracted never to throw, so this escaped renderer ' +
@@ -351,8 +339,14 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
         lastScaleUpdate = currentTime;
       }
 
-      // 5. Measurement screen coords
-      if (activeToolRef.current === 'measure' && hasPendingMeasurements()) {
+      // 5. Measurement screen coords. Finished measurements are lasting
+      // scene state (#5893): reproject while the Measure tool is open (its
+      // own pending/active point needs it) OR while the visibility toggle
+      // is on (the always-mounted `MeasurementSceneLayer` needs it).
+      if (
+        (activeToolRef.current === 'measure' || useViewerStore.getState().sceneState.measurements.visible) &&
+        hasPendingMeasurements()
+      ) {
         const cameraPos = camera.getPosition();
         const cameraRot = camera.getRotation();
         const cameraDist = camera.getDistance();

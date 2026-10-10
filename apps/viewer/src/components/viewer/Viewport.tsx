@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 import { loadedInstancedModelIndices } from '@/lib/visibility/model-hidden-entities.js';
 import { useAppearanceReferences } from './useAppearanceReferences.js';
+import { useAppearanceSourceGeometry } from './useAppearanceSourceGeometry.js';
 import { createPlacedEntityBoundsLookup, placedBoundsExcludingTypes } from '@/lib/model-placement/selection-bounds';
 
 /**
@@ -16,6 +17,7 @@ import { useViewerStore, resolveEntityRef, type CameraViewpoint } from '@/store'
 import { LIGHTING_PRESETS } from '@/lib/lighting-presets';
 import { presetViewRotation } from '@/lib/preset-view-orientation';
 import { isGeometryLoadStreaming } from '@/lib/pick-gating';
+import { isTextEntryElement } from '@/lib/keyboard-event';
 import { effectiveIsolatedIds } from '@/lib/effective-isolation';
 import { composeLightingEnvironment } from '@/lib/compose-environment';
 import { sunDirectionForTimeOfDay } from '@/lib/sun-time-of-day';
@@ -33,8 +35,10 @@ import {
 } from '../../hooks/useViewerSelectors.js';
 import { useModelSelection } from '../../hooks/useModelSelection.js';
 import { useLatestRef } from '../../hooks/useLatestRef.js';
-import { CLASH_COLOR_OVERLAP } from '@/lib/clash/clash-colors';
+import { useHoverOutline } from './useHoverOutline.js';
 import { frameSelectionBounds } from '@/lib/clash/capture-framing';
+import { fitAllBounds, instancedPassDrawn } from '@/lib/visibility/visible-bounds';
+import { typeNameOfGlobalId } from '@/store/globalId';
 import { projectToCssScreen } from '../../utils/projectScreen.js';
 import { getSpatialChunkingConfig } from '../../utils/spatialChunkConfig.js';
 import { getGpuResidencyBudgetBytes, getHostResidencyBudgetBytes } from '../../utils/gpuBudgetConfig.js';
@@ -47,9 +51,11 @@ import { COLORFUL_CANVAS_GRADIENT } from '@/lib/viewport-ui/overlay-theme';
 import { expandToGeometryBearingIds } from '../../utils/aggregation.js';
 import { hasNoRenderableTarget } from '@/lib/presentation/resolvePresentationIds';
 import { toGlobalIdFromModels } from '@/store/globalId';
+import { currentLevelYForModels } from '@/lib/level-arrival';
 
 import { useMouseControls, type MouseState } from './useMouseControls.js';
 import { RectSelectionOverlay, type RectSelectionRect } from './RectSelectionOverlay.js';
+import { SceneOverlayRoot } from '@/components/viewport-ui/scene';
 import { useTouchControls, type TouchState } from './useTouchControls.js';
 import { useKeyboardControls } from './useKeyboardControls.js';
 import { useSpaceMouseControls } from './useSpaceMouseControls.js';
@@ -66,18 +72,20 @@ import { symbolicLineVertexData } from '../../hooks/symbolic-line-channels.js';
 import { useAlignmentLines3D } from '../../hooks/useAlignmentLines3D.js';
 import { useDxfUnderlays3DLines } from '../../hooks/useDxfUnderlay.js';
 import { useLandXmlRendererOverlay } from '../../hooks/useLandXmlOverlayLines.js';
-import { selectLandXmlViewportPick } from './landXmlViewportSelection.js';
+import { useCentrelineRendererOverlay } from '../../hooks/useCentrelineRendererOverlay.js';
+import { selectPickedGlobalId, toggleGlobalIdInSelection } from './viewport-selection.js';
 import { uploadDxfLines3DGuarded } from './dxf-lines-3d-upload.js';
 import { subscribeViewportHealth } from './device-loss-report.js';
-import { runGpuUpload } from './gpu-upload-guard.js';
+import { useAuthoringOverlay } from './useAuthoringOverlay.js';
 import { anchorWorldLineVertices, rendererLineVertexData } from '@/lib/renderer/line-overlay-rte';
 import { useTranslation } from '@/i18n';
+import { createCentreSurfaceZoom } from './zoomSurface.js';
 
 interface ViewportProps {
   geometry: MeshData[] | null;
-  /** Monotonic counter that increments when geometry changes — used to trigger
-   *  streaming effects even when the geometry array reference is stable. */
+  /** Reused-array updates and changes to existing mesh uploads (#7047). */
   geometryVersion?: number;
+  geometryReplacementVersion?: number;
   /** Bumps when existing mesh vertex/normal data has been mutated in place
    *  (e.g. realignFederation). Forces the streaming hook to re-upload buffers. */
   geometryContentVersion?: number;
@@ -96,8 +104,7 @@ interface ViewportProps {
 
 export function Viewport({
   geometry,
-  geometryVersion,
-  geometryContentVersion,
+  geometryVersion, geometryReplacementVersion, geometryContentVersion,
   pointClouds,
   coordinateInfo,
   sectionCoordinateInfo,
@@ -109,7 +116,9 @@ export function Viewport({
 }: ViewportProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
+  const annotationLineVertexCountRef = useRef(0);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [gpuRecoveryEpoch, setGpuRecoveryEpoch] = useState(0);
   const [initError, setInitError] = useState<string | null>(null);
   const { t } = useTranslation();
 
@@ -118,15 +127,8 @@ export function Viewport({
     if (!canvas) return;
 
     const activeElement = document.activeElement;
-    if (activeElement instanceof HTMLElement && activeElement !== canvas) {
-      const isEditable =
-        activeElement.tagName === 'INPUT' ||
-        activeElement.tagName === 'TEXTAREA' ||
-        activeElement.isContentEditable;
-
-      if (isEditable) {
-        activeElement.blur();
-      }
+    if (activeElement instanceof HTMLElement && activeElement !== canvas && isTextEntryElement(activeElement)) {
+      activeElement.blur();
     }
 
     if (document.activeElement !== canvas) {
@@ -135,10 +137,9 @@ export function Viewport({
   }, []);
 
   // Selection state
-  const { selectedEntityId, selectedEntityIds, setSelectedEntityId, setSelectedEntity, toggleSelection, models } = useSelectionState();
+  const { selectedEntityId, selectedEntityIds, setSelectedEntityId, models } = useSelectionState();
   const selectedEntity = useViewerStore((s) => s.selectedEntity);
-  const addEntityToSelection = useViewerStore((s) => s.addEntityToSelection);
-  const toggleEntitySelection = useViewerStore((s) => s.toggleEntitySelection);
+  const appliedEntityLevelOffsets = useViewerStore((s) => s.appliedEntityLevelOffsets);
 
   // Sync selectedEntityId with model-aware selectedEntity for PropertiesPanel
   useModelSelection();
@@ -160,6 +161,15 @@ export function Viewport({
     return map;
   }, [models]);
 
+  // Geometry arriving after Exploded mode was applied must inherit the current
+  // per-entity lift before its first renderer upload. Keep only offsets whose
+  // source store still belongs to the current model instance (a replacement
+  // model starts with native geometry).
+  const currentLevelY = useMemo(
+    () => currentLevelYForModels(models, appliedEntityLevelOffsets),
+    [appliedEntityLevelOffsets, models],
+  );
+
   // Hidden models retain their one-time instance uploads; useVisibilityState
   // masks them without changing user hides or isolation (#4428).
   const presentInstancedModelIndices = useMemo(
@@ -167,48 +177,13 @@ export function Viewport({
     [modelIdToIndex, models],
   );
 
-  // Borrow hidden-model source arrays; stamp only stable renderer ownership (#4404).
-  const appearanceSourceGeometry = useMemo(() => {
-    const sources: MeshData[] = [];
-    for (const [modelId, model] of models) {
-      const modelIndex = modelIdToIndex?.get(modelId) ?? 0;
-      for (const mesh of model.geometryResult?.meshes ?? []) {
-        sources.push(mesh.modelIndex === modelIndex ? mesh : { ...mesh, modelIndex });
-      }
-    }
-    return sources;
-  }, [models, modelIdToIndex, geometryContentVersion]);
+  const appearanceSourceGeometry = useAppearanceSourceGeometry(models, modelIdToIndex, geometryContentVersion);
 
-  // Helper to handle pick result and set selection properly
-  // IMPORTANT: pickResult.expressId is now a globalId (transformed at load time)
-  // resolveEntityRef is the single source of truth for globalId → EntityRef
+  // pickResult.expressId is a globalId (transformed at load time); the shared
+  // click selection writes both selection channels (viewport-selection.ts).
   const handlePickForSelection = useCallback((pickResult: import('@ifc-lite/renderer').PickResult | null) => {
-    // Normal click clears any lingering multi-highlight (fresh single-selection).
-    // Gate on EITHER set: `selectedEntityIds` is the legacy global-id set that
-    // drives the renderer highlight, and some features populate it WITHOUT the
-    // multi-model `selectedEntitiesSet` — e.g. "isolate group members" (#1075)
-    // and clash-pair highlight. Checking only `selectedEntitiesSet` left those
-    // highlights stuck on with no way to clear them by clicking away.
-    const currentState = useViewerStore.getState();
-    if (currentState.selectedEntitiesSet.size > 0 || currentState.selectedEntityIds.size > 0) {
-      useViewerStore.setState((state) => ({ selectedEntitiesSet: new Set(), selectedEntityIds: new Set(), selectionRevision: state.selectionRevision + 1 }));
-    }
-
-    if (!pickResult) {
-      setSelectedEntityId(null);
-      return;
-    }
-
-    const globalId = pickResult.expressId;
-    if (selectLandXmlViewportPick(currentState, globalId)) return;
-    const resolvedRef = resolveEntityRef(globalId);
-
-    // Set globalId for renderer (highlighting uses globalIds directly)
-    setSelectedEntityId(globalId);
-
-    // Resolve globalId → EntityRef for property panel (single source of truth, never null)
-    setSelectedEntity(resolvedRef);
-  }, [setSelectedEntityId, setSelectedEntity]);
+    selectPickedGlobalId(pickResult?.expressId ?? null);
+  }, []);
 
   // Ref to always access latest handlePickForSelection from event handlers
   // (useMouseControls/useTouchControls capture this at effect setup time)
@@ -219,45 +194,8 @@ export function Viewport({
   // raycasting under the cursor (see useMouseControls/useTouchControls).
   // No need for selection-based orbit center — cursor-based is always better.
 
-  // Multi-select handler: Ctrl+Click adds/removes from multi-selection
-  // Properly populates both selectedEntitiesSet (multi-model) and selectedEntityIds (legacy)
-  const handleMultiSelect = useCallback((globalId: number) => {
-    // Resolve globalId → EntityRef (single source of truth, never null)
-    const entityRef = resolveEntityRef(globalId);
-
-    // If this is the first Ctrl+click and there's already a single-selected entity,
-    // add it to the multi-select set first (so it's not lost)
-    const state = useViewerStore.getState();
-    if (state.selectedEntitiesSet.size === 0 && state.selectedEntity) {
-      addEntityToSelection(state.selectedEntity);
-      // Also seed legacy selectedEntityIds with previous entity's globalId
-      // so the renderer highlights both the old and new entity
-      if (state.selectedEntityId !== null) {
-        toggleSelection(state.selectedEntityId);
-      }
-    }
-
-    // Toggle the clicked entity in multi-select
-    toggleEntitySelection(entityRef);
-
-    // Also sync legacy selectedEntityIds and selectedEntityId
-    toggleSelection(globalId);
-
-    // Read post-toggle state to keep renderer highlighting in sync:
-    // If the entity was toggled OFF, don't force-highlight it.
-    const updated = useViewerStore.getState();
-    if (updated.selectedEntityIds.has(globalId)) {
-      // Entity was toggled ON — highlight it
-      setSelectedEntityId(globalId);
-    } else if (updated.selectedEntityIds.size > 0) {
-      // Entity was toggled OFF but others remain — highlight the last remaining
-      const remaining = Array.from(updated.selectedEntityIds);
-      setSelectedEntityId(remaining[remaining.length - 1]);
-    } else {
-      // Nothing left selected
-      setSelectedEntityId(null);
-    }
-  }, [addEntityToSelection, toggleEntitySelection, toggleSelection, setSelectedEntityId]);
+  // Multi-select handler: Ctrl+Click adds/removes from multi-selection (both channels).
+  const handleMultiSelect = useCallback((globalId: number) => toggleGlobalIdInSelection(globalId), []);
 
   const handleMultiSelectRef = useRef(handleMultiSelect);
   useEffect(() => { handleMultiSelectRef.current = handleMultiSelect; }, [handleMultiSelect]);
@@ -287,8 +225,6 @@ export function Viewport({
     theme,
     isMobile,
     visualEnhancementsEnabled,
-    edgeContrastEnabled,
-    edgeContrastIntensity,
     contactShadingQuality,
     contactShadingIntensity,
     contactShadingRadius,
@@ -299,7 +235,7 @@ export function Viewport({
   } = useThemeState();
 
   // Hover state
-  const { hoverTooltipsEnabled, setHoverState, clearHover } = useHoverState();
+  const { setHoverState, clearHover } = useHoverState();
 
   // Context menu state
   const { openContextMenu } = useContextMenuState();
@@ -363,10 +299,6 @@ export function Viewport({
   const clearColorRef = useRef<[number, number, number, number]>([0.102, 0.106, 0.149, 1]);
   const visualEnhancement = useMemo<VisualEnhancementOptions>(() => ({
     enabled: isMobile ? false : visualEnhancementsEnabled,
-    edgeContrast: {
-      enabled: isMobile ? false : edgeContrastEnabled,
-      intensity: edgeContrastIntensity,
-    },
     contactShading: {
       quality: isMobile ? 'off' : contactShadingQuality,
       intensity: contactShadingIntensity,
@@ -380,8 +312,6 @@ export function Viewport({
     },
   }), [
     visualEnhancementsEnabled,
-    edgeContrastEnabled,
-    edgeContrastIntensity,
     isMobile,
     contactShadingQuality,
     contactShadingIntensity,
@@ -452,9 +382,7 @@ export function Viewport({
     sunTime,
   ]);
   const environmentRef = useLatestRef(environment);
-  useEffect(() => {
-    rendererRef.current?.requestRender();
-  }, [environment]);
+  useEffect(() => { rendererRef.current?.requestRender(); }, [environment]);
 
   // Sun cast shadows (#2670) — driven by the Environment panel. Standalone
   // WebGPU only: in world-context Cesium casts its own shadows, so pass null
@@ -467,9 +395,7 @@ export function Viewport({
     return { enabled: true, resolution: shadowResolution, sunAngleDeg: shadowSunAngle };
   }, [cesiumActive, shadowsEnabled, shadowResolution, shadowSunAngle]);
   const sunShadowsRef = useLatestRef(sunShadows);
-  useEffect(() => {
-    rendererRef.current?.requestRender();
-  }, [sunShadows]);
+  useEffect(() => { rendererRef.current?.requestRender(); }, [sunShadows]);
 
   // GPU-instancing is class-0 occurrence geometry (the Model view). Hide the
   // instanced pass in the Types view mode, where the flat path renders the
@@ -482,7 +408,7 @@ export function Viewport({
     if (!isInitialized) return;
     const scene = rendererRef.current?.getScene();
     if (!scene) return;
-    scene.setInstancedVisible(!hasTypeGeometry || typeViewMode === 'model');
+    scene.setInstancedVisible(instancedPassDrawn({ hasTypeGeometry, typeViewMode }));
     rendererRef.current?.requestRender();
     // Depend on isInitialized so the instanced-visibility state is applied once
     // the renderer is ready, even if the view-mode inputs never change after the
@@ -551,34 +477,7 @@ export function Viewport({
   const selectedEntityIdRef = useLatestRef(selectedEntityId);
   const selectedEntityIdsRef = useLatestRef(selectedEntityIds);
   const ifcDataStoreRef = useLatestRef(ifcDataStore);
-  // Express-ids of the Space Sketch draft ghost meshes currently in the scene
-  // (added directly via appendToBatches, outside geometryResult) so they can be
-  // swapped/cleared without touching the streaming geometry pipeline.
-  const spaceOverlayIdsRef = useRef<Set<number>>(new Set());
-
-  /**
-   * Overlay ids that are still safe to remove from the scene.
-   *
-   * `removeMeshesForEntities` deletes EVERY mesh registered under an id, and the
-   * Space Sketch ghost band is not reserved: `GHOST_ID_BASE` is 0x70000000
-   * (~1.879e9) while `FederationRegistry.MAX_SAFE_OFFSET` is 2e9, and unloading a
-   * model burns its offset space permanently. A long federated session can
-   * therefore hand a real model a global id inside the band that a live ghost
-   * already occupies, and clearing the overlay would delete that model's geometry.
-   *
-   * `fromGlobalId` returns null for anything outside every registered range (it
-   * bounds-checks against `maxExpressId`, not just the offset), so an id that now
-   * resolves to a real model is dropped from the removal set. The residual failure
-   * is a leaked ghost mesh, not deleted building geometry.
-   */
-  const removableOverlayIds = useCallback((ids: Set<number>): Set<number> => {
-    const resolve = useViewerStore.getState().fromGlobalId;
-    const safe = new Set<number>();
-    for (const id of ids) {
-      if (!resolve(id)) safe.add(id);
-    }
-    return safe;
-  }, []);
+  const authoringOverlay = useAuthoringOverlay(rendererRef); // command ghosts (#6232)
 
   const selectedModelIndexRef = useLatestRef(selectedModelIndex);
   // Per-element clash A/B highlight tints (#1277/#1339) — kept in a ref so the
@@ -597,12 +496,11 @@ export function Viewport({
     const renderer = rendererRef.current;
     if (!renderer) return;
     if (showClashRegionBox && clashContactLines && clashContactLines.vertices.length > 0) {
-      renderer.setClashContactLines({
-        vertices: anchorWorldLineVertices(clashContactLines.vertices),
-        color: clashContactLines.color,
-      });
+      // No colour: the renderer draws the overlap in its theme's
+      // `clashOverlap` and recolours it on a theme switch (#5490).
+      renderer.setClashContactLines({ vertices: anchorWorldLineVertices(clashContactLines.vertices) });
     } else if (showClashRegionBox && clashOverlapBox) {
-      renderer.setClashOverlapBox({ ...clashOverlapBox, color: CLASH_COLOR_OVERLAP });
+      renderer.setClashOverlapBox(clashOverlapBox);
     } else {
       renderer.setClashContactLines(null);
     }
@@ -636,7 +534,6 @@ export function Viewport({
       renderer.setClashIntersectionSolid({
         positions: clashSolidMesh.positions,
         indices: clashSolidMesh.indices,
-        color: CLASH_COLOR_OVERLAP,
       });
     } else {
       renderer.setClashIntersectionSolid(null);
@@ -665,7 +562,7 @@ export function Viewport({
   // Hover throttling
   const lastHoverCheckRef = useRef<number>(0);
   const hoverThrottleMs = 50; // Check hover every 50ms
-  const hoverTooltipsEnabledRef = useLatestRef(hoverTooltipsEnabled);
+  const { hoverPickEnabledRef: hoverTooltipsEnabledRef } = useHoverOutline(rendererRef); // #5390
 
   // Measure tool throttling (adaptive based on raycast performance)
   const measureRaycastPendingRef = useRef(false);
@@ -711,11 +608,6 @@ export function Viewport({
       renderer.getCamera().enableFirstPersonMode(isWalk);
     }
   }, [activeTool, isInitialized]);
-  useEffect(() => {
-    if (!hoverTooltipsEnabled) {
-      clearHover();
-    }
-  }, [hoverTooltipsEnabled, clearHover]);
 
   // Cleanup measurement state when tool changes + set cursor
   useEffect(() => {
@@ -743,22 +635,12 @@ export function Viewport({
 
     // Set cursor based on active tool. Section + pick-armed gets a
     // crosshair to telegraph "click a face".
-    if (activeTool === 'measure' || activeTool === 'annotate' || activeTool === 'addElement') {
+    if (activeTool === 'measure' || activeTool === 'annotate') {
       canvas.style.cursor = 'crosshair';
     } else if (activeTool === 'section' && sectionPickMode) {
       canvas.style.cursor = 'crosshair';
     } else {
       canvas.style.cursor = 'default';
-    }
-
-    // Clear add-element pending state + hover point when leaving the
-    // tool so the SVG overlay doesn't paint stale geometry from a
-    // previous session.
-    if (activeTool !== 'addElement') {
-      const state = useViewerStore.getState();
-      if (state.addElementPendingPoints.length > 0 || state.addElementHoverPoint !== null) {
-        state.clearAddElementPending();
-      }
     }
   }, [activeTool, activeMeasurement, cancelMeasurement, sectionPickMode, setSectionPickMode]);
 
@@ -863,9 +745,8 @@ export function Viewport({
           console.log(`[Viewport] quantized vertices ${on ? 'on (12B lattice)' : 'UNAVAILABLE (pipeline probe failed)'}`);
         });
       }
-      // Read-only debug/e2e hooks (same convention as __ifc_lite_viewer_store__),
-      // cleared on viewport teardown below.
-      installViewportDebugHooks(renderer);
+      // Read-only debug/e2e hooks, cleared on viewport teardown below.
+      installViewportDebugHooks(renderer, () => ({ hiddenIds: hiddenEntitiesRef.current, isolatedIds: isolatedEntitiesRef.current }), () => annotationLineVertexCountRef.current);
       setIsInitialized(true);
 
       const camera = renderer.getCamera();
@@ -1003,6 +884,9 @@ export function Viewport({
         return resolved;
       };
 
+      // The toolbar zoom-in stops short of the surface at the viewport centre (#5924).
+      const centreZoom = createCentreSurfaceZoom(renderer, camera, canvas, getPickOptions);
+      const zoomStep = (delta: number) => { centreZoom(delta); renderCurrent(); calculateScale(); };
       // Register camera callbacks for ViewCube and other controls
       setCameraCallbacks({
         setPresetView: (view) => {
@@ -1022,10 +906,12 @@ export function Viewport({
           renderCurrent();
           calculateScale();
         },
-        fitAll: () => {
-          // Zoom to fit without changing view direction
-          camera.zoomExtent(geometryBoundsRef.current.min, geometryBoundsRef.current.max, 300);
-          calculateScale();
+        fitAll: () => { // Zoom to fit without changing view direction, framing what is VISIBLE (#5884)
+          const target = fitAllBounds({ meshes: geometryRef.current ?? [], wholeScene: geometryBoundsRef.current,
+            typeOf: (id) => typeNameOfGlobalId(useViewerStore.getState(), id, ifcDataStoreRef.current),
+            instancedIds: rendererRef.current?.getScene().getInstancedEntityIds() ?? [], instancedDrawn: instancedPassDrawn(useViewerStore.getState()),
+            boundsOf: createRenderableBoundsLookup(), visibility: { hidden: hiddenEntitiesRef.current, isolated: isolatedEntitiesRef.current } });
+          camera.zoomExtent(target.min, target.max, 300); calculateScale();
         },
         home: () => {
           // Adaptive home: compact buildings get the historical SE isometric
@@ -1043,16 +929,8 @@ export function Viewport({
           );
           calculateScale();
         },
-        zoomIn: () => {
-          camera.zoom(-50, false);
-          renderCurrent();
-          calculateScale();
-        },
-        zoomOut: () => {
-          camera.zoom(50, false);
-          renderCurrent();
-          calculateScale();
-        },
+        zoomIn: () => zoomStep(-50),
+        zoomOut: () => zoomStep(50),
         setInteractionMode: (mode) => {
           camera.setInteractionMode(mode);
         },
@@ -1071,12 +949,13 @@ export function Viewport({
         rotateRight: () => {
           animateHorizontalRotation(Math.PI / 2);
         },
-        frameSelection: (durationMs = 300) => {
-          // Frame the current selection. Prefer the full multi-selection set
-          // (Ctrl-click, box-select, a clash pair) so the camera encloses EVERY
-          // selected element; fall back to the single primary id. The set is
-          // kept in sync with selection (cleared on a plain click), so the
-          // union is always an accurate frame of what's highlighted.
+        // The world AABB of the current selection — what `frameSelection`
+        // frames and what the section box fits to (#5513). Prefer the full
+        // multi-selection set (Ctrl-click, box-select, a clash pair) so it
+        // encloses EVERY selected element; fall back to the single primary id.
+        // The set is kept in sync with selection (cleared on a plain click),
+        // so the union is always an accurate frame of what's highlighted.
+        selectionBounds: () => {
           const geom = geometryRef.current;
           const set = selectedEntityIdsRef.current;
           const single = selectedEntityIdRef.current;
@@ -1090,10 +969,8 @@ export function Viewport({
               : single !== null ? [single] : [];
           if (!geom || ids.length === 0) {
             console.warn('[Viewport] frameSelection: No selection or geometry');
-            return false;
+            return null;
           }
-          let min: { x: number; y: number; z: number } | null = null;
-          let max: { x: number; y: number; z: number } | null = null;
           // One indexed, memoised lookup shared with the resolution pass below:
           // every id is asked twice — once to decide whether it needs expanding,
           // once to union its box — and the mesh reader behind it indexes the
@@ -1110,26 +987,14 @@ export function Viewport({
           // unhighlighted, because the renderer highlights `selectedEntityIds`
           // directly and that set still held the geometry-less assembly id.
           const framedIds = resolveRenderableIds(ids, 'frameSelection', boundsOf);
-          for (const id of framedIds) {
-            const b = boundsOf(id);
-            if (!b) continue;
-            if (!min || !max) {
-              min = { x: b.min.x, y: b.min.y, z: b.min.z };
-              max = { x: b.max.x, y: b.max.y, z: b.max.z };
-            } else {
-              min.x = Math.min(min.x, b.min.x);
-              min.y = Math.min(min.y, b.min.y);
-              min.z = Math.min(min.z, b.min.z);
-              max.x = Math.max(max.x, b.max.x);
-              max.y = Math.max(max.y, b.max.y);
-              max.z = Math.max(max.z, b.max.z);
-            }
-          }
-          if (min && max) {
-            return frameSelectionBounds(camera, renderer, min, max, durationMs, calculateScale);
-          } else {
-            console.warn('[Viewport] frameSelection: Could not get bounds for selected element'); return false;
-          }
+          const bounds = unionEntityBounds(null, framedIds, boundsOf);
+          if (!bounds) console.warn('[Viewport] frameSelection: Could not get bounds for selected element');
+          return bounds;
+        },
+        frameSelection: (durationMs = 300) => {
+          const bounds = useViewerStore.getState().cameraCallbacks.selectionBounds?.();
+          if (!bounds) return false;
+          return frameSelectionBounds(camera, renderer, bounds.min, bounds.max, durationMs, calculateScale);
         },
         // Resolve ids to what the renderer can actually highlight (the SAME
         // aggregation resolution frameSelection uses to decide what to frame),
@@ -1186,11 +1051,7 @@ export function Viewport({
           if (scene) {
             const state = useViewerStore.getState();
             for (const id of scene.getInstancedEntityIds()) {
-              const loc = state.fromGlobalId(id);
-              const store = loc
-                ? state.models.get(loc.modelId)?.ifcDataStore
-                : ifcDataStoreRef.current;
-              const type = store?.entities?.getTypeName(loc ? loc.expressId : id);
+              const type = typeNameOfGlobalId(state, id, ifcDataStoreRef.current);
               if (type && EXCLUDE.has(type)) continue;
               const b = scene.getInstancedEntityBounds(id);
               if (!b) continue;
@@ -1215,38 +1076,7 @@ export function Viewport({
             calculateScale();
           }
         },
-        setSpaceOverlayMeshes: (meshes) => { // Space Sketch draft ghosts, via runGpuUpload (#4885); loss checked FIRST.
-          const renderer = rendererRef.current;
-          if (!renderer || renderer.isDeviceLost()) return;
-          const scene = renderer.getScene(), device = renderer.getGPUDevice(), pipeline = renderer.getPipeline();
-          if (!scene || !device || !pipeline) return;
-          runGpuUpload('setSpaceOverlayMeshes', () => {
-            if (spaceOverlayIdsRef.current.size > 0) {
-              scene.removeMeshesForEntities(removableOverlayIds(spaceOverlayIdsRef.current));
-              spaceOverlayIdsRef.current = new Set();
-            }
-            if (meshes.length > 0) {
-              const ids = new Set(meshes.map((m) => m.expressId)); // rolled back below on a GPU failure, or they orphan as ghosts (review)
-              try { scene.appendToBatches(meshes, device, pipeline, false); spaceOverlayIdsRef.current = ids; }
-              catch (err) { scene.removeMeshesForEntities(removableOverlayIds(ids)); throw err; }
-            }
-            if (scene.hasPendingBatches()) scene.rebuildPendingBatches(device, pipeline);
-          }, { isDeviceLost: () => renderer.isDeviceLost() });
-          renderer.clearCaches();
-          renderer.requestRender();
-        },
-        clearSpaceOverlayMeshes: () => {
-          const renderer = rendererRef.current;
-          const scene = renderer?.getScene();
-          if (!renderer || !scene || spaceOverlayIdsRef.current.size === 0) return;
-          scene.removeMeshesForEntities(removableOverlayIds(spaceOverlayIdsRef.current));
-          spaceOverlayIdsRef.current = new Set();
-          const device = renderer.getGPUDevice();
-          const pipeline = renderer.getPipeline();
-          if (device && pipeline && scene.hasPendingBatches()) scene.rebuildPendingBatches(device, pipeline);
-          renderer.clearCaches();
-          renderer.requestRender();
-        },
+        ...authoringOverlay,
         frameClashRegion: (min, max) => {
           // Frame the clash's (already context-padded) contact box from the
           // canonical isometric pose so the penetration is read at a 3/4 angle,
@@ -1334,7 +1164,9 @@ export function Viewport({
       // a quiet no-op — so without a subscriber they reach the user as a viewer
       // that silently stopped, and reach us not at all. This is the subscriber:
       // one toast, one tagged capture, per failure.
-      unsubscribeViewportHealth = subscribeViewportHealth(renderer);
+      unsubscribeViewportHealth = subscribeViewportHealth(renderer, undefined, () => {
+        if (!aborted) setGpuRecoveryEpoch((epoch) => epoch + 1);
+      });
 
       // ResizeObserver — re-render; the frame re-sizes the drawing buffer itself.
       resizeObserver = new ResizeObserver(() => {
@@ -1448,12 +1280,11 @@ export function Viewport({
     const renderer = rendererRef.current;
     if (!renderer || !isInitialized) return;
     const v = symbolicLineChannels.annotation;
-    renderer.setLineOverlay('annotation', symbolicLineVertexData(v).length === 0 ? null : v);
+    const vertices = symbolicLineVertexData(v);
+    renderer.setLineOverlay('annotation', vertices.length === 0 ? null : v);
+    annotationLineVertexCountRef.current = vertices.length / 3;
   }, [symbolicLineChannels.annotation, isInitialized]);
-
-  // IfcAlignment centerlines render as thin lines (not a ribbon mesh), always
-  // on — see useAlignmentLines3D. Upload/clear mirrors the annotation overlay;
-  // a separate renderer buffer keeps alignment visibility independent.
+  // IfcAlignment centerlines use a separate buffer; see useAlignmentLines3D.
   const alignmentVertices3D = useAlignmentLines3D();
   useEffect(() => {
     const renderer = rendererRef.current;
@@ -1499,6 +1330,7 @@ export function Viewport({
   }, [dxfLines3D, isInitialized]);
 
   useLandXmlRendererOverlay(rendererRef, isInitialized);
+  useCentrelineRendererOverlay(rendererRef, isInitialized, gpuRecoveryEpoch);
 
   // Upload IfcAnnotation text + fill data for the WebGPU symbolic overlay
   // pipelines. Map the hook's per-annotation records into the SymbolicFillInput
@@ -1621,6 +1453,7 @@ export function Viewport({
     geometryRef,
     isInteractingRef,
     handlePickForSelection: (pickResult) => handlePickForSelectionRef.current(pickResult),
+    openContextMenu,
     getPickOptions,
   });
 
@@ -1644,14 +1477,7 @@ export function Viewport({
     calculateScale,
   });
 
-  useSpaceMouseControls({
-    rendererRef,
-    isInitialized,
-    geometryBoundsRef,
-    geometryRef,
-    selectedEntityIdRef,
-    calculateScale,
-  });
+  useSpaceMouseControls({ rendererRef, isInitialized, geometryRef, selectedEntityIdRef, calculateScale, getPickOptions });
 
   useAnimationLoop({
     canvasRef,
@@ -1689,8 +1515,7 @@ export function Viewport({
     rendererRef,
     isInitialized,
     geometry,
-    geometryVersion,
-    geometryContentVersion,
+    geometryVersion, geometryReplacementVersion, geometryContentVersion,
     appearanceSourceGeometry,
     coordinateInfo,
     isStreaming,
@@ -1702,6 +1527,7 @@ export function Viewport({
     pendingMeshTranslations,
     pendingMeshRotations,
     pendingInstancedShards,
+    currentLevelY,
     modelIdToIndex,
     modelIdToOffset,
     presentInstancedModelIndices,
@@ -1791,8 +1617,14 @@ export function Viewport({
         </div>
       )}
       {/* Rectangle-select drag visual. Pointer-events:none so the
-          canvas keeps receiving pointer events during the drag. */}
-      <RectSelectionOverlay rect={rectSelection} />
+          canvas keeps receiving pointer events during the drag. Its own
+          scene-overlay kernel instance (#5512): a stub-select drag has no
+          natural ancestor `SceneOverlayRoot` this close to the canvas, and
+          the rect is already screen-space so it needs only the shared SVG
+          layer/portal, not the projector. */}
+      <SceneOverlayRoot>
+        <RectSelectionOverlay rect={rectSelection} />
+      </SceneOverlayRoot>
     </div>
   );
 }

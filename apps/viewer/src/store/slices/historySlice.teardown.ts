@@ -22,6 +22,7 @@ import type { CommitTag, LocalLineageLink } from './historySlice.js';
 
 function emptyState() {
   return {
+    resolverPending: new Map(),
     commitTags: new Map<string, CommitTag>() as ReadonlyMap<string, CommitTag>,
     localLineage: new Map<string, LocalLineageLink>() as ReadonlyMap<string, LocalLineageLink>,
     historyNewHeads: new Map<string, string>() as ReadonlyMap<string, string>,
@@ -33,7 +34,7 @@ function emptyState() {
 
 export const historyTeardown = defineSliceTeardown(
   'historySlice',
-  ['commitTags', 'localLineage', 'historyNewHeads', 'historyFocusModelId', 'historyPickA', 'historyPickB'],
+  ['resolverPending', 'commitTags', 'localLineage', 'historyNewHeads', 'historyFocusModelId', 'historyPickA', 'historyPickB'],
   {
     'session-reset': emptyState,
     'all-models-cleared': emptyState,
@@ -51,6 +52,7 @@ export const historyTeardown = defineSliceTeardown(
       );
 
       return {
+        ...(state.resolverPending?.has(scope.modelId) ? { resolverPending: new Map([...state.resolverPending].filter(([id]) => id !== scope.modelId)) } : {}),
         ...(commitTags.has(scope.modelId)
           ? { commitTags: new Map([...commitTags].filter(([id]) => id !== scope.modelId)) }
           : {}),

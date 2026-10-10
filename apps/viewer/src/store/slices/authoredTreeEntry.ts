@@ -11,11 +11,11 @@
  */
 
 import type { SpatialHierarchy, SpatialNode } from '@ifc-lite/data';
-import type { MeshData } from '@ifc-lite/geometry';
 import type { NewEntity } from '@ifc-lite/mutations';
 import type { IfcDataStore } from '@ifc-lite/parser';
 import type { ViewerState } from '../index.js';
 import { registerAuthoredElement } from '@/utils/spatialHierarchy.js';
+import { findSpatialNode } from '@/utils/spatialNode.js';
 
 type ModelState = Pick<ViewerState, 'models' | 'ifcDataStore' | 'activeModelId'>;
 
@@ -26,25 +26,6 @@ type ModelState = Pick<ViewerState, 'models' | 'ifcDataStore' | 'activeModelId'>
  */
 export function authoredDataStore(state: ModelState, modelId: string): IfcDataStore | null {
   return state.models.get(modelId)?.ifcDataStore ?? (state.models.size === 0 ? state.ifcDataStore : null);
-}
-
-/**
- * Put an authored element's mesh on screen. `appendGeometryBatch` only routes
- * to a known model or the active one, and legacy mode has neither, so there
- * the top-level geometry is extended directly.
- */
-export function appendAuthoredMesh(state: ModelState & Pick<ViewerState, 'appendGeometryBatch' | 'geometryResult' | 'setGeometryResult'>, modelId: string, mesh: MeshData): void {
-  if (state.models.size > 0 || !state.geometryResult) {
-    state.appendGeometryBatch(modelId, [mesh]);
-    return;
-  }
-  const g = state.geometryResult;
-  state.setGeometryResult({
-    ...g,
-    meshes: [...g.meshes, mesh],
-    totalTriangles: g.totalTriangles + mesh.indices.length / 3,
-    totalVertices: g.totalVertices + mesh.positions.length / 3,
-  });
 }
 
 function dropChild(node: SpatialNode, entityId: number): boolean {
@@ -67,6 +48,11 @@ export function unregisterAuthoredElement(hierarchy: SpatialHierarchy, entityId:
   const contained = hierarchy.byStorey.get(storeyId);
   const index = contained?.indexOf(entityId) ?? -1;
   if (contained && index >= 0) contained.splice(index, 1);
+  // A copied hierarchy keeps the storey node's `elements` apart from `byStorey`
+  // (see `registerAuthoredElement`); take the row out of both.
+  const listed = findSpatialNode(hierarchy.project, storeyId)?.elements;
+  const at = listed && listed !== contained ? listed.indexOf(entityId) : -1;
+  if (listed && at >= 0) listed.splice(at, 1);
   if (dropChild(hierarchy.project, entityId)) hierarchy.bySpace.delete(entityId);
 }
 

@@ -7,16 +7,19 @@
  * are read through `readSubject`, the reader validation already uses, so
  * the option means one thing in search, applicability and validation.
  *
- * `readSubject` reads the model as loaded. A live in-session edit is
- * applied to plain property rules through the mutation overlay
- * (`filter-evaluate-mutations.ts`), but not to a rule that sets one of these
- * options. Validation has the same limitation today (see `read-subject.ts`).
+ * Search passes the model's live `mutationView`, so an in-session edit
+ * reaches these rules through the same overlay plain property rules read
+ * (`filter-evaluate-mutations.ts`), with the edited value's unit kept for
+ * `valueUnit: 'si'`. Validation passes none and reads the model as loaded
+ * (see `read-subject.ts`).
  */
 
 import type { IfcDataStore } from '@ifc-lite/parser';
+import type { MutablePropertyView } from '@ifc-lite/mutations';
 import type { PropertyRule, QuantityRule } from './filter-rules.js';
 import { numericOpMatches, valueOpMatches } from './filter-ops.js';
 import { readSubject, type SubjectValue } from './read-subject.js';
+import { NEGATED_VALUE_OP } from './filter-match.js';
 
 /**
  * `subject` with every value that has a unit converted to SI base units.
@@ -45,8 +48,9 @@ export function readRuleSubject(
   rule: PropertyRule | QuantityRule,
   store: IfcDataStore,
   expressId: number,
+  mutationView?: MutablePropertyView,
 ): SubjectValue {
-  const subject = readSubject(rule, { store, expressId });
+  const subject = readSubject(rule, { store, expressId, mutationView });
   return rule.valueUnit === 'si' ? toSiValues(subject) : subject;
 }
 
@@ -59,12 +63,19 @@ export function matchRuleThroughSubject(
   rule: PropertyRule | QuantityRule,
   store: IfcDataStore,
   expressId: number,
+  mutationView?: MutablePropertyView,
 ): boolean {
-  const subject = readRuleSubject(rule, store, expressId);
+  const subject = readRuleSubject(rule, store, expressId, mutationView);
   if (rule.kind === 'quantity') {
     return subject.values.some((v) => numericOpMatches(rule.op, Number(v), rule.value));
   }
   if (rule.op === 'isSet') return subject.present;
   if (rule.op === 'isNotSet') return !subject.present;
+  // Same NONE rule as `matchPropertyRule` for a list / table read member by member (#5475).
+  const positive = NEGATED_VALUE_OP[rule.op];
+  if (positive) {
+    return subject.values.length > 0
+      && !subject.values.some((v) => valueOpMatches(positive, String(v), rule.value, rule.valueKind));
+  }
   return subject.values.some((v) => valueOpMatches(rule.op, String(v), rule.value, rule.valueKind));
 }

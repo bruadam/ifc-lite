@@ -11,6 +11,7 @@ import { useRef } from 'react';
 import { Copy, Download, MoreHorizontal, Pencil, Trash2, Upload } from 'lucide-react';
 import type { DashboardSpec } from '@ifc-lite/charts';
 import { Button } from '@/components/ui/button';
+import { useDialogs } from '@/components/ui/confirm-dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from '@/components/ui/toast';
 import { useTranslation } from '@/i18n/useTranslation';
@@ -26,11 +27,12 @@ export interface DashboardMenuProps {
 
 export function DashboardMenu({ dashboard, onUpsert, onDelete, onActivate }: DashboardMenuProps) {
   const { t } = useTranslation();
+  const { promptDialog } = useDialogs();
   const fileInput = useRef<HTMLInputElement | null>(null);
 
-  const rename = (): void => {
+  const rename = async (): Promise<void> => {
     if (!dashboard) return;
-    const name = window.prompt('Dashboard name', dashboard.name)?.trim();
+    const name = (await promptDialog({ description: t('dashboardMenu.namePrompt'), defaultValue: dashboard.name }))?.trim();
     if (name && name !== dashboard.name) onUpsert({ ...dashboard, name });
   };
   const duplicate = (): void => {

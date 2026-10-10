@@ -25,13 +25,13 @@
  */
 
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { browserStaticPath } from './browser-cold-server-path.js';
+import { startStaticServer } from './browser-static-server.js';
+import { runColdSample } from './browser-cold-sample.js';
 import { browserFixtureKey, validateBrowserFixtures } from './browser-cold-fixtures.js';
 import { prepareBrowserOutputs } from './browser-cold-outputs.js';
 import { closeBrowserWithTimeout, closeContextWithTimeout, raceWithTimeout } from './browser-cold-teardown.js';
-import { createServer } from 'node:http';
-import { createReadStream, existsSync, readFileSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
-import { extname, isAbsolute, join, resolve } from 'node:path';
+import { existsSync, readFileSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -152,44 +152,8 @@ prepareBrowserOutputs(RESULTS_DIR, JSONL_OUT, REPORT_JSON);
 // avoids running two `vite preview` processes just to alternate which build
 // ViewerBenchmarkPage's hardcoded `http://localhost:PORT` navigates to.
 // ---------------------------------------------------------------------------
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.wasm': 'application/wasm',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.map': 'application/json; charset=utf-8',
-  '.woff2': 'font/woff2',
-};
 let currentRoot = DIST_BRANCH;
-const server = createServer((req, res) => {
-  const filePath = browserStaticPath(currentRoot, req.url ?? '/');
-  if (filePath === null) {
-    res.writeHead(403).end();
-    return;
-  }
-  if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
-    res.writeHead(404).end();
-    return;
-  }
-  const type = MIME[extname(filePath)] ?? 'application/octet-stream';
-  // no-store: cross-round correctness matters far more than repeat-load speed
-  // here, and each round gets a brand-new browser profile anyway.
-  res.writeHead(200, {
-    'Content-Type': type, 'Cache-Control': 'no-store',
-    'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Embedder-Policy': 'credentialless',
-  });
-  createReadStream(filePath).pipe(res);
-});
-await new Promise<void>((resolvePort, reject) => {
-  server.once('error', reject);
-  server.listen(PORT, resolvePort);
-});
+const server = await startStaticServer({ port: PORT, root: () => currentRoot });
 console.log(`browser-cold-ab: serving on http://localhost:${PORT} (root swaps per side)`);
 
 // ---------------------------------------------------------------------------
@@ -200,6 +164,7 @@ const sides: Side[] = DIST_BASE ? ['base', 'branch'] : ['branch', 'branch'];
 const labelOf = (s: Side, slot: number) => (DIST_BASE ? (s === 'base' ? BASE_LABEL : BRANCH_LABEL) : slot === 0 ? BASE_LABEL : BRANCH_LABEL);
 const rootOf = (s: Side) => (s === 'base' ? DIST_BASE! : DIST_BRANCH);
 
+let warnedSoftwareAdapter = false;
 let failures = 0;
 let ok = 0;
 
@@ -245,24 +210,39 @@ for (let iter = 1; iter <= ITERS; iter++) {
           });
         }
 
-        await bp.setup();
-        const isolation = await page.evaluate(() => ({
-          crossOriginIsolated: globalThis.crossOriginIsolated,
-          sharedArrayBufferAvailable: typeof SharedArrayBuffer !== 'undefined',
-        }));
-        record = { ...record, ...isolation };
-        if (!isolation.crossOriginIsolated || !isolation.sharedArrayBufferAvailable) {
-          throw new Error('Viewer is not cross-origin isolated; worker-pool sample invalid');
-        }
         const sizeMB = statSync(fixture.path).size / (1024 * 1024);
         const timeoutMs = Math.max(TIMEOUT_MS, sizeMB > 200 ? 600000 : sizeMB > 50 ? 300000 : TIMEOUT_MS);
-        await bp.loadFile(fixture.path, false);
-        await bp.waitForCompletion(timeoutMs, true);
-        const metrics = bp.getMetrics();
+        const metrics = await runColdSample(bp, { fixturePath: fixture.path, timeoutMs, afterSetup: async () => {
+          const isolation = await page!.evaluate(() => ({
+            crossOriginIsolated: globalThis.crossOriginIsolated,
+            sharedArrayBufferAvailable: typeof SharedArrayBuffer !== 'undefined',
+          }));
+          record = { ...record, ...isolation };
+          if (!isolation.crossOriginIsolated || !isolation.sharedArrayBufferAvailable) {
+            throw new Error('Viewer is not cross-origin isolated; worker-pool sample invalid');
+          }
+        } });
         if (metrics.streamCompleteMs == null || !metrics.totalMeshes) {
           throw new Error('load did not reach streamCompleteMs / produced 0 meshes');
         }
         record = { ...record, ok: true, ...metrics };
+        // Adapter diagnostics run AFTER readiness so a slow request cannot give
+        // renderer initialization a head start before the load clock (#7032).
+        // A software adapter (SwiftShader: the only WebGPU headless Chromium has in
+        // WSL/CI) initialises the renderer slowly enough to measure a different
+        // load than a real GPU does. Say so once, and archive it with the sample.
+        const adapter = await raceWithTimeout(page.evaluate(async () => {
+          const a = await navigator.gpu?.requestAdapter();
+          return a ? { architecture: a.info?.architecture ?? '', fallback: Boolean(a.isFallbackAdapter ?? a.info?.isFallbackAdapter) } : null;
+        }), CLOSE_TIMEOUT_MS, 'gpu adapter diagnostics').catch((error) => {
+          console.warn('browser-cold-ab: adapter diagnostics failed', error);
+          return null;
+        });
+        record.gpuAdapter = adapter;
+        if (!warnedSoftwareAdapter && (!adapter || adapter.fallback || adapter.architecture === 'swiftshader')) {
+          warnedSoftwareAdapter = true;
+          console.warn(`browser-cold-ab: WARNING ${adapter ? `software WebGPU adapter (${adapter.architecture || 'fallback'})` : 'no WebGPU adapter'}; timings are not real-GPU numbers. For a real GPU from WSL use a Windows Chrome launcher (see scripts/perf/frame-gpu-chrome.ts).`);
+        }
         // Separate visual artifact, captured after the observed timing boundary.
         await page.screenshot({ path: join(RESULTS_DIR,
           `${label}-${browserFixtureKey(fixture.name)}-r${iter}.png`) });

@@ -44,6 +44,7 @@ import type { FilterGroup } from '../filter/filter-groups.js';
 import type { FilteredElement } from '../filter/filter-evaluate.js';
 import { readSubject, type ReadSubjectContext, type SubjectValue } from '../filter/read-subject.js';
 import { toSiValues } from '../filter/subject-match.js';
+import { memberPathLabel } from '../filter/subject-read-options.js';
 import {
   matchStringAnyNone,
   numericOpMatches,
@@ -86,7 +87,7 @@ function actualOf(subject: SubjectValue): string {
 
 function subjectLabel(rule: FilterRule): string {
   switch (rule.kind) {
-    case 'property': return `${rule.setName}.${rule.propertyName}`;
+    case 'property': return `${rule.setName}.${rule.propertyName}${memberPathLabel(rule.memberPath)}`;
     case 'quantity': return `${rule.setName}.${rule.quantityName}`;
     case 'attribute': return rule.name;
     case 'name': return 'Name';
@@ -249,12 +250,16 @@ function checkValueOp(
     return { passed, reason: passed ? undefined : 'mismatch', actual, expected, facetType, checkedDescription };
   }
   if (op === 'eq' || op === 'ne') {
-    const rv = Number(rule.value);
-    const nums = strVals.map((v) => Number(v));
-    const allFinite = Number.isFinite(rv) && nums.length > 0 && nums.every(Number.isFinite);
-    const matchAny = allFinite
-      ? nums.some((cv) => numericOpMatches('eq', cv, rv, opts))
-      : strVals.some((v) => stringOpMatches('eq', v, rule.value, undefined, opts));
+    // Numeric vs text is decided per member (#5475): a table mixes text and
+    // number cells, and one text cell must not turn every number cell into
+    // a string compare. A blank member is never the number 0.
+    const rv = rule.value.trim() === '' ? Number.NaN : Number(rule.value);
+    const matchAny = strVals.some((v) => {
+      const cv = v.trim() === '' ? Number.NaN : Number(v);
+      return Number.isFinite(rv) && Number.isFinite(cv)
+        ? numericOpMatches('eq', cv, rv, opts)
+        : stringOpMatches('eq', v, rule.value, undefined, opts);
+    });
     const passed = op === 'eq' ? matchAny : !matchAny;
     return { passed, reason: passed ? undefined : 'mismatch', actual, expected, facetType, checkedDescription };
   }
@@ -273,7 +278,7 @@ type CheckItem = ElementRule | BetweenPair;
 function subjectKey(rule: FilterRule): string | null {
   switch (rule.kind) {
     case 'quantity': return `quantity:${rule.setName}:${rule.quantityName}`;
-    case 'property': return `property:${rule.setName}:${rule.propertyName}`;
+    case 'property': return `property:${rule.setName}:${rule.propertyName}:${JSON.stringify(rule.memberPath ?? [])}`;
     case 'attribute': return `attribute:${rule.name}`;
     default: return null;
   }

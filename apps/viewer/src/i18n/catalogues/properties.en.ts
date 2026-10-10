@@ -13,17 +13,8 @@ import type { TranslationValue } from '../types';
  * catalogue. Property/pset/material/classification NAMES are model
  * content, not literals, and stay out of this catalogue.
  *
- * `properties.panel.*` (#4918 slice: panel outer chrome) extends this same
- * catalogue with `PropertiesPanel.tsx`'s OWN chrome — the parts of that
- * file that are not one of the extracted card components above: the empty
- * state, the entity header's merge-layers badge and world-coordinates
- * disclosure, the IFC Attributes / Structure / Zones collapsible sections
- * and their inline attribute editor, the Properties/Quantities/bSDD/Raw
- * STEP tabs, each tab's empty state, the occurrence/type/material property
- * section labels, and the unified-storey multi-entity view (its own header
- * and per-entity Attributes/Properties/Quantities sections). Entity type
- * names, attribute names/values, and property/quantity set names remain
- * model content, not literals.
+ * `properties.panel.*` (PropertiesPanel.tsx's own outer chrome) lives in
+ * `properties-panel.en.ts`.
  */
 export const propertiesEn = {
   'properties.propertySet.unnamed': 'Unnamed Property Set',
@@ -123,12 +114,12 @@ export const propertiesEn = {
   'properties.unitDisplay.kind.temperature': 'Temperature',
   'properties.unitDisplay.kind.density': 'Density',
   'properties.unitDisplay.kind.force': 'Force',
-
   // EpsgLookupDialog
   'properties.epsgLookup.triggerButton': 'EPSG',
   'properties.epsgLookup.title': 'EPSG Lookup',
   'properties.epsgLookup.description': 'Search by code, name, country, or datum',
   'properties.epsgLookup.searchPlaceholder': 'e.g. 2056, UTM, Switzerland, Tokyo...',
+  'properties.epsgLookup.searchInputLabel': 'Search coordinate reference systems',
   'properties.epsgLookup.noResults': 'No coordinate reference systems found',
   'properties.epsgLookup.searchUnavailable': 'Search unavailable',
 
@@ -288,25 +279,32 @@ export const propertiesEn = {
   'properties.locationMap.unknownError': 'Unknown error',
   'properties.locationMap.heading': 'Location',
   'properties.locationMap.searchTooltip': 'Search for a place',
+  'properties.locationMap.closeSearch': 'Close place search',
   'properties.locationMap.searchPlaceholder': 'Search for a place...',
   'properties.locationMap.resolvingCoordinates': 'Resolving coordinates...',
   'properties.locationMap.unavailableOnDevice': 'Map preview unavailable on this device',
   'properties.locationMap.mapLoadFailed': 'The map component could not be loaded. Check your connection and reload the page.',
   'properties.locationMap.graphicsUnavailable':
     'Your browser could not provide graphics for the map. Coordinates, search and the links below still work; reloading the page may restore it.',
-  'properties.locationMap.clickToPlacePin': 'Click map to place pin',
-  'properties.locationMap.newPosition': 'New Position',
+  'properties.locationMap.clickToPlacePin': 'Click map to set origin',
+  'properties.locationMap.newPosition': 'New origin',
   'properties.locationMap.removePinTooltip': 'Remove pin',
-  'properties.locationMap.latLon': 'Lat/Lon',
+  'properties.locationMap.latLon': 'Origin Lat/Lon',
+  'properties.locationMap.geometryLatLon': 'Model Lat/Lon',
+  'properties.locationMap.geometryLocation': 'Showing the model location; the declared origin remains unchanged. Pick a location to update the origin.',
+  'properties.locationMap.geometryGoogleMapsTooltip': 'Open physical geometry location in Google Maps',
+  'properties.locationMap.geometryOpenStreetMapTooltip': 'Open physical geometry location in OpenStreetMap',
+  'properties.locationMap.geometryDistance': 'The geometry centre is about {value} km from the declared georeference origin. Check the element placements in the source model; the footprint, 3D world and geometry exports use those placements.',
   'properties.locationMap.easting': 'Easting',
   'properties.locationMap.northing': 'Northing',
   'properties.locationMap.elevation': 'Elevation',
+  'properties.locationMap.terrainHeightHelp': 'Terrain elevation is sampled at the picked origin. Applying it sets the model base height there, accounting for the geometry elevation.',
   'properties.locationMap.applyToEastingsNorthings': 'Apply to Eastings / Northings',
-  'properties.locationMap.applyToEastingsNorthingsHeight': 'Apply to Eastings / Northings / Height',
+  'properties.locationMap.applyToEastingsNorthingsHeight': 'Apply to Eastings / Northings / base height',
   'properties.locationMap.googleMaps': 'Google Maps',
-  'properties.locationMap.googleMapsTooltip': 'Open model location in Google Maps',
+  'properties.locationMap.googleMapsTooltip': 'Open georeference origin in Google Maps',
   'properties.locationMap.openStreetMap': 'OpenStreetMap',
-  'properties.locationMap.openStreetMapTooltip': 'Open model location in OpenStreetMap',
+  'properties.locationMap.openStreetMapTooltip': 'Open georeference origin in OpenStreetMap',
   'properties.locationMap.googleEarth': 'Google Earth',
   'properties.locationMap.googleEarthTooltip':
     'Download KMZ for Google Earth Pro (desktop), placed at the model location. Google Earth on the web cannot show KMZ 3D models — use Export GLB for the web.',
@@ -314,140 +312,4 @@ export const propertiesEn = {
   'properties.locationMap.projectionUnresolved': 'Could not resolve projection — EPSG code may be unsupported',
   'properties.locationMap.elevationMeters': '{value} m',
 
-  // GeoreferencingPanel: GeorefRow / AngleRow
-  'properties.georef.computedTooltip': 'Computed from XAxisAbscissa and XAxisOrdinate',
-  'properties.georef.editedBadge': 'edited',
-  'properties.georef.selectPlaceholder': '-- select --',
-  'properties.georef.hint.crsName': 'e.g. EPSG:4326',
-  'properties.georef.hint.epsgLookup': 'Use EPSG lookup to search',
-  'properties.georef.hint.crsDescription': 'e.g. WGS 84 / UTM zone 32N',
-  'properties.georef.hint.geodeticDatum': 'e.g. WGS84',
-  'properties.georef.hint.verticalDatum': 'e.g. MSL',
-  'properties.georef.hint.mapProjection': 'e.g. Transverse Mercator',
-  'properties.georef.hint.mapZone': 'e.g. 32N',
-  'properties.georef.hint.zero': '0.0',
-  'properties.georef.hint.one': '1.0',
-  'properties.georef.hint.eastings': 'X offset in map units',
-  'properties.georef.hint.northings': 'Y offset in map units',
-  'properties.georef.hint.height': 'Z offset in metres',
-  'properties.georef.hint.abscissa': 'cos(angle to grid north)',
-  'properties.georef.hint.ordinate': 'sin(angle to grid north)',
-  'properties.georef.hint.scale': 'Usually 1.0 or close to it',
-  'properties.georef.angleEditTooltip': 'Edit angle to auto-compute XAxisAbscissa/XAxisOrdinate',
-  'properties.georef.angleToGridNorth': 'Angle to Grid North',
-  'properties.georef.degUnit': 'deg',
-  'properties.georef.angleSetsAxesNote': 'Sets XAxisAbscissa = cos(angle), XAxisOrdinate = sin(angle)',
-  // GeoreferencingPanel: main panel
-  'properties.georef.noGeoreferencing': 'No georeferencing',
-  'properties.georef.addGeoreferencing': 'Add Georeferencing',
-  'properties.georef.reloadPrompt': 'Georeference saved. Reload loaded models to recompute 3D alignment?',
-  'properties.georef.reloadModels': 'Reload models',
-  'properties.georef.reloadMissingSource': 'Cannot reload {name}: source file is not available', 'properties.georef.reloadPartial': 'Reloaded {loaded} of {total} models. Could not reload: {failed}.',
-  'properties.georef.reloadSuccess': 'Reloaded models for edited georeferencing', 'properties.georef.reloadFailedWithMessage': 'Reload failed: {message}', 'properties.georef.reloadFailed': 'Reload failed',
-  'properties.georef.later': 'Later',
-  'properties.georef.legacySiteNotice': 'Showing legacy IfcSite geolocation from IFC2X3. This view is read-only.',
-  'properties.georef.unsupportedSchemaNotice': 'Georeferencing editing requires IFC4 or newer. IFC2X3 does not support IfcProjectedCRS or IfcMapConversion.',
-  'properties.georef.noProjectedCrs': 'No projected CRS',
-  'properties.georef.epsgButton': 'EPSG',
-  'properties.georef.doubleGeorefHeading': 'This model is georeferenced twice. ifc-lite corrected it.',
-  'properties.georef.doubleGeorefBody':
-    'The geometry already sits at map coordinates (E {eastingValue} N {northingValue}), and this IfcMapConversion repeats the same offset. ifc-lite places the geometry where it already is; a tool that applied the conversion on top would put the model {displacement} away.',
-  'properties.georef.rotationOverrideNote':
-    'This file also authors a map rotation that cannot be reconciled with its own coordinates, so the model is placed grid-aligned. Check the orientation, and set Angle to Grid North by hand if it looks wrong.',
-  'properties.georef.distanceUnknown': 'an unknown distance',
-  'properties.georef.distancePlanetWidth': 'more than a planet-width',
-  'properties.georef.distanceKilometres': 'about {value} km',
-  'properties.georef.distanceMetres': 'about {value} m',
-  'properties.georef.scaleOverride': {
-    one: 'Its {fields} is not applied either.',
-    other: 'Its {fields} are not applied either.',
-  },
-  'properties.georef.scaleOverrideReason': {
-    one: 'Its {fields} is not applied either: on map-sized coordinates it would re-scale the model about the map origin.',
-    other: 'Its {fields} are not applied either: on map-sized coordinates they would re-scale the model about the map origin.',
-  },
-  'properties.georef.correctionOffsets': 'set Eastings and Northings to 0',
-  'properties.georef.correctionAngle': 'set Angle to Grid North to 0',
-  'properties.georef.correctionScale': 'set Scale to {value}',
-  'properties.georef.rawValuesCorrection':
-    "The file's own values are shown below exactly as authored. The export is worth fixing at source; to bake the correction in here, {edits}, then use Export IFC (with changes).",
-  'properties.georef.rawValuesCorrectionFactor': {
-    one: "The file's own values are shown below exactly as authored. The export is worth fixing at source; to bake the correction in here, {edits}, then use Export IFC (with changes). {factors} is not editable in ifc-lite; set it to 1 in the authoring tool, or the exported file is still scaled by it.",
-    other: "The file's own values are shown below exactly as authored. The export is worth fixing at source; to bake the correction in here, {edits}, then use Export IFC (with changes). {factors} are not editable in ifc-lite; set them to 1 in the authoring tool, or the exported file is still scaled by them.",
-  },
-  'properties.georef.projectedCrsHeading': 'Projected CRS',
-  'properties.georef.missingCrsNotice': 'Coordinate operation exists, but projected CRS is missing.',
-  'properties.georef.addCrs': 'Add CRS',
-  'properties.georef.coordinateOperationHeading': 'Coordinate Operation',
-  'properties.georef.scaleInconsistentAriaLabel': 'Scale inconsistent with project/map units',
-  'properties.georef.scaleInconsistentTooltip': 'Scale inconsistent with project/map units — expand to view details',
-  'properties.georef.eastingNorthingSummary': 'E {easting} N {northing}',
-  'properties.georef.scaleAttributeInconsistent': '{attribute} inconsistent with project/map units.',
-  'properties.georef.scaleCompensatedNote':
-    'Per IFC schema, IfcMapConversion.Scale (times the IfcMapConversionScaled factor on each axis) should bridge the unit difference between the project length unit and map CRS unit. Current {attribute} = {authoredValue}; expected ≈ {expectedValue}.',
-  'properties.georef.scaleCompensatedDetail':
-    'ifc-lite compensates and places the geometry at 1× — no action needed here, but a tool that follows the schema strictly will render this file at {specEffectiveScale}× its physical size.',
-  'properties.georef.scaleUncompensatedDetail':
-    'Geometry is being placed at {effectiveScale}× its physical size — adjust {fixAttribute} to fix.',
-  'properties.georef.scaleFixAttributeScale': 'Scale (or MapUnit)',
-  'properties.georef.noConversionNotice': 'No coordinate operation. Add map coordinates, angle to grid north, and scale.',
-  'properties.georef.addCoordinates': 'Add Coordinates',
-  'properties.georef.visibleSurfaceHeight': 'Visible surface height',
-  'properties.georef.heightMeters': '{value} m',
-  'properties.georef.queryingEllipsis': 'querying...',
-  'properties.georef.sampledVia': 'sampled via {source}',
-  'properties.georef.setOrthogonalHeightButton': 'Set OrthogonalHeight to sampled terrain height ({value} m)',
-  'properties.georef.heightsEllipsoidalLabel': 'Heights are ellipsoidal (skip geoid correction)',
-  'properties.georef.heightsEllipsoidalHelp':
-    'Off by default: OrthogonalHeight is treated as orthometric and the geoid undulation is added so the model is not buried under terrain.',
-  'properties.georef.setOrthogonalHeightTooltip': 'Set OrthogonalHeight to sampled terrain height ({value} m)',
-  'properties.georef.setOrthogonalHeightTooltipViaSource': 'Set OrthogonalHeight to sampled terrain height ({value} m via {source})',
-  // PropertiesPanel: empty state
-  'properties.panel.title': 'Inspector',
-  'properties.panel.emptyTitle': 'No Selection',
-  'properties.panel.emptyHintMultiModel': 'Select a model or element to view details',
-  'properties.panel.emptyHintSingleModel': 'Select an element to view details',
-
-  // PropertiesPanel: entity header
-  'properties.panel.layersMergedBadge': 'Layers merged',
-  'properties.panel.layersMergedTooltip': 'Multilayer wall parts have been merged into the parent solid.',
-  'properties.panel.associatedTypeFallback': 'Type',
-  'properties.panel.worldCoordinates': 'World',
-  'properties.panel.worldCoordinatesDetails': 'details',
-  'properties.panel.sizeLabel': 'Size',
-  'properties.panel.sizeDisplay': '{x} x {y} x {z}',
-
-  // PropertiesPanel: IFC Attributes / Structure / Zones sections
-  'properties.panel.attributesHeading': 'Attributes',
-  'properties.panel.structureHeading': 'Structure',
-  'properties.panel.zonesHeading': 'Zones',
-  'properties.panel.attributeEditor.emptyValue': 'empty',
-  'properties.panel.attributeEditor.editTooltip': 'Edit attribute',
-
-  // PropertiesPanel: tabs
-  'properties.panel.tab.properties': 'Properties',
-  'properties.panel.tab.quantities': 'Quantities',
-  'properties.panel.tab.bsdd': 'bSDD',
-  'properties.panel.tab.rawStepTitle': 'Raw STEP — developer view of positional arguments',
-  'properties.panel.tab.rawStepLabel': 'Raw STEP',
-
-  // PropertiesPanel: tab empty states + section labels
-  'properties.panel.noPropertySets': 'No property sets',
-  'properties.panel.noQuantities': 'No quantities',
-  'properties.panel.selectEntityForRawStep': 'Select an entity to inspect raw STEP arguments',
-  'properties.panel.occurrencePropertiesHeading': 'Occurrence Properties:',
-  'properties.panel.typePropertiesHeading': 'Type Properties:',
-  'properties.panel.typePropertiesGroupHeading': 'Type Properties ({typeName})',
-  'properties.panel.materialPropertiesGroupHeading': 'Material Properties ({materialName})',
-
-  // MultiEntityPanel / EntityDataSection (unified-storey multi-entity view)
-  'properties.panel.multiEntity.heading': 'Unified Storey',
-  'properties.panel.multiEntity.modelCount': '{count} models',
-  'properties.panel.multiEntity.loadFailed': 'Unable to load entity data',
-  'properties.panel.multiEntity.elevationMeters': '{sign}{value}m',
-  'properties.panel.multiEntity.attributesHeading': 'Attributes',
-  'properties.panel.multiEntity.propertiesHeading': 'Properties',
-  'properties.panel.multiEntity.propertySetsCount': '{count} sets',
-  'properties.panel.multiEntity.quantitiesHeading': 'Quantities',
-  'properties.panel.multiEntity.quantitySetsCount': '{count} sets',
 } as const satisfies Record<string, TranslationValue>;

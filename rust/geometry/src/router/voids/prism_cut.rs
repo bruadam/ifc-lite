@@ -73,6 +73,7 @@ use rustc_hash::FxHashMap;
 pub(crate) mod closure_checks;
 mod vertex_dedup;
 mod finish;
+mod tjunction_close;
 mod planar_correction;
 #[cfg(test)]
 #[path = "prism_cut_tests.rs"]
@@ -81,7 +82,7 @@ use closure_checks::{closed_enough_to_emit, directed_closed, ClosureVerdict};
 #[cfg(test)]
 use closure_checks::closed_or_hairline;
 pub(crate) use vertex_dedup::dedup_cut_vertices;
-pub(in crate::router::voids) use finish::finish_cut;
+pub(in crate::router::voids) use finish::finish_cut_verdict;
 pub(super) use planar_correction::correct_planar_overlap;
 
 pub(super) fn enabled() -> bool {
@@ -135,6 +136,8 @@ mod diag {
 
     #[inline]
     pub(super) fn defer(i: usize) {
+        #[cfg(feature = "opening-perf-trace")]
+        crate::opening_perf_trace::record(|c| c.prism_defers[i] = c.prism_defers[i].saturating_add(1));
         crate::telemetry_transaction::record(move || {
             DEFERS[i].fetch_add(1, Ordering::Relaxed);
         });
@@ -143,6 +146,12 @@ mod diag {
     /// Record one analytic-cut host: (fires, openings cut, openings residual).
     #[inline]
     pub(super) fn record_cut(committed_ops: usize, residual: usize) {
+        #[cfg(feature = "opening-perf-trace")]
+        crate::opening_perf_trace::record(|c| {
+            c.prism_candidate_successes = c.prism_candidate_successes.saturating_add(1);
+            c.prism_candidate_openings = c.prism_candidate_openings.saturating_add(committed_ops as u64);
+            c.prism_residual_openings = c.prism_residual_openings.saturating_add(residual as u64);
+        });
         crate::telemetry_transaction::record(move || {
             FIRES.fetch_add(1, Ordering::Relaxed);
             OPENINGS_ANALYTIC.fetch_add(committed_ops as u64, Ordering::Relaxed);
@@ -176,9 +185,19 @@ mod diag {
 #[cfg(not(any(feature = "observability", feature = "csg_capture", feature = "debug_geometry")))]
 mod diag {
     #[inline]
-    pub(super) fn defer(_i: usize) {}
+    pub(super) fn defer(_i: usize) {
+        #[cfg(feature = "opening-perf-trace")]
+        crate::opening_perf_trace::record(|c| c.prism_defers[_i] = c.prism_defers[_i].saturating_add(1));
+    }
     #[inline]
-    pub(super) fn record_cut(_committed_ops: usize, _residual: usize) {}
+    pub(super) fn record_cut(_committed_ops: usize, _residual: usize) {
+        #[cfg(feature = "opening-perf-trace")]
+        crate::opening_perf_trace::record(|c| {
+            c.prism_candidate_successes = c.prism_candidate_successes.saturating_add(1);
+            c.prism_candidate_openings = c.prism_candidate_openings.saturating_add(_committed_ops as u64);
+            c.prism_residual_openings = c.prism_residual_openings.saturating_add(_residual as u64);
+        });
+    }
     /// Telemetry disabled in the default build; the perf harness must enable an
     /// observability feature to read real counts.
     pub fn take_prism_defers() -> Vec<(&'static str, u64)> {
@@ -2788,6 +2807,8 @@ impl GeometryRouter {
         mesh: &Mesh,
         ctx: &VoidContext,
     ) -> Option<(Mesh, Option<VoidContext>)> {
+        #[cfg(feature = "opening-perf-trace")]
+        crate::opening_perf_trace::record(|c| c.prism_attempts = c.prism_attempts.saturating_add(1));
         if ctx.merged_openings.is_empty() || mesh.is_empty() || mesh.indices.len() < 12 {
             return None;
         }
@@ -2884,6 +2905,7 @@ impl GeometryRouter {
         const REFINE_REGION_PAD: f64 = 1.0e-3;
         let mut refine_boxes: Vec<([f64; 3], [f64; 3])> = Vec::new();
         for (cand, veto) in cands.iter().zip(&vetoed) {
+            crate::progress::tick();
             let mut ok = false;
             if *veto {
                 defer(6);
@@ -3051,11 +3073,20 @@ impl GeometryRouter {
         // The finalizer cleans before the ulp weld so discarded slivers cannot
         // choose a surviving seam coordinate, then audits the exact mesh it
         // returns. A closed pre-clean result remains the compatibility fallback.
-        let Some(finished) = finish_cut(out, mesh) else {
+        let Some((finished, directed)) = finish_cut_verdict(out, mesh) else {
             defer(9);
             return None;
         };
         out = finished;
+        // A host stored relative to a per-element origin can keep hairline
+        // seams its world-frame twin does not (#5739): its weld is sized by the
+        // small stored coordinates. Close them when that leaves the cut
+        // strictly closed, else keep it. World-frame cuts are untouched.
+        if mesh.origin != [0.0; 3] && !directed {
+            if let Some(closed) = tjunction_close::close_seams(&out, mesh) {
+                out = closed;
+            }
+        }
 
         // Residual openings in their original classification order.
         residual_idx.sort_unstable();

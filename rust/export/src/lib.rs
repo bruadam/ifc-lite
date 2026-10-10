@@ -37,8 +37,12 @@ mod kmz;
 mod merged;
 mod mesh_input;
 mod model;
+mod quantity_analysis;
+mod quantity_analysis_derived;
 mod obj;
 mod relationships;
+mod rebar_attributes;
+mod rebar_schedule;
 mod openings;
 #[cfg(feature = "parquet-bos")]
 mod parquet_bos;
@@ -60,8 +64,11 @@ mod step_api;
 mod step_cow;
 mod step_header;
 mod step_json;
+mod step_log;
 mod step_slot;
 mod step_text;
+mod step_map_transform;
+pub use step_map_transform::{plan_map_conversion_normalization, MapConversionEntityPatch, MapConversionNormalizationPlan};
 mod usd;
 
 /// The STEP string-literal escaper; `escape`'s docs say why it is public.
@@ -101,6 +108,16 @@ pub use ifc5::{export_ifc5, Ifc5Options};
 // Spatial and type relationships, which `EntityRow` cannot carry because IFC
 // models them as separate entities that are not products.
 pub use relationships::{relationships, Relationships};
+mod rebar_preflight;
+mod rebar_fabrication;
+pub use rebar_fabrication::{RebarFabricationCheck, RebarFabricationCheckStatus,
+    RebarFabricationPolicy, RebarFabricationPolicyError, RebarFabricationReport,
+    RebarScheduleFabricationError};
+pub use rebar_preflight::{RebarPreflightComparison, RebarPreflightError, RebarPreflightLimits,
+    RebarPreflightReport, RebarSchedulePreflightError};
+pub use rebar_schedule::{build_rebar_schedule, build_rebar_schedule_with_preflight,
+    build_rebar_schedule_with_fabrication_precheck, AuthoredRebarAttribute, AuthoredRebarValue,
+    RebarSchedule, RebarScheduleRow, RebarSource, RebarSweep};
 pub use json::{export_json, JsonOptions};
 pub use jsonld::{export_jsonld, export_jsonld_with_filter, JsonLdOptions};
 pub use kmz::{
@@ -116,6 +133,10 @@ pub use model::{
     stream_export_model_with_index, stream_export_model_with_options, EntityRow, ExportModel,
     ModelOptions, Placement, PropValue, PropertySet, QuantitySet, QuantityValue,
 };
+pub use quantity_analysis_derived::{analyze_quantities, DerivedQuantity,
+    ProductQuantityAnalysis, QuantityAnalysis, QuantitySourceOccurrence};
+pub use quantity_analysis::{analyze_authored_quantities, AuthoredQuantity,
+    AuthoredQuantityAnalysis, ProductQuantities, QuantityConflict, QuantityUnit};
 pub use obj::{export_obj, export_obj_with_stats, ObjOptions, ObjStats};
 #[cfg(feature = "parquet-bos")]
 pub use parquet_bos::{export_bos, ParquetBosOptions};
@@ -124,6 +145,10 @@ pub use step::{
     PropMutation, StepOptions, StepStats,
 };
 pub use step_json::export_step_json;
+pub use step_log::{
+    export_merged_models_with_logs, export_step_with_log, export_step_with_log_to_writer, GeorefMutations, LogExportStats, LogMutation,
+    LogNewEntity, MutationKind, MutationLog, StepCounters,
+};
 pub use usd::{export_usd, UsdOptions};
 
 use ifc_lite_geometry::extract_profiles;

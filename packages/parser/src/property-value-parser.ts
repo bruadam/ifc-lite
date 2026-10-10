@@ -12,11 +12,15 @@
  * module-size budget.
  */
 
-import type { IfcEntity } from './types.js';
+import type { IfcAttributeValue, IfcEntity } from './types.js';
 import type { EntityExtractor } from './entity-extractor.js';
 import { PropertyValueType } from '@ifc-lite/data';
 import type { PropertyValue } from '@ifc-lite/data';
 import type { IfcDataStore } from './columnar-parser.js';
+import { resolvePropertyReferenceValue } from './property-reference-value.js';
+import { resolveComplexPropertyValue } from './property-complex-value.js';
+
+export { resolveComplexPropertyValue };
 
 // ============================================================================
 // Property Value Parsing Helpers
@@ -32,6 +36,22 @@ export interface ParsedIfcPropertyValue {
     values?: string[];
     dataType?: string;
     dataTypeMixed?: true;
+    /**
+     * Which `IfcProperty` subtype carried the value, when it is not a single
+     * value. `values` then holds the candidates a rule reads: every member of
+     * an enumerated or list value, every cell of a table (#5475).
+     */
+    structure?: 'enumerated' | 'bounded' | 'list' | 'table' | 'reference' | 'complex';
+    /** `IfcComplexProperty` only: each nested property, by its own `Name`, decoded the same way (#5475). */
+    members?: ExtractedProperty[];
+}
+
+/** One property as the on-demand extractors return it: the parsed value
+ *  plus its name and, when the file declares one, its explicit unit. */
+export interface ExtractedProperty extends ParsedIfcPropertyValue {
+    name: string;
+    unit?: string;
+    unitSiScale?: number;
 }
 
 /** The IFC type every typed member of a list shares, or `undefined` when a
@@ -47,6 +67,17 @@ function sharedMemberType(members: unknown[]): string | undefined {
     return shared;
 }
 
+/** Public mutation write markers and parsed STEP values share one decoder
+ * (#7119). Only direct slots and their list members need normalization;
+ * walking arbitrary nested file graphs would add unbounded work here. */
+export function parsedWriteValue(value: IfcAttributeValue): IfcAttributeValue {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        if ('typed' in value) return [value.typed.type, value.typed.value];
+        if ('real' in value) return value.real;
+    }
+    return value;
+}
+
 /**
  * Parse a property entity's value based on its IFC type.
  * Handles all 6 IfcProperty subtypes:
@@ -55,10 +86,11 @@ function sharedMemberType(members: unknown[]): string | undefined {
  * - IfcPropertyBoundedValue: upper/lower bounds → "value [min – max]"
  * - IfcPropertyListValue: list of values → joined string
  * - IfcPropertyTableValue: defining/defined value pairs → "Table(N rows)"
- * - IfcPropertyReferenceValue: entity reference → "Reference #ID"
+ * - IfcPropertyReferenceValue: `#<id>` of the reference (slot 3); `parsePropertyValueWithComplex` reads the referenced Name instead
  */
 export function parsePropertyValue(propEntity: IfcEntity): ParsedIfcPropertyValue {
-    const attrs = propEntity.attributes || [];
+    const attrs = (propEntity.attributes || []).map(value =>
+        Array.isArray(value) ? value.map(parsedWriteValue) : parsedWriteValue(value));
     const typeUpper = propEntity.type.toUpperCase();
 
     switch (typeUpper) {
@@ -75,7 +107,7 @@ export function parsePropertyValue(propEntity: IfcEntity): ParsedIfcPropertyValu
                 // joined display string remains the primary `value`
                 // for visualisation/property-table consumers.
                 const dataType = sharedMemberType(enumValues);
-                return { type: 0, value: values.join(', ') || null, values, ...(dataType ? { dataType } : {}) };
+                return { type: 0, value: values.join(', ') || null, values, structure: 'enumerated', ...(dataType ? { dataType } : {}) };
             }
             return { type: 0, value: null };
         }
@@ -114,6 +146,7 @@ export function parsePropertyValue(propEntity: IfcEntity): ParsedIfcPropertyValu
             return {
                 type: displayValue != null ? 1 : 0,
                 value: display || null,
+                structure: 'bounded',
                 ...(candidates.length > 0 ? { values: candidates } : {}),
                 ...(dataType ? { dataType } : {}),
             };
@@ -128,7 +161,7 @@ export function parsePropertyValue(propEntity: IfcEntity): ParsedIfcPropertyValu
                     return String(v);
                 }).filter(v => v !== 'null' && v !== 'undefined');
                 const dataType = sharedMemberType(listValues);
-                return { type: 0, value: values.join(', ') || null, values, ...(dataType ? { dataType } : {}) };
+                return { type: 0, value: values.join(', ') || null, values, structure: 'list', ...(dataType ? { dataType } : {}) };
             }
             return { type: 0, value: null };
         }
@@ -161,18 +194,20 @@ export function parsePropertyValue(propEntity: IfcEntity): ParsedIfcPropertyValu
                     value: `Table (${rowCount} rows)`,
                     values,
                     dataTypeMixed: true,
+                    structure: 'table',
                 };
             }
             return { type: 0, value: null };
         }
 
         case 'IFCPROPERTYREFERENCEVALUE': {
-            // [Name, Description, PropertyReference]
-            const refValue = attrs[2];
-            if (typeof refValue === 'number') {
-                return { type: 0, value: `#${refValue}` };
-            }
-            return { type: 0, value: null };
+            // [Name, Description, UsageName, PropertyReference]. Without a
+            // store the referenced object cannot be read, so only its id is
+            // known; `parsePropertyValueWithComplex` reads its Name (#5475).
+            const refValue = attrs[3];
+            return typeof refValue === 'number'
+                ? { type: 0, value: `#${refValue}`, structure: 'reference' }
+                : { type: 0, value: null, structure: 'reference' };
         }
 
         default: {
@@ -257,103 +292,13 @@ export function extractNumericValue(attr: unknown): number | null {
     return null;
 }
 
-/** Guards {@link resolveComplexPropertyValue} against a pathological/cyclic
- *  HasProperties chain; real IFC nests IfcComplexProperty at most a couple of
- *  levels deep (e.g. Pset "sub-properties"). */
-const MAX_COMPLEX_PROPERTY_DEPTH = 8;
-
-/**
- * The suffix minted into a complex property's display value when
- * {@link MAX_COMPLEX_PROPERTY_DEPTH} stops the walk with `HasProperties`
- * members still unread (issue #3972). Byte-identical to
- * `complex_property_truncation_marker()` in
- * `apps/server/src/services/data_model/property_value.rs` — the two paths
- * feed the same property panel, CSV/parquet export and compare fingerprints,
- * so a divergence here reads as a data difference between browser and server.
- *
- * A suffix rather than a `truncated` flag on `Property`: a flag would have to
- * be carried through the `Property` type, the `serverDataModel` adapter, the
- * Rust struct + serde, the per-field parquet columns and the panel renderer,
- * and is silently lost at any one of them — the same "a signal that never
- * fires" shape this issue is about. The value string reaches every reader by
- * construction.
- */
-function complexPropertyTruncationMarker(): string {
-    return `(truncated: nesting deeper than ${MAX_COMPLEX_PROPERTY_DEPTH} levels)`;
-}
-
-/**
- * Resolve an `IfcComplexProperty`'s nested `HasProperties` (EXPRESS:
- * `[Name, Description, UsageName, HasProperties]`, index 3) into a display
- * value plus a flat `values` candidate list, recursing into any further
- * nested `IfcComplexProperty`. Without this, {@link parsePropertyValue}'s
- * default branch reads attribute index 2 as if it were a `NominalValue`,
- * which for `IfcComplexProperty` is `UsageName` — a label, not a value — and
- * every nested property silently vanishes from the panel/query output.
- *
- * Hitting {@link MAX_COMPLEX_PROPERTY_DEPTH} with a non-empty `HasProperties`
- * still unread appends {@link complexPropertyTruncationMarker}; a bare
- * `UsageName` there is a plausible, well-formed value indistinguishable from
- * a complex property that genuinely has no nested content (issue #3972). The
- * empty-`UsageName` case matters most — before #3972 it produced an empty
- * display, the caller loop `continue`d past it, and the whole nested member
- * vanished while its parent fell back to showing its OWN `UsageName`, so the
- * reader saw a real value attributed to the wrong nesting level. An absent or
- * empty `HasProperties` is NOT a truncation and keeps the bare `UsageName`.
- */
-export function resolveComplexPropertyValue(
-    store: IfcDataStore,
-    extractor: EntityExtractor,
-    propEntity: IfcEntity,
-    depth = 0
-): ParsedIfcPropertyValue {
-    const attrs = propEntity.attributes || [];
-    const usageName = typeof attrs[2] === 'string' ? attrs[2] : '';
-    const hasProperties = attrs[3];
-
-    if (!Array.isArray(hasProperties) || hasProperties.length === 0) {
-        // Nothing nested exists, so stopping here loses nothing and must NOT
-        // be marked as a truncation.
-        return { type: PropertyValueType.String, value: usageName || null };
-    }
-
-    if (depth >= MAX_COMPLEX_PROPERTY_DEPTH) {
-        // Members were present and we declined to read them. Say so.
-        const marker = complexPropertyTruncationMarker();
-        return {
-            type: PropertyValueType.String,
-            value: usageName ? `${usageName} ${marker}` : marker,
-        };
-    }
-
-    const parts: string[] = [];
-    const values: string[] = [];
-
-    for (const ref of hasProperties) {
-        if (typeof ref !== 'number') continue;
-        // @raw-entity-enumeration-ok complex-property parsing follows this source member reference, not an entity set
-        const nestedRef = store.entityIndex.byId.get(ref) ?? store.deferredEntityIndex?.get(ref);
-        if (!nestedRef) continue;
-        const nestedEntity = extractor.extractEntity(nestedRef);
-        if (!nestedEntity) continue;
-
-        const nestedAttrs = nestedEntity.attributes || [];
-        const nestedName = typeof nestedAttrs[0] === 'string' ? nestedAttrs[0] : '';
-        const nestedParsed = nestedEntity.type.toUpperCase() === 'IFCCOMPLEXPROPERTY'
-            ? resolveComplexPropertyValue(store, extractor, nestedEntity, depth + 1)
-            : parsePropertyValue(nestedEntity);
-
-        const display = nestedParsed.value != null ? String(nestedParsed.value) : '';
-        if (!display) continue;
-        parts.push(nestedName ? `${nestedName}: ${display}` : display);
-        values.push(display);
-    }
-
-    return {
-        type: PropertyValueType.String,
-        value: parts.length > 0 ? parts.join(', ') : (usageName || null),
-        ...(values.length > 0 ? { values } : {}),
-    };
+/** Copy the optional parts of a decoded value onto an extracted property. */
+export function copyParsedExtras(entry: ExtractedProperty, parsed: ParsedIfcPropertyValue): void {
+    if (parsed.values) entry.values = parsed.values;
+    if (parsed.dataType) entry.dataType = parsed.dataType;
+    if (parsed.dataTypeMixed) entry.dataTypeMixed = true;
+    if (parsed.structure) entry.structure = parsed.structure;
+    if (parsed.members) entry.members = parsed.members;
 }
 
 /** Dispatch a pset member to {@link resolveComplexPropertyValue} for
@@ -363,8 +308,12 @@ export function parsePropertyValueWithComplex(
     extractor: EntityExtractor,
     propEntity: IfcEntity
 ): ParsedIfcPropertyValue {
-    if (propEntity.type.toUpperCase() === 'IFCCOMPLEXPROPERTY') {
+    const type = propEntity.type.toUpperCase();
+    if (type === 'IFCCOMPLEXPROPERTY') {
         return resolveComplexPropertyValue(store, extractor, propEntity);
+    }
+    if (type === 'IFCPROPERTYREFERENCEVALUE') {
+        return resolvePropertyReferenceValue(store, extractor, propEntity);
     }
     return parsePropertyValue(propEntity);
 }

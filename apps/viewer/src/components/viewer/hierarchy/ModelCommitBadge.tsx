@@ -32,13 +32,14 @@ export interface ModelCommitBadgeProps {
 
 export function ModelCommitBadge({ modelId }: ModelCommitBadgeProps) {
   const { t } = useTranslation();
+  const pending = useViewerStore(s => s.resolverPending.has(modelId));
   const tag = useViewerStore((s) => s.commitTags.get(modelId));
   const newHead = useViewerStore((s) => s.historyNewHeads.get(modelId));
   const showPanel = useViewerStore((s) => s.showWorkspacePanel);
   const setHistoryFocus = useViewerStore((s) => s.setHistoryFocus);
   const backToLatest = useBackToLatest();
 
-  if (!tag) return null;
+  if (!tag) return pending ? <button className="text-xs underline" onClick={event => { event.stopPropagation(); setHistoryFocus(modelId); showPanel('history'); window.dispatchEvent(new Event('ifc-resolve-history')); }}>{t('history.resolver.pending')}</button> : null;
   const loadedOn = formatLocaleDate(getLocale(), tag.loadedAt, { day: 'numeric', month: 'short' });
 
   return (

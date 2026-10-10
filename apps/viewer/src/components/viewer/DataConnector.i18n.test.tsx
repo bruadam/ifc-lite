@@ -25,7 +25,7 @@ import '@/test/setup-dom.js';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
-import { render, cleanup, click, advance } from '@/test/render.js';
+import { render, cleanup, click, activate, advance, type } from '@/test/render.js';
 import { registerLocale, setLocale, localeCount, type Catalogue } from '@/i18n';
 import { resolve } from '@/i18n/registry';
 import { en } from '@/i18n/en';
@@ -49,7 +49,10 @@ function markValue(value: TranslationValue): TranslationValue {
   return marked as PluralTranslation;
 }
 
-const PSEUDO: Catalogue = Object.fromEntries(KEYS.map((key) => [key, markValue(CATALOGUE[key]!)]));
+const PSEUDO: Catalogue = {
+  ...Object.fromEntries(KEYS.map((key) => [key, markValue(CATALOGUE[key]!)])),
+  'mutationPermission.roleRequired': markValue(en['mutationPermission.roleRequired']),
+};
 const BASELINE_LOCALE = 'en';
 const PSEUDO_LOCALE = 'data-connector-pseudo';
 
@@ -167,6 +170,7 @@ beforeEach(() => {
   registerLocale(PSEUDO_LOCALE, PSEUDO);
   setLocale(BASELINE_LOCALE);
   useViewerStore.setState({
+    editEnabled: true,
     models: new Map(),
     activeModelId: null,
     ifcDataStore: null,
@@ -192,6 +196,19 @@ afterEach(() => {
 });
 
 describe('DataConnector localization (#4918)', () => {
+  it('#5823 opens the CSV picker from the upload control with Enter and Space', async () => {
+    await openDialog();
+    const upload = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Drag & drop a CSV file'));
+    const input = document.body.querySelector<HTMLInputElement>('input[type="file"]');
+    assert.ok(upload && input);
+    let opens = 0;
+    input.addEventListener('click', () => { opens++; });
+    activate(upload, 'Enter');
+    activate(upload, ' ');
+    assert.equal(opens, 2);
+  });
+
   it('translates the default trigger button when no custom trigger is supplied', async () => {
     render(<DataConnector />);
     checkAtCurrentState([{ key: 'dataConnector.triggerButton' }]);
@@ -274,7 +291,15 @@ describe('DataConnector localization (#4918)', () => {
       { key: 'dataConnector.columnPlaceholder' },
       { key: 'dataConnector.psetNamePlaceholder' },
       { key: 'dataConnector.propertyPlaceholder' },
+      { key: 'dataConnector.removeMappingLabel' },
     ]);
+    const targetPset = document.body.querySelector<HTMLInputElement>('input[aria-label="Target Pset"]');
+    const targetProperty = document.body.querySelector<HTMLInputElement>('input[aria-label="Target Property"]');
+    assert.ok(targetPset && targetProperty, '#6342: mapping targets have distinct accessible names');
+    type(targetPset, 'Pset_WallCommon');
+    type(targetProperty, 'Reference');
+    assert.equal(targetPset.getAttribute('aria-label'), 'Target Pset');
+    assert.equal(targetProperty.getAttribute('aria-label'), 'Target Property');
 
     triggers = comboboxTriggers();
     const valueTypeTrigger = triggers[triggers.length - 1];
@@ -298,6 +323,13 @@ describe('DataConnector localization (#4918)', () => {
       { key: 'dataConnector.propertyNameFieldLabel' },
       { key: 'dataConnector.propertyNamePlaceholder' },
     ]);
+    const matchPset = document.body.querySelector<HTMLInputElement>('input[aria-label="Property Set"]');
+    const matchProperty = document.body.querySelector<HTMLInputElement>('input[aria-label="Property Name"]');
+    assert.ok(matchPset && matchProperty, '#6342: matching fields use their visible translated names');
+    type(matchPset, 'Pset_WallCommon');
+    type(matchProperty, 'Reference');
+    assert.equal(matchPset.getAttribute('aria-label'), 'Property Set');
+    assert.equal(matchProperty.getAttribute('aria-label'), 'Property Name');
   });
 
   it('translates the match-results and import-complete alerts once a real model is connected', async () => {
@@ -425,12 +457,13 @@ describe('DataConnector localization (#4918)', () => {
       mutationViews: new Map(),
       mutationVersion: 0,
       collabRole: 'viewer',
+      editEnabled: true,
     });
 
     await openDialog();
     await settle();
 
-    checkAtCurrentState([{ key: 'dataConnector.editRequiresAccessTitle' }]);
+    checkAtCurrentState([{ key: 'mutationPermission.roleRequired' }]);
   });
 
   it('accounts for every catalogue key: rendered above, or a documented other-branch', () => {

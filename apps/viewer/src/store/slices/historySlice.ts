@@ -26,6 +26,7 @@
  * subscriber, for data that never changes.
  */
 
+import type { MatchResult } from '@ifc-lite/model-match';
 import type { StateCreator } from 'zustand';
 import type { CommitRef } from '@ifc-lite/plugin-api';
 
@@ -63,6 +64,10 @@ export interface LocalLineageLink {
 }
 
 export interface HistorySlice {
+  resolverEnabled: boolean;
+  setResolverEnabled: (enabled: boolean) => void;
+  resolverPending: ReadonlyMap<string, MatchResult>;
+  setResolverPending: (modelId: string, result: MatchResult | null) => void;
   /** Keyed by the VIEWER's model id. */
   commitTags: ReadonlyMap<string, CommitTag>;
   /** Keyed by the newer viewer model id. */
@@ -121,6 +126,10 @@ function withoutKey<T>(map: ReadonlyMap<string, T>, key: string): ReadonlyMap<st
 }
 
 export const createHistorySlice: StateCreator<HistorySlice & HistoryCrossSliceState, [], [], HistorySlice> = (set, get) => ({
+  resolverEnabled: true,
+  setResolverEnabled: (resolverEnabled) => set({ resolverEnabled }),
+  resolverPending: new Map(),
+  setResolverPending: (id, result) => { const next = new Map(get().resolverPending); if (result) next.set(id, result); else next.delete(id); set({ resolverPending: next }); },
   commitTags: new Map(),
   localLineage: new Map(),
   historyFocusModelId: null,

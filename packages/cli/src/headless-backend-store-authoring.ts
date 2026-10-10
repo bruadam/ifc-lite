@@ -4,10 +4,10 @@
 
 /**
  * The `bim.store` authoring surfaces the CLI backend composes from shared SDK
- * factories rather than hand-written methods: cost (#4857) and structural
- * analysis (#5167 S.1).
+ * factories rather than hand-written methods: cost (#4857), structural
+ * analysis (#5167 S.1), hosted elements and ordinary creation (#6232).
  *
- * Both take the SAME per-call resolution, and that is the point of keeping
+ * Each takes the SAME per-call resolution, and that is the point of keeping
  * them together: an entity authored through one surface must be visible to the
  * next call on the other, which only holds while both resolve the same
  * `StoreEditor` and the same `MutablePropertyView`. Two separately-written
@@ -18,9 +18,13 @@
 
 import {
   createCostStoreBackend,
+  createModellingStoreBackend,
+  createOrdinaryStoreBackend,
   createStructuralStoreBackend,
   type CostBackendMethods,
   type CostStoreBackendMethods,
+  type ModellingStoreBackendMethods,
+  type OrdinaryStoreBackendMethods,
   type StructuralStoreBackendMethods,
 } from '@ifc-lite/sdk';
 import type { IfcDataStore } from '@ifc-lite/parser';
@@ -39,19 +43,21 @@ export interface StoreAuthoringDeps {
 
 export function createStoreAuthoring(
   deps: StoreAuthoringDeps,
-): CostStoreBackendMethods & StructuralStoreBackendMethods {
-  const resolve = (modelId?: string) => {
+): CostStoreBackendMethods & StructuralStoreBackendMethods & ModellingStoreBackendMethods & OrdinaryStoreBackendMethods {
+  const resolveModel = (modelId?: string) => {
     deps.assertModel(modelId ?? '');
     return {
       modelId: modelId ?? deps.defaultModelId,
       store: deps.dataStore(),
       editor: deps.editor(),
       mutationView: deps.mutationView(),
-      ownerHistoryId: deps.ownerHistoryId(),
     };
   };
+  const resolve = (modelId?: string) => ({ ...resolveModel(modelId), ownerHistoryId: deps.ownerHistoryId() });
   return {
     ...createCostStoreBackend(resolve, deps.cost),
     ...createStructuralStoreBackend(resolve),
+    ...createModellingStoreBackend(resolve),
+    ...createOrdinaryStoreBackend(resolveModel),
   };
 }

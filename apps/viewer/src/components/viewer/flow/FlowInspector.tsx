@@ -13,6 +13,8 @@ import type { FlowDocument, Lacing, NodeDef, NodeRegistry, ParamDef, RunResult, 
 import { useTranslation } from '@/i18n/useTranslation';
 import { removeNode, setLacing, setParam, setTracking, toggleInput, toggleOutput, updateNode } from '@/lib/flow/editor-ops';
 import { KIND_COLOR, describeData } from '@/lib/flow/view-model';
+import { FlowFileSlotsEditor } from './FlowFileSlotsEditor';
+import { FlowAutomationEditor } from './FlowAutomationEditor';
 import { FlowCodeParam } from './FlowCodeParam';
 import { FlowValuePreview } from './FlowValuePreview';
 
@@ -36,12 +38,12 @@ function ParamField({ def, value, onChange, invalidLabel, node }: { def: ParamDe
         />
       );
     case 'boolean':
-      return <input type="checkbox" checked={current === true} onChange={(e) => onChange(e.target.checked)} className="accent-[#7aa2f7]" />;
+      return <input type="checkbox" aria-label={def.name} checked={current === true} onChange={(e) => onChange(e.target.checked)} className="accent-[#7aa2f7]" />;
     case 'number':
-      return <input type="number" className={input} value={typeof current === 'number' ? current : ''} onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))} />;
+      return <input type="number" aria-label={def.name} className={input} value={typeof current === 'number' ? current : ''} onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))} />;
     case 'enum':
       return (
-        <select className={input} value={String(current ?? '')} onChange={(e) => onChange(e.target.value)}>
+        <select aria-label={def.name} className={input} value={String(current ?? '')} onChange={(e) => onChange(e.target.value)}>
           {(def.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       );
@@ -52,6 +54,7 @@ function ParamField({ def, value, onChange, invalidLabel, node }: { def: ParamDe
       return (
         <div>
           <textarea
+            aria-label={def.name}
             className={`${input} font-mono ${invalid ? 'border-red-400' : ''}`}
             rows={2}
             value={text}
@@ -61,12 +64,12 @@ function ParamField({ def, value, onChange, invalidLabel, node }: { def: ParamDe
             }}
             onBlur={() => setJsonText(null)}
           />
-          {invalid && <div className="text-[10px] text-red-400">{invalidLabel}</div>}
+          {invalid && <div className="text-2xs text-red-400">{invalidLabel}</div>}
         </div>
       );
     }
     default:
-      return <input className={input} value={typeof current === 'string' ? current : ''} onChange={(e) => onChange(e.target.value)} />;
+      return <input aria-label={def.name} className={input} value={typeof current === 'string' ? current : ''} onChange={(e) => onChange(e.target.value)} />;
   }
 }
 
@@ -92,17 +95,19 @@ export function FlowInspector({ doc, registry, nodeId, lastRun, onDocChange, onS
     <div className="flex w-64 shrink-0 flex-col gap-2 overflow-y-auto border-l border-border p-2 text-xs" data-flow-inspector>
       <div>
         <div className="font-medium">{def?.title ?? node.type}</div>
-        <div className="font-mono text-[10px] text-muted-foreground">{node.id} · {node.type}</div>
+        <div className="font-mono text-2xs text-muted-foreground">{node.id} · {node.type}</div>
         {!def && <div className="text-red-400">{t('flowPanel.inspector.unknownType', { type: node.type })}</div>}
         {/* The palette only shows the doc as a tooltip, which is unreachable once the node is on the canvas. */}
-        {def?.doc && <div className="mt-1 text-[10px] leading-snug text-muted-foreground">{def.doc}</div>}
-        {def && def.capabilities.length > 0 && <div className="text-[10px] text-muted-foreground">{t('flowPanel.inspector.capabilities')}: {def.capabilities.join(', ')}</div>}
+        {def?.doc && <div className="mt-1 text-2xs leading-snug text-muted-foreground">{def.doc}</div>}
+        {def && def.capabilities.length > 0 && <div className="text-2xs text-muted-foreground">{t('flowPanel.inspector.capabilities')}: {def.capabilities.join(', ')}</div>}
       </div>
 
       <label className="block">
         <span className="text-muted-foreground">{t('flowPanel.inspector.label')}</span>
         <input className={input} value={node.label ?? ''} onChange={(e) => onDocChange(updateNode(doc, node.id, { label: e.target.value || undefined }))} />
       </label>
+
+      <FlowAutomationEditor doc={doc} nodeId={node.id} onChange={onDocChange} />
 
       {def && def.params.length > 0 && (
         <div>
@@ -113,8 +118,16 @@ export function FlowInspector({ doc, registry, nodeId, lastRun, onDocChange, onS
               <div key={p.name} className="mt-1">
                 <div className="flex items-center justify-between">
                   <span title={p.doc}>{p.name}</span>
-                  <label className="inline-flex items-center gap-1 text-[10px] text-muted-foreground" title={t('flowPanel.inspector.isInput')}>
-                    <input type="checkbox" checked={isInput} onChange={() => onDocChange(toggleInput(doc, node.id, p.name, `${node.label ?? def.title}: ${p.name}`))} className="accent-[#e0af68]" />▸
+                  <label className="inline-flex items-center gap-1 text-2xs text-muted-foreground" title={t('flowPanel.inspector.isInput')}>
+                    <input type="checkbox" aria-label={`${t('flowPanel.inspector.isInput')}: ${p.name}`} checked={isInput} onChange={() => {
+                      const next = toggleInput(doc, node.id, p.name, `${node.label ?? def.title}: ${p.name}`);
+                      if (p.name === 'files' && !isInput && ['session.loadModels', 'validation.runChecks', 'comparison.runChecks', 'report.importComparisons'].includes(node.type)) {
+                        onDocChange({ ...next, inputs: next.inputs.map((value) => value.nodeId === node.id && value.param === p.name
+                          ? { ...value, kind: 'files' as const, fileSlots: [{ id: node.type === 'session.loadModels' ? 'models' : 'resources',
+                            label: node.type === 'session.loadModels' ? 'IFC models' : 'Check resources',
+                            accept: node.type === 'session.loadModels' ? '.ifc' : '.json,.ids', multiple: true, required: true }] } : value) });
+                      } else onDocChange(next);
+                    }} className="accent-[#e0af68]" />▸
                   </label>
                 </div>
                 <ParamField def={p} value={node.params?.[p.name]} onChange={(v) => onDocChange(setParam(doc, node.id, p.name, v))} invalidLabel={t('flowPanel.inspector.jsonInvalid')} node={def} />
@@ -123,6 +136,8 @@ export function FlowInspector({ doc, registry, nodeId, lastRun, onDocChange, onS
           })}
         </div>
       )}
+
+      <FlowFileSlotsEditor doc={doc} nodeId={node.id} onChange={onDocChange} defaultAccept={node.type === 'session.loadModels' ? '.ifc' : undefined} />
 
       {hasItemPort && (
         <label className="block">
@@ -159,10 +174,10 @@ export function FlowInspector({ doc, registry, nodeId, lastRun, onDocChange, onS
                 <div className="flex items-center gap-1">
                   <span className="inline-block h-2 w-2 rounded-full" style={{ background: KIND_COLOR[p.type.kind] }} />
                   <span>{p.name}</span>
-                  <span className="text-[10px] text-muted-foreground">{p.type.kind}/{p.type.access}</span>
-                  <span className="ml-auto text-[10px] text-muted-foreground">{describeData(data)}</span>
-                  <label className="inline-flex items-center gap-1 text-[10px] text-muted-foreground" title={t('flowPanel.inspector.isOutput')}>
-                    <input type="checkbox" checked={isOutput} onChange={() => onDocChange(toggleOutput(doc, node.id, p.name, `${node.label ?? def.title}: ${p.name}`))} className="accent-[#9ece6a]" />▪
+                  <span className="text-2xs text-muted-foreground">{p.type.kind}/{p.type.access}</span>
+                  <span className="ml-auto text-2xs text-muted-foreground">{describeData(data)}</span>
+                  <label className="inline-flex items-center gap-1 text-2xs text-muted-foreground" title={t('flowPanel.inspector.isOutput')}>
+                    <input type="checkbox" aria-label={`${t('flowPanel.inspector.isOutput')}: ${p.name}`} checked={isOutput} onChange={() => onDocChange(toggleOutput(doc, node.id, p.name, `${node.label ?? def.title}: ${p.name}`))} className="accent-[#9ece6a]" />▪
                   </label>
                 </div>
                 {data && <div className="mt-1 max-h-40 overflow-auto"><FlowValuePreview data={data} /></div>}
@@ -173,7 +188,7 @@ export function FlowInspector({ doc, registry, nodeId, lastRun, onDocChange, onS
       )}
 
       {report && (
-        <div className="text-[10px] text-muted-foreground">
+        <div className="text-2xs text-muted-foreground">
           <div>{t('flowPanel.inspector.lastRun')}: {t(`flowPanel.status.${report.status}` as const)} · {t('flowPanel.inspector.lanes', { count: report.lanes })}{report.laneErrors > 0 ? ` · ${t('flowPanel.inspector.laneErrors', { count: report.laneErrors })}` : ''}</div>
           {report.tracking && <div>{t('flowPanel.inspector.tracked', report.tracking)}</div>}
           {report.error && <div className="text-red-400">{report.error}</div>}

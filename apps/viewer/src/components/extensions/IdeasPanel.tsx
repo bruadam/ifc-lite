@@ -33,6 +33,7 @@ import { useExtensionHost } from '@/sdk/ExtensionHostProvider';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
 import { PlanCard } from './PlanCard';
+import { AssistantRecipeIdeas } from './AssistantRecipeIdeas';
 import { toast } from '@/components/ui/toast';
 import { HelpHint } from './HelpHint';
 import { formatExtensionDate } from './localized-date';
@@ -165,7 +166,7 @@ export function IdeasPanel({ onApprovePlan }: IdeasPanelProps) {
           <Lightbulb className="h-4 w-4" />
           <h2 className="text-sm font-semibold">{t('extensionsPanels.ideasPanel.title')}</h2>
           {event && (
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-2xs text-muted-foreground">
               {t('extensionsPanels.ideasPanel.suggestionsSummary', {
                 count: patterns.length,
                 countDisplay: formatLocaleNumber(locale, patterns.length),
@@ -215,7 +216,7 @@ export function IdeasPanel({ onApprovePlan }: IdeasPanelProps) {
         {/* Recurring (mined) patterns. Tightens as the log grows. */}
         {patterns.length > 0 && (
           <div>
-            <div className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">
+            <div className="px-4 pt-3 pb-1 text-2xs uppercase tracking-wide font-semibold text-muted-foreground">
               {t('extensionsPanels.ideasPanel.recurringHeading')}
             </div>
             <ul className="divide-y">
@@ -226,7 +227,7 @@ export function IdeasPanel({ onApprovePlan }: IdeasPanelProps) {
                       <div className="flex flex-wrap items-center gap-1 text-xs">
                         {pattern.sequence.map((intent, idx) => (
                           <span key={`${intent}:${idx}`} className="flex items-center gap-1">
-                            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-2xs">
                               {intent}
                             </code>
                             {idx < pattern.sequence.length - 1 && (
@@ -235,7 +236,7 @@ export function IdeasPanel({ onApprovePlan }: IdeasPanelProps) {
                           </span>
                         ))}
                       </div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">
+                      <div className="mt-1 text-2xs text-muted-foreground">
                         {t('extensionsPanels.ideasPanel.occurrenceSummary', {
                           count: pattern.sessionsTouched,
                           occurrences: formatLocaleNumber(locale, pattern.occurrences),
@@ -264,12 +265,15 @@ export function IdeasPanel({ onApprovePlan }: IdeasPanelProps) {
           </div>
         )}
 
+        {/* Saved assistant workflows and curated task recipes (viewer AI P20). */}
+        <AssistantRecipeIdeas />
+
         {/* Always-on starter ideas. Hand-curated IFC/AEC workflows the
             user can author without waiting for the miner to learn from
             their activity. Tagged "Example" so they don't masquerade
             as personalised suggestions. */}
         <div>
-          <div className="px-4 pt-4 pb-1 text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">
+          <div className="px-4 pt-4 pb-1 text-2xs uppercase tracking-wide font-semibold text-muted-foreground">
             {patterns.length === 0
               ? t('extensionsPanels.ideasPanel.gettingStartedEmpty')
               : t('extensionsPanels.ideasPanel.gettingStartedExamples')}
@@ -282,17 +286,17 @@ export function IdeasPanel({ onApprovePlan }: IdeasPanelProps) {
                     <div className="flex items-center gap-2 text-xs font-medium">
                       <span aria-hidden>{idea.icon}</span>
                       <span className="truncate">{idea.plan.summary}</span>
-                      <span className="text-[10px] uppercase tracking-wide bg-muted text-muted-foreground rounded px-1.5 py-0.5 font-semibold shrink-0">
+                      <span className="text-2xs uppercase tracking-wide bg-muted text-muted-foreground rounded px-1.5 py-0.5 font-semibold shrink-0">
                         {idea.category}
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed line-clamp-3">
+                    <p className="mt-1 text-2xs text-muted-foreground leading-relaxed line-clamp-3">
                       {idea.plan.rationale}
                     </p>
                     <button
                       type="button"
                       onClick={() => handleCustomizeStarter(idea)}
-                      className="mt-1 text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2"
+                      className="mt-1 text-2xs text-muted-foreground hover:text-foreground underline underline-offset-2"
                     >
                       {t('extensionsPanels.ideasPanel.customizePlanLink')}
                     </button>
@@ -326,7 +330,7 @@ export function IdeasPanel({ onApprovePlan }: IdeasPanelProps) {
             <MessageSquarePlus className="mr-2 h-3.5 w-3.5" />
             {t('extensionsPanels.ideasPanel.authorFromScratchButton')}
           </Button>
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          <p className="mt-1 text-2xs text-muted-foreground">
             {t('extensionsPanels.ideasPanel.authorFromScratchBody')}
           </p>
         </div>

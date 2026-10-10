@@ -12,9 +12,9 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { X, Table2, Settings2 } from 'lucide-react';
+import { Table2, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { IconButton } from '@/components/ui/icon-button';
 import { useViewerStore } from '@/store';
 import {
   summariseListRows,
@@ -23,6 +23,11 @@ import {
 } from '@/lib/lists';
 import type { ListDefinition, ListGrouping } from '@/lib/lists';
 import { runListFederated } from '@/lib/lists/run-list';
+import { carryListRun, recordListRun } from '@/lib/lists/run-provenance';
+import { beginActivity, finishActivity } from '@/lib/activity/activity-journal';
+import { captureAnalysisStamp } from '@/hooks/useAnalysisStaleness';
+import { AssistantAction } from '@/components/viewer/assistant/AssistantAction';
+import { evaluatorModelsFromState } from '@/lib/model-tags/evaluator-models';
 import { useListProviders } from './useListProviders';
 import { ListBuilder } from './ListBuilder';
 import { ListResultsTable } from './ListResultsTable';
@@ -31,13 +36,9 @@ import { ListLibrary } from './ListLibrary';
 import { useTranslation } from '@/i18n/useTranslation';
 import { formatLocaleCount } from './formatLocaleCount';
 
-interface ListPanelProps {
-  onClose?: () => void;
-}
-
 type PanelView = 'library' | 'builder' | 'results';
 
-export function ListPanel({ onClose }: ListPanelProps) {
+export function ListPanel() {
   const { t, locale } = useTranslation();
   const [view, setView] = useState<PanelView>('library');
   const [editingList, setEditingList] = useState<ListDefinition | null>(null);
@@ -67,13 +68,22 @@ export function ListPanel({ onClose }: ListPanelProps) {
   }, [pendingListDraft, setPendingListDraft]);
 
   const importInputRef = React.useRef<HTMLInputElement>(null);
+  const listRunRef = React.useRef<AbortController | null>(null);
 
   // Providers + declared units per model, shared with document table blocks (#5142).
   const { pairs: modelProviderPairs, providers: allProviders, stores: allStores, modelUnits, hasData } = useListProviders();
+  React.useEffect(() => () => listRunRef.current?.abort(), [modelProviderPairs]);
   const listModelIds = React.useMemo(() => modelProviderPairs.map((pair) => pair.modelId), [modelProviderPairs]);
 
   const handleExecuteList = useCallback((definition: ListDefinition) => {
     if (!hasData) return;
+    listRunRef.current?.abort();
+    const controller = new AbortController();
+    listRunRef.current = controller;
+    const job = beginActivity({ kind: 'check', title: 'activityTray.job.list', panel: 'lists', subject: definition.name,
+      cancel: () => controller.abort() });
+    let outcome: 'completed' | 'failed' | 'cancelled' = 'cancelled';
+    let detail: string | undefined;
 
     setListExecuting(true);
     setListError(null);
@@ -81,20 +91,36 @@ export function ListPanel({ onClose }: ListPanelProps) {
     setEditingList(definition);
 
     // Use requestAnimationFrame to avoid blocking UI during execution
-    requestAnimationFrame(() => {
+    requestAnimationFrame(() => { void (async () => {
       try {
-        setListResult(runListFederated(definition, modelProviderPairs, useViewerStore.getState()));
+        if (controller.signal.aborted) return;
+        const state = useViewerStore.getState();
+        // Stamped at run start, so an edit landing mid-run leaves the result stale (#6833).
+        const stamp = captureAnalysisStamp();
+        const result = await runListFederated(definition, modelProviderPairs, state, {
+          evaluatorModels: evaluatorModelsFromState(state), signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        setListResult(recordListRun(result, definition, stamp));
         setView('results');
+        outcome = 'completed';
       } catch (err) {
+        if (controller.signal.aborted) return;
         // Must be user-visible, not just logged (#4317) — e.g. a name-pattern
         // column compileNameMatcher's ReDoS guard rejects. `view` stays put
         // (never reaches 'results'), so the error box renders over it.
         console.error('[Lists] Execution failed:', err);
-        setListError(err instanceof Error ? err.message : String(err));
+        detail = err instanceof Error ? err.message : String(err);
+        outcome = 'failed';
+        setListError(detail);
       } finally {
-        setListExecuting(false);
+        finishActivity(job, controller.signal.aborted ? 'cancelled' : outcome, detail ? { detail } : {});
+        if (listRunRef.current === controller) {
+          listRunRef.current = null;
+          setListExecuting(false);
+        }
       }
-    });
+    })(); });
   }, [hasData, modelProviderPairs, setActiveListId, setListResult, setListExecuting, setListError]);
 
   const handleCreateNew = useCallback(() => {
@@ -153,7 +179,7 @@ export function ListPanel({ onClose }: ListPanelProps) {
     const current = useViewerStore.getState().listResult;
     if (current) {
       const summ = summariseListRows(next, current.rows);
-      setListResult({ ...current, groups: summ.groups, summary: summ.summary });
+      setListResult(carryListRun(current, { ...current, groups: summ.groups, summary: summ.summary }, next));
     }
   }, [editingList, listDefinitions, updateListDefinition, setListResult]);
 
@@ -198,34 +224,28 @@ export function ListPanel({ onClose }: ListPanelProps) {
           )}
         </div>
         <div className="flex items-center gap-1">
+          <AssistantAction />
           {view === 'results' && (
             <>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label={t('lists.panel.editConfiguration')} onClick={handleEditFromResults}>
-                    <Settings2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('lists.panel.editConfiguration')}</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label={t('lists.panel.backToLists')} onClick={() => setView('library')}>
-                    <Table2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('lists.panel.backToLists')}</TooltipContent>
-              </Tooltip>
+              <IconButton
+                label={t('lists.panel.editConfiguration')}
+                size="icon-sm"
+                onClick={handleEditFromResults}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+              </IconButton>
+              <IconButton
+                label={t('lists.panel.backToLists')}
+                size="icon-sm"
+                onClick={() => setView('library')}
+              >
+                <Table2 className="h-3.5 w-3.5" />
+              </IconButton>
             </>
           )}
           {view === 'builder' && (
             <Button variant="ghost" size="sm" onClick={() => setView('library')} className="text-xs h-7">
               {t('lists.panel.cancel')}
-            </Button>
-          )}
-          {onClose && (
-            <Button variant="ghost" size="icon-sm" aria-label={t('lists.panel.close')} onClick={onClose}>
-              <X className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>

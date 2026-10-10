@@ -6,12 +6,20 @@
 //! A description does not claim to include later boolean operations.
 
 mod curve;
+mod frame;
 mod helpers;
+mod profile;
+mod profile_topology;
+mod topology_interval;
+pub use profile::{extract_analytic_profile, AnalyticProfile, AnalyticProfileLoop, ProfileLoopKind};
+mod extrusion;
+pub use extrusion::{extract_analytic_extrusion, AnalyticExtrusion};
 #[cfg(test)]
 mod tests;
 
 use crate::{Error, Result};
 use ifc_lite_core::{AttributeValue, DecodedEntity, EntityDecoder, IfcType};
+pub use frame::{AnalyticPoint, AnalyticSegmentFrame};
 
 /// An ordered directrix primitive. Angles are radians in the circle's local frame.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -317,4 +325,26 @@ fn read_optional_numeric(value: Option<&AttributeValue>, field: &str) -> Result<
             .map(Some)
             .ok_or_else(|| Error::geometry(format!("IfcSweptDiskSolid has invalid {field}"))),
     }
+}
+
+/// The IFC parameter span of a bounded curve used as an `IfcCompositeCurve`
+/// `ParentCurve`: `N - 1` for an `IfcPolyline` of `N` points, the trimmed
+/// length in `IfcVector` units for a trimmed `IfcLine`, and the swept angle in
+/// the project's plane-angle unit for a trimmed `IfcCircle`. A composite
+/// curve's parameter is the running sum of these spans, so this is the one
+/// place both the analytic description and the swept-solid mesher read it
+/// from (#5566). `None` means the parent's parametrisation is not supported.
+pub(crate) fn composite_parent_parameter_span(
+    parent: &DecodedEntity,
+    decoder: &mut EntityDecoder,
+) -> Result<Option<f64>> {
+    let mut walk = curve::CurveWalk::default();
+    let Some(pieces) = walk.extract(parent, decoder)? else {
+        return Ok(None);
+    };
+    let Some(spans) = helpers::parent_piece_spans(parent, &pieces, decoder)? else {
+        return Ok(None);
+    };
+    let span: f64 = spans.iter().sum();
+    Ok(span.is_finite().then_some(span))
 }

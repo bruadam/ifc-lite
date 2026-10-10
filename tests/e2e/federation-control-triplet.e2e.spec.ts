@@ -20,6 +20,7 @@
 
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
+import { GPU_STRICT, noteSoftwareGpuSkip, watchGpuDeviceLoss } from './gpu-device-loss';
 import type { ViewerState } from '../../apps/viewer/src/store';
 import {
   assertCanonicalCorrespondences,
@@ -50,7 +51,6 @@ const LANDXML = `${CONTROL_DIR}/terrain.xml`;
 const XYZ = `${CONTROL_DIR}/survey.xyz`;
 const FIXTURES = [CONTROL, IFC, LANDXML, XYZ] as const;
 const LOAD_TIMEOUT_MS = 120_000;
-const GPU_STRICT = process.env.E2E_GPU_STRICT !== '0';
 
 interface PlacementSnapshot {
   modelId: string;
@@ -68,10 +68,24 @@ interface PickedControl {
   placements: PlacementSnapshot[];
 }
 
+/**
+ * The Placement panel's "Reference model" is a Radix Select since #5974, not a
+ * native <select>: open its trigger, then pick the model's option (listed by
+ * name, rendered in a portal outside the panel).
+ */
+async function chooseReferenceModel(page: Page, panel: Locator, reference: ModelSnapshot): Promise<void> {
+  await panel.getByLabel('Reference model', { exact: true }).click();
+  await page.getByRole('option', { name: reference.name, exact: true }).click();
+  await expect(panel.getByLabel('Reference model', { exact: true })).toContainText(reference.name);
+}
+
 async function openRepositionPanelForModel(
   page: Page, moving: ModelSnapshot, models: readonly ModelSnapshot[],
 ): Promise<Locator> {
-  await page.getByRole('button', { name: 'Reposition models and pointclouds', exact: true }).click();
+  const reposition = page.locator('button[data-command-id="model:reposition"]');
+  await expect(reposition).toHaveAccessibleName('Reposition');
+  await expect(reposition).toHaveAccessibleDescription('Reposition models and pointclouds');
+  await reposition.click();
   const panel = page.locator('section[aria-label="Reposition models"]');
   await expect(panel, 'the visible Reposition workflow opens').toBeVisible();
   const movingCheckbox = panel.getByLabel(moving.name, { exact: true });
@@ -104,7 +118,7 @@ async function placeUnknownCrsXyzThroughPanel(
   models: readonly ModelSnapshot[],
 ): Promise<ManualPlacement> {
   const panel = await openRepositionPanelForModel(page, xyz, models);
-  await panel.getByLabel('Reference model', { exact: true }).selectOption(reference.id);
+  await chooseReferenceModel(page, panel, reference);
 
   // CP1 is a single independently authored survey control. The user enters
   // only its stated local-minus-projected correction; the other four controls
@@ -185,7 +199,7 @@ async function pickControlThroughRenderer(
   models: readonly ModelSnapshot[],
 ): Promise<PickedControl> {
   const panel = await openRepositionPanelForModel(page, moving, models);
-  await panel.getByLabel('Reference model', { exact: true }).selectOption(reference.id);
+  await chooseReferenceModel(page, panel, reference);
   await panel.getByRole('button', { name: 'Frame both', exact: true }).click();
   await page.waitForTimeout(500); // Frame both uses the viewport's animated camera fit.
   const projected = await projectUnobscuredControl(page, control);
@@ -253,10 +267,11 @@ test('canonical IFC + LandXML + XYZ federation keeps five independent bonsai-top
 
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(String(error)));
+  const deviceLoss = await watchGpuDeviceLoss(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/');
   const primary = await loadControlTriplet(page, testInfo, {
-    ifc: IFC, landxml: LANDXML, xyz: XYZ, timeout: LOAD_TIMEOUT_MS, strictGpu: GPU_STRICT,
+    ifc: IFC, landxml: LANDXML, xyz: XYZ, timeout: LOAD_TIMEOUT_MS, strictGpu: GPU_STRICT, deviceLoss,
   }, pageErrors);
   if (!primary) {
     test.skip(true, `E2E_GPU_STRICT=0: software WebGPU failed before model load; evidence attached.`);
@@ -317,13 +332,18 @@ test('canonical IFC + LandXML + XYZ federation keeps five independent bonsai-top
   assertCanonicalCorrespondences(controls, 'XYZ renderer after the user placement', renderedXyz.points.map(renderToCanonical));
   // The tiny control scan is intentionally only five points. Increase the
   // visible point-size through its real viewport control before asking PNG
-  // density to distinguish that isolated scan from an empty canvas.
+  // density to distinguish that isolated scan from an empty canvas. Those
+  // controls live in the Point Cloud side panel (#5507), and Reposition just
+  // docked the Placement panel in its place (#5505): bring it back the way a
+  // user would, from the activity bar.
+  const pointCloudsPanel = page.getByRole('button', { name: 'Point Cloud', exact: true });
+  if ((await pointCloudsPanel.getAttribute('aria-pressed')) !== 'true') await pointCloudsPanel.click();
   await page.locator('input[type="range"]').first().fill('20');
   await expect.poll(() => page.evaluate(() => globalThis.__ifc_lite_viewer_store__.getState().pointCloudPointSize)).toBe(20);
-  // EDL intentionally amplifies continuous scan depth. Disable it through
+  // Edge shading intentionally amplifies continuous scan depth. Disable it through
   // its viewport control for this five-point survey target so it cannot turn
   // each isolated splat into an edge-only post-process sample.
-  await page.getByRole('checkbox', { name: 'EDL', exact: true }).uncheck();
+  await page.getByRole('checkbox', { name: 'Edge shading', exact: true }).uncheck();
   await expect.poll(() => page.evaluate(() => globalThis.__ifc_lite_viewer_store__.getState().pointCloudEdlEnabled)).toBe(false);
 
   // Hide the overlapping sources one at a time and assert that each one
@@ -381,7 +401,7 @@ test('canonical IFC + LandXML + XYZ federation keeps five independent bonsai-top
       type: 'gpu-skip',
       description: 'E2E_GPU_STRICT=0: renderer-dependent Reposition picks require the strict hardware witness',
     });
-    console.log('[e2e] E2E_GPU_STRICT=0 — skipping renderer-dependent Reposition picks (software WebGPU)');
+    noteSoftwareGpuSkip('renderer-dependent Reposition picks');
   }
   await page.keyboard.press('Escape');
   const placementState = await page.evaluate(() => {

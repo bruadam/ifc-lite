@@ -20,11 +20,8 @@ import type { TranslationValue } from '../types';
  *    detail are catalogued here, the title itself is registry content.
  *  - Extension-contributed entries (`ext:*`) — `payload.title`, sourced
  *    from the extension registry at runtime, not a literal in this repo.
- *  - `commandPaletteBottomPanels.ts`'s bottom-panel toggle rows have their
- *    OWN keys here (`commandPalette.panel.*`) rather than reusing
- *    `workspacePanels.bottom.*` from shared-commands.en.ts: the palette's
- *    long-form labels ("Entity Lists") intentionally read differently from
- *    that menu's compact ones ("Lists").
+ *  - Built-in panel rows resolve their names from the workspace panel registry
+ *    so the palette, rail, and ribbon display the same name.
  */
 export const commandPaletteEn = {
   // ── File ──
@@ -48,7 +45,6 @@ export const commandPaletteEn = {
   'commandPalette.view.left.label': 'Left View',
   'commandPalette.view.right.label': 'Right View',
   'commandPalette.view.world.label': 'Toggle 3D World Context',
-  'commandPalette.view.lighting.label': 'Environment',
   'commandPalette.view.spacemouse.label': 'SpaceMouse',
 
   // ── Tools ──
@@ -58,21 +54,23 @@ export const commandPaletteEn = {
   'commandPalette.tool.measure.label': 'Measure',
   'commandPalette.tool.section.label': 'Section',
   'commandPalette.tool.annotate.label': 'Annotate',
-  'commandPalette.tool.addElement.label': 'Add Element',
+  'commandPalette.tool.wall.label': 'Draw walls',
+  'commandPalette.tool.slab.label': 'Draw slabs',
+  'commandPalette.tool.column.label': 'Place columns',
+  'commandPalette.tool.beam.label': 'Draw beams',
   'commandPalette.tool.editMode.label': 'Toggle Edit Mode',
   'commandPalette.tool.split.label': 'Split selected entity',
   'commandPalette.tool.extensionsAuthor.label': 'Author an extension…',
 
   // ── Visibility ──
   'commandPalette.vis.hide.label': 'Hide Selection',
-  'commandPalette.vis.show.label': 'Show All',
-  'commandPalette.vis.setBasket.label': 'Set Basket from Selection',
-  'commandPalette.vis.addBasket.label': 'Add to Basket',
-  'commandPalette.vis.removeBasket.label': 'Remove from Basket',
-  'commandPalette.vis.toggleBasket.label': 'Toggle Basket Visibility',
-  'commandPalette.vis.saveBasketView.label': 'Save Basket as View',
-  'commandPalette.vis.togglePresentation.label': 'Toggle Basket Presentation Dock',
-  'commandPalette.vis.clearBasket.label': 'Clear Basket',
+  'commandPalette.vis.setBasket.label': 'Set Collection from Selection',
+  'commandPalette.vis.addBasket.label': 'Add to Collection',
+  'commandPalette.vis.removeBasket.label': 'Remove from Collection',
+  'commandPalette.vis.toggleBasket.label': 'Toggle Collection Visibility',
+  'commandPalette.vis.saveBasketView.label': 'Save Collection as View',
+  'commandPalette.vis.togglePresentation.label': 'Toggle Collection Presentation Dock',
+  'commandPalette.vis.clearBasket.label': 'Clear Collection',
   'commandPalette.vis.spaces.label': 'Spaces',
   'commandPalette.vis.spatialZones.label': 'Spatial Zones',
   'commandPalette.vis.openings.label': 'Openings',
@@ -82,33 +80,14 @@ export const commandPaletteEn = {
   'commandPalette.vis.resetColors.label': 'Reset Colors',
 
   // ── Panels ──
-  'commandPalette.panel.script.label': 'Script Editor',
-  'commandPalette.panel.lists.label': 'Entity Lists',
-  'commandPalette.panel.gantt.label': 'Construction Schedule (Gantt)',
-  'commandPalette.panel.charts.label': 'Charts',
-  'commandPalette.panel.flow.label': 'Flow',
-  'commandPalette.panel.document.label': 'Document',
-  'commandPalette.panel.properties.label': 'Information',
-  'commandPalette.panel.tree.label': 'Hierarchy',
-  'commandPalette.panel.bcf.label': 'BCF Topics',
-  'commandPalette.panel.ids.label': 'IDS Validation',
-  'commandPalette.panel.clash.label': 'Clash Detection',
-  'commandPalette.panel.compare.label': 'Compare Models',
-  'commandPalette.panel.lens.label': 'Lens Rules',
-  'commandPalette.panel.layers.label': 'Layer Stack',
-  'commandPalette.panel.sources.label': 'Cloud Sources',
-  'commandPalette.panel.zones.label': 'Location Zones',
+  'commandPalette.panel.chat.label': 'AI Chat',
+  'commandPalette.panel.flavors.label': 'Manage profiles…',
   'commandPalette.panel.history.label': 'Show Model History',
   'commandPalette.panel.historyLatest.label': 'Back to Latest Version',
-  'commandPalette.panel.loadReport.label': 'Load Report',
-  'commandPalette.panel.appearance.label': 'Appearance',
-  'commandPalette.panel.collab.label': 'Collaboration Room',
-  'commandPalette.panel.extensions.label': 'Extensions',
-  'commandPalette.panel.flavors.label': 'Manage flavors…',
   'commandPalette.sidebar.toggle.label': 'Toggle Sidebar',
   'commandPalette.sidebar.collapse.label': 'Collapse Sidebar to Icons',
   'commandPalette.sidebar.customize.label': 'Customize Sidebar…',
-  'commandPalette.sidebar.reset.label': 'Reset Sidebar Layout',
+  'commandPalette.sidebar.reset.label': 'Reset Layout',
 
   // ── Schedule / 4D ──
   'commandPalette.schedule.generate.label': 'Generate Schedule from Storeys…',
@@ -116,19 +95,19 @@ export const commandPaletteEn = {
   'commandPalette.schedule.reset.label': 'Reset Schedule (Clear 4D Data)',
 
   // ── Export ──
-  'commandPalette.export.screenshot.label': 'Screenshot',
-  'commandPalette.export.glb.label': 'Export GLB',
-  'commandPalette.export.usd.label': 'Export USD (OpenUSD)',
+  // Every other Export row reads `exportCommands.*.menuLabel` from the
+  // toolbar registry (#5601); CSV is flattened to one row per table here.
   'commandPalette.export.csvEntities.label': 'Export CSV: Entities',
   'commandPalette.export.csvProperties.label': 'Export CSV: Properties',
   'commandPalette.export.csvQuantities.label': 'Export CSV: Quantities',
   'commandPalette.export.csvSpatial.label': 'Export CSV: Spatial',
-  'commandPalette.export.anonymized.label': 'Export Anonymized Subset…',
-  'commandPalette.export.json.label': 'Export JSON',
+  'commandPalette.export.unavailable': 'Nothing to export yet. Load a model first.',
 
   // ── Preferences ──
   'commandPalette.pref.theme.label': 'Theme',
   'commandPalette.pref.tooltips.label': 'Hover Tooltips',
+  'commandPalette.pref.hoverOutline.label': 'Hover Outline',
+  'commandPalette.pref.settings.label': 'Settings…',
 
   // ── Learn ──
   'commandPalette.learn.hub.label': 'Open Learn Hub',
@@ -137,6 +116,7 @@ export const commandPaletteEn = {
 
   // ── Chrome ──
   'commandPalette.ariaLabel': 'Command palette',
+  'commandPalette.searchAriaLabel': 'Search commands',
   'commandPalette.searchPlaceholder': 'What do you need?',
   'commandPalette.escKey': 'Esc',
   'commandPalette.noResults': 'No results',

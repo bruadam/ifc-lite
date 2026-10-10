@@ -11,7 +11,7 @@
  * skippable, so a tour can never trap the user.
  */
 
-import type { ViewerState, EntityRef, CameraViewpoint, RibbonTabId, SectionPlaneAxis, ToolbarStyle } from '@/store';
+import type { ViewerState, EntityRef, CameraViewpoint, RibbonTabId, SectionPlaneAxis } from '@/store';
 import type { SidebarMode } from '@/store';
 import type { WorkspacePanelId, BottomPanelId } from '@/lib/panels/registry';
 import type { TourAnchorId } from './anchors';
@@ -91,6 +91,12 @@ export interface TourStep {
    * while the step is active.
    */
   expectsModelLoad?: boolean;
+  /**
+   * Skipping this step with nothing loaded makes the next steps load the
+   * demo project (`ensureTourModel`), so the card says so on its Skip
+   * button instead of loading it unannounced.
+   */
+  skipLoadsDemo?: boolean;
 }
 
 export interface TourPrerequisites {
@@ -195,13 +201,7 @@ export interface UiSnapshot {
     custom: ViewerState['sectionPlane']['custom'];
   };
   activeLensId: string | null;
-  /**
-   * Toolbar style, open ribbon tab, and collapsed state. Captured because
-   * the ribbon tour moves all three to teach them: a classic-toolbar user
-   * who starts it from the Learn hub gets their strip back when it ends,
-   * and someone who keeps the band collapsed gets it collapsed again.
-   */
-  toolbarStyle: ToolbarStyle;
+  /** Ribbon tour state is restored after a tour without changing preferences. */
   ribbonTab: RibbonTabId;
   ribbonCollapsed: boolean;
   /** May be null before the renderer registered camera callbacks. */

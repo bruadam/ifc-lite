@@ -2,8 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { Spinner } from '@/components/ui/spinner';
+
 import type { ComponentType } from 'react';
-import { Loader2 } from 'lucide-react';
+
 import { useTranslation } from '@/i18n';
 
 interface SourceEntityListProps<T extends { id: string; name: string }> {
@@ -22,11 +24,13 @@ export function SourceEntityList<T extends { id: string; name: string }>({
   emptyLabel,
   onSelect,
 }: SourceEntityListProps<T>) {
+  const { t } = useTranslation();
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
+      <output className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+        <Spinner size="lg" className="text-muted-foreground" />
+        {t('sources.sourceEntityList.loading')}
+      </output>
     );
   }
 
@@ -70,7 +74,7 @@ export function LoadMoreRow({ hasMore, loading, onLoadMore, label }: LoadMoreRow
         disabled={loading}
         onClick={onLoadMore}
       >
-        {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+        {loading && <Spinner size="sm" />}
         {loading ? t('sources.sourceEntityList.loading') : label}
       </button>
     </div>

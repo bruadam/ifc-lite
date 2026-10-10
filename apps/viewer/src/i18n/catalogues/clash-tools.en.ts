@@ -36,6 +36,13 @@ export const clashToolsEn = {
   'clashTools.export.bcfTopicTooltipSelected': 'Create a BCF topic from the selected clash',
   'clashTools.export.bcfTopicTooltipAll': 'Create a BCF topic for this clash report',
   'clashTools.export.bcfTopicButton': 'BCF topic',
+  'clashTools.bcfTopic.created': 'Topic created',
+  'clashTools.bcfTopic.open': 'Open BCF',
+  'clashTools.export.formatBcf': 'BCF',
+  'clashTools.export.formatCsv': 'CSV',
+  'clashTools.export.bcfArchiveTooltip': 'Export the clashes as a BCF archive for another BCF tool',
+  'clashTools.export.bcfArchiveMenu': 'BCF archive…',
+  'clashTools.export.csvMenu': 'CSV table',
   'clashTools.export.csvTooltip':
     "Download every clash in this run as a CSV table — one row per clash with both GlobalIds, review status and storey — for Excel / Power BI",
 
@@ -74,7 +81,26 @@ export const clashToolsEn = {
   'clashTools.bcfExport.exportFailedToast': 'BCF export failed: {reason}',
 
   // ClashRevisionCompareDialog.tsx
+  // ClashSavedReportsDialog.tsx (#6947)
+  'clashTools.savedReports.triggerTooltip': 'Saved clash reports',
+  'clashTools.savedReports.dialogDescription':
+    'Save the current result under a name. A chart can then keep showing it whatever is checked next.',
+  'clashTools.savedReports.nameLabel': 'Report name',
+  'clashTools.savedReports.saveButton': 'Save current result',
+  'clashTools.savedReports.currentSummary': 'Current result: {clashes}.',
+  'clashTools.savedReports.currentLimits': 'It will be saved as: {limits}.',
+  'clashTools.savedReports.savedToast': 'Saved clash report “{name}”.',
+  'clashTools.savedReports.storageFailed': 'The clash report could not be saved in this browser.',
+  'clashTools.savedReports.empty': 'No saved clash reports yet.',
+  'clashTools.savedReports.entrySummary': '{clashes} · saved {when} · {models}',
+  'clashTools.savedReports.renameLabel': 'Name of “{name}”',
+  'clashTools.savedReports.renameButton': 'Rename',
+  'clashTools.savedReports.deleteButton': 'Delete',
+  'clashTools.savedReports.deleteWarning': 'Charts that read “{name}” will show it as unavailable.',
+  'clashTools.savedReports.confirmDeleteButton': 'Delete report',
+  'clashTools.savedReports.cancelDeleteButton': 'Keep',
   'clashTools.revisionCompare.triggerTooltip': 'Compare clash runs across revisions',
+  'clashTools.revisionCompare.originalFinding': 'Original saved baseline finding',
   'clashTools.revisionCompare.dialogTitle': 'Compare clash runs',
   'clashTools.revisionCompare.dialogDescription':
     'Save the current result as a baseline, then compare it against a later run — new, persisting, and no-longer-detected clashes.',
@@ -110,8 +136,11 @@ export const clashToolsEn = {
   'clashTools.ruleEditor.newTitle': 'New rule',
   'clashTools.ruleEditor.cancelTooltip': 'Cancel',
   'clashTools.ruleEditor.namePlaceholder': 'Rule name (e.g. Ducts vs Beams)',
+  'clashTools.ruleEditor.nameLabel': 'Rule name',
   'clashTools.ruleEditor.selectorAPlaceholder': 'IfcDuct*|IfcPipe*',
+  'clashTools.ruleEditor.selectorALabel': 'Set A IFC type selector',
   'clashTools.ruleEditor.selectorBPlaceholder': 'IfcWall*|IfcSlab',
+  'clashTools.ruleEditor.selectorBLabel': 'Set B IFC type selector',
   'clashTools.ruleEditor.saveButton': 'Save',
   'clashTools.ruleEditor.addButton': 'Add',
   'clashTools.ruleEditor.selectorsIntro': 'Selectors:',
@@ -129,9 +158,9 @@ export const clashToolsEn = {
   'clashTools.setFilter.clearLabel': 'Clear',
   'clashTools.setFilter.unreadableWarning': {
     one:
-      'One rule in this filter cannot be read by this version (saved by a newer version, or malformed). Runs using it are refused; any edit here discards that rule.',
+      'One entry in this filter cannot be read by this version (saved by a newer version, or malformed). Runs using it are refused; any edit here discards that entry.',
     other:
-      '{count} rules in this filter cannot be read by this version (saved by a newer version, or malformed). Runs using it are refused; any edit here discards those rules.',
+      '{count} entries in this filter cannot be read by this version (saved by a newer version, or malformed). Runs using it are refused; any edit here discards those entries.',
   },
   'clashTools.setFilter.definedByFilter':
     'This filter defines {label}; its type selector above is ignored while it has rules.',

@@ -7,8 +7,8 @@
  *
  * The basket is an incremental isolation set. Users can build it from
  * selection / visible scene / hierarchy sources via presentation controls:
- *   = (set)    — replace basket with source set
- *   + (add)    — add source set to basket
+ *   Set        — replace basket with source set
+ *   = / +      — add source set to basket
  *   − (remove) — remove source set from basket
  *
  * When the basket is non-empty, only basket entities are visible (isolation).
@@ -22,6 +22,7 @@ import type { Drawing2D } from '@ifc-lite/drawing-2d';
 import type { CameraCallbacks, CameraViewpoint, EntityRef, SectionPlane } from '../types.js';
 import { entityRefToString } from '../types.js';
 import { activeSectionPlane } from '../section-active.js';
+import type { SceneVisibilityState } from './sceneStateSlice.js';
 import type { VisibilityOwnership } from '../../lib/visibility/ownership.js';
 import {
   basketAddIsolation,
@@ -83,6 +84,7 @@ interface PinboardCrossSliceState {
   models: Map<string, { idOffset: number }>;
   cameraCallbacks: CameraCallbacks;
   sectionPlane: SectionPlane;
+  sceneState: SceneVisibilityState;
   drawing2D: Drawing2D | null;
   drawing2DDisplayOptions: { show3DOverlay: boolean; showHiddenLines: boolean };
   setDrawing2D: (drawing: Drawing2D | null) => void;
@@ -93,23 +95,22 @@ interface PinboardCrossSliceState {
   idsFocusVisibilityOwned: VisibilityOwnership;
   clashVisibilityOwned: VisibilityOwnership;
   chartVisibilityOwned: VisibilityOwnership;
+  listVisibilityOwned: VisibilityOwnership;
 }
 
 /** A basket install is a producer handoff even when its ids equal the prior
  * producer's. Neutral capture/restore replays intentionally preserve equal
  * ownership in the middleware, so producers must name the handoff atomically. */
-function basketVisibilityHandoff(owned: BasketIsolationOwnership): {
-  ghostExceptEntities?: null;
-  idsFocusVisibilityOwned?: null;
-  clashVisibilityOwned?: null;
-  chartVisibilityOwned?: null;
-} {
+function basketVisibilityHandoff(
+  owned: BasketIsolationOwnership,
+): Partial<Record<'ghostExceptEntities' | 'idsFocusVisibilityOwned' | 'clashVisibilityOwned' | 'chartVisibilityOwned' | 'listVisibilityOwned', null>> {
   return owned
     ? {
         ghostExceptEntities: null,
         idsFocusVisibilityOwned: null,
         clashVisibilityOwned: null,
         chartVisibilityOwned: null,
+        listVisibilityOwned: null,
       }
     : {};
 }
@@ -141,7 +142,7 @@ export interface PinboardSlice {
   showPinboard: () => void;
 
   // Basket actions (semantic aliases that also sync isolation)
-  /** = Set basket to exactly these entities and isolate them */
+  /** Set basket to exactly these entities and isolate them */
   setBasket: (refs: EntityRef[]) => void;
   /** + Add entities to basket and update isolation */
   addToBasket: (refs: EntityRef[]) => void;
@@ -153,10 +154,11 @@ export interface PinboardSlice {
   setHierarchyBasketSelection: (refs: EntityRef[]) => void;
   /** Clear hierarchy-derived basket source */
   clearHierarchyBasketSelection: () => void;
-  /** Show/hide presentation dock */
+  /** Show/hide the `presentation` bottom panel's dock flag (#5508). Toggling
+   *  it directly bypasses the bottom-strip's mutual exclusivity —
+   *  `toggleBottomPanel('presentation')` (`store/index.ts`) is the entry
+   *  point every UI surface uses instead. */
   setBasketPresentationVisible: (visible: boolean) => void;
-  /** Toggle presentation dock */
-  toggleBasketPresentationVisible: () => void;
   /** Save current basket as a reusable view preset */
   saveCurrentBasketView: (options?: SaveBasketViewOptions) => string | null;
   /** Restore basket entities and isolation only (no camera/section). Use activateBasketViewFromStore for full restore. */
@@ -236,7 +238,7 @@ export const createPinboardSlice: StateCreator<
   // Basket actions (= + −)
   // These are the primary API for the new basket-based isolation UX.
 
-  /** = Set basket to exactly these entities and isolate them */
+  /** Set basket to exactly these entities and isolate them */
   setBasket: (refs) => {
     if (refs.length === 0) {
       set((state) => ({ pinboardEntities: new Set(), ...basketReleaseIsolation(state), activeBasketViewId: null }));
@@ -302,8 +304,6 @@ export const createPinboardSlice: StateCreator<
   clearHierarchyBasketSelection: () => set({ hierarchyBasketSelection: new Set() }),
 
   setBasketPresentationVisible: (basketPresentationVisible) => set({ basketPresentationVisible }),
-  toggleBasketPresentationVisible: () =>
-    set((state) => ({ basketPresentationVisible: !state.basketPresentationVisible })),
 
   saveCurrentBasketView: (options) => {
     const state = get();

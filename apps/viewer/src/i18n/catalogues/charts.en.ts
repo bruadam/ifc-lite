@@ -25,10 +25,34 @@ import type { TranslationValue } from '../types';
  * data tables — none of these are hardcoded JSX text or a policed attribute
  * the `check-i18n-literals` gate flags (they are read through a variable, not
  * a literal, at their render site) — plus `DashboardMenu.tsx`'s
- * `window.prompt`/toast copy and `ReportExportDialog.tsx`'s toast/error
+ * `DashboardMenu.tsx`'s toast copy and `ReportExportDialog.tsx`'s toast/error
  * copy and its `FIELDS` title-block label table, for the same reason.
  */
 export const chartsEn = {
+  'chartComparison.label': 'Saved comparison',
+  'chartComparison.choose': 'Choose a completed saved comparison',
+  'chartComparison.pending': 'Source (choose a saved comparison)',
+  'chartComparison.legacy': 'Latest comparison (existing chart)',
+  'chartComparison.unavailable': 'Saved comparison unavailable',
+  'chartComparison.none': 'Complete and save a model comparison to use it here.',
+  'chartComparison.missing': 'Saved comparison unavailable in this browser. Choose another saved comparison; the latest run is not substituted.',
+  'chartComparison.recorded': 'Saved comparison: {name}. Recorded report rows; 3D selection and snapshots are unavailable.',
+  // Saved clash report as a chart source (#6947): ChartSourcePicker.tsx, ChartCard.tsx, document chart captions.
+  'clashChart.label': 'Clash report',
+  'clashChart.current': 'Current result',
+  'clashChart.unavailable': 'Saved clash report unavailable',
+  'clashChart.missing': 'Saved clash report unavailable in this browser. Choose a source; the current result is not shown in its place.',
+  'clashChart.chooseSource': 'Choose a source',
+  'clashChart.caption': 'Saved clash report: {name}, saved {date}',
+  'clashChart.badgeNoMatch': 'Clash rules matched no elements',
+  'clashChart.badgePartialCoverage': 'Some clash rules matched no elements',
+  'clashChart.badgePartial': 'Partial run',
+  'clashChart.badgeStale': 'Models changed before saving',
+  'clashChart.badgeExcluded': '{count} hidden by exclusions',
+  'clashChart.badgeRevision.different': 'Different model revision',
+  'clashChart.badgeRevision.not-loaded': 'Models not loaded',
+  'clashChart.badgeRevision.unverified': 'Revision not confirmed',
+  'clashChart.savedSource': 'a saved clash report',
   // ChartEditor.tsx — Source filter field (#4946)
   'chartEditor.sourceFilterLabel': 'Source filter (selector)',
   'chartEditor.sourceFilterAriaLabel': 'Source filter',
@@ -45,6 +69,9 @@ export const chartsEn = {
   'chartCard.frameAriaLabel': 'Frame {title}',
   'chartCard.editChartTitle': 'Edit chart',
   'chartCard.editAriaLabel': 'Edit {title}',
+  'chartCard.duplicateChartTitle': 'Duplicate chart',
+  'chartCard.duplicateAriaLabel': 'Duplicate {title}',
+  'chartCard.copyName': '{name} (copy)',
   'chartCard.removeChartTitle': 'Remove chart',
   'chartCard.removeAriaLabel': 'Remove {title}',
   'chartCard.nothingToBucket': 'Nothing to bucket — every row is without a value for this dimension.',
@@ -90,7 +117,6 @@ export const chartsEn = {
   'chartsPanel.clearSliceTitle': 'Clear the chart selection and show the whole scope again',
   'chartsPanel.clearSliceButton': 'Clear slice ({count})',
   'chartsPanel.addChartButton': 'Add chart',
-  'chartsPanel.closeAriaLabel': 'Close charts',
   'chartsPanel.loadModelEmptyState': 'Load a model to chart it.',
   'chartsPanel.noChartsEmptyState': 'No charts yet.',
   'chartsPanel.addChartEmptyStateButton': 'Add a chart',
@@ -99,6 +125,7 @@ export const chartsEn = {
   'dashboardMenu.actionsAriaLabel': 'Dashboard actions',
   'dashboardMenu.actionsTitle': 'Rename, duplicate, delete, export or import a dashboard',
   'dashboardMenu.renameItem': 'Rename',
+  'dashboardMenu.namePrompt': 'Dashboard name',
   'dashboardMenu.duplicateItem': 'Duplicate',
   'dashboardMenu.deleteItem': 'Delete',
   'dashboardMenu.exportFileItem': 'Export file…',

@@ -10,12 +10,11 @@ import type { TranslationValue } from '../types';
  * four Info tabs, not only Shortcuts) covers its own header/footer chrome,
  * the About tab (privacy banner, links, license, package-count disclosure),
  * the What's New tab (release timeline and its legend), the Shortcuts tab's
- * own "Learn more" row, and the tab strip. Shortcut CATEGORY names,
- * DESCRIPTIONS, and key-combination glyphs come from `KEYBOARD_SHORTCUTS`
- * (`@/hooks/keyboard-shortcuts-list`) and stay out of the catalogue — model
- * content for this slice's own scope, same reasoning as every other data
- * table in this sweep. `LearnTab.tsx` (rendered as the fourth tab) has its
- * own catalogue outside this slice.
+ * own "Learn more" row, and the tab strip. (Preferences moved to the
+ * Settings dialog, `settings.en.ts`, #5857.) The Shortcuts tab's rows are
+ * generated from `@/lib/commands/keyboard-commands` and translated by
+ * `commands.en.ts` (#5836). `LearnTab.tsx` (rendered as the fourth tab) has
+ * its own catalogue outside this slice.
  */
 export const keyboardShortcutsEn = {
   // Header
@@ -34,13 +33,13 @@ export const keyboardShortcutsEn = {
   'keyboardShortcuts.footer.toggleSuffix': 'to toggle this panel',
 
   // About tab — privacy banner
-  'keyboardShortcuts.privacy.banner': 'Your IFC data never leaves your device.',
-  'keyboardShortcuts.privacy.intro': 'All files are processed locally in the browser with',
+  'keyboardShortcuts.privacy.banner': 'Local model viewing runs on your device.',
+  'keyboardShortcuts.privacy.intro': 'Local model viewing uses',
   'keyboardShortcuts.privacy.wasmLink': 'WebAssembly (WASM)',
-  'keyboardShortcuts.privacy.outro': '– no server upload, near-native speed.',
+  'keyboardShortcuts.privacy.outro': 'in your browser. Cloud imports use hosted downloads and, for Forma and Data Exchange, server-side conversion.',
   'keyboardShortcuts.privacy.verifyIntro': 'Verify: press',
   'keyboardShortcuts.privacy.verifyKey': 'F12',
-  'keyboardShortcuts.privacy.verifyOutro': '→ Network tab → no IFC data transmitted.',
+  'keyboardShortcuts.privacy.verifyOutro': '→ Network tab → inspect requests from enabled features.',
 
   // About tab — links, license, packages
   'keyboardShortcuts.about.appName': 'ifc-lite',

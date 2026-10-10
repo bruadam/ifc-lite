@@ -13,10 +13,10 @@
  * key removes the id with it; and the toast never describes a write that did
  * not happen.
  *
- * Toast text is read as the delta a click adds to the container: toasts live in
- * a module-global store with no reset and a 3s expiry, so a freshly mounted
- * Toaster replays earlier tests' messages and whole-document assertions pass or
- * fail for unrelated reasons.
+ * Toast text is read as what a click shows (`toastsFrom`): toasts live in a
+ * module-global store with no reset, so a freshly mounted Toaster replays
+ * earlier tests' messages and whole-document assertions pass or fail for
+ * unrelated reasons.
  */
 
 import '@/test/setup-dom.js';
@@ -26,12 +26,13 @@ import assert from 'node:assert/strict';
 import { render, cleanup, click, type as typeInto } from '@/test/render.js';
 import { getApiKeys, updateApiKeys, clearApiKeys } from '@/services/api-keys';
 import { Toaster } from '@/components/ui/toast';
+import { toastsFrom } from '@/test/toasts.js';
 import { ByokKeyModal } from './ByokKeyModal.js';
 
 const WORKSPACE_INPUT = '#byok-anthropic-workspace';
 const KEY_INPUT = '#byok-anthropic-input';
 const OPENAI_KEY_INPUT = '#byok-openai-input';
-/** Long enough for looksLikeProviderKey, which wants 50+ body characters. */
+/** Synthetic legacy key; no live credentials are needed for modal tests. */
 const FAKE_KEY = `sk-ant-api03-${'A'.repeat(60)}`;
 const OTHER_KEY = `sk-ant-api03-${'B'.repeat(60)}`;
 const FAKE_OPENAI_KEY = `sk-${'C'.repeat(30)}`;
@@ -57,15 +58,6 @@ function open(provider: 'anthropic' | 'openai' = 'anthropic'): HTMLElement {
   );
 }
 
-/** Text the action adds to the container, which holds only the Toaster. */
-function toastFrom(container: HTMLElement, action: () => void): string {
-  const before = container.textContent ?? '';
-  action();
-  const after = container.textContent ?? '';
-  assert.ok(after.startsWith(before), 'expected toasts to append, not reorder');
-  return after.slice(before.length);
-}
-
 describe('ByokKeyModal Anthropic credential', () => {
   beforeEach(() => { clearApiKeys(); });
   afterEach(() => { cleanup(); clearApiKeys(); });
@@ -89,6 +81,20 @@ describe('ByokKeyModal Anthropic credential', () => {
     typeInto(query<HTMLInputElement>(KEY_INPUT)!, FAKE_KEY);
     click(buttonWithText('Save'));
     assert.equal(getApiKeys().anthropicKey, FAKE_KEY);
+  });
+
+  it('lets a newer Anthropic key format be saved with its workspace', () => {
+    // #7017: the api03-only prefix check disabled Save before the
+    // identity-linked key and workspace could reach the request path.
+    const key = `sk-ant-api04-${'A'.repeat(30)}`; // Synthetic non-api03 key.
+    open();
+    typeInto(query<HTMLInputElement>(KEY_INPUT)!, key);
+    typeInto(query<HTMLInputElement>(WORKSPACE_INPUT)!, 'wrkspc_01abc');
+    assert.equal(buttonWithText('Save').disabled, false);
+    click(buttonWithText('Save'));
+    assert.equal(getApiKeys().anthropicKey, key);
+    assert.equal(getApiKeys().anthropicWorkspaceId, 'wrkspc_01abc');
+    assert.match(document.body.textContent ?? '', /sk-ant-••••AAAA/);
   });
 
   it('saves an OpenAI key, which has no workspace id at all', () => {
@@ -176,7 +182,7 @@ describe('ByokKeyModal Anthropic credential', () => {
     updateApiKeys({ anthropicKey: FAKE_KEY, anthropicWorkspaceId: 'wrkspc_01abc' });
     const container = open();
     typeInto(query<HTMLInputElement>(WORKSPACE_INPUT)!, '');
-    const said = toastFrom(container, () => click(buttonWithText('Save')));
+    const said = toastsFrom(container, () => click(buttonWithText('Save')));
     assert.equal(getApiKeys().anthropicKey, FAKE_KEY, 'the key must survive');
     assert.equal(getApiKeys().anthropicWorkspaceId, '');
     assert.doesNotMatch(said, /key saved/);
@@ -204,7 +210,7 @@ describe('ByokKeyModal Anthropic credential', () => {
   it('removing the key removes the workspace id with it, and says so', () => {
     updateApiKeys({ anthropicKey: FAKE_KEY, anthropicWorkspaceId: 'wrkspc_01abc' });
     const container = open();
-    const said = toastFrom(container, () => click(buttonWithText('Remove')));
+    const said = toastsFrom(container, () => click(buttonWithText('Remove')));
     assert.deepEqual(getApiKeys(), { anthropicKey: '', anthropicWorkspaceId: '', openaiKey: '' });
     assert.equal(query<HTMLInputElement>(WORKSPACE_INPUT)!.value, '');
     assert.match(said, /Workspace ID removed/);
@@ -231,7 +237,7 @@ describe('ByokKeyModal Anthropic credential', () => {
     // deleted guard made it lie here while every test stayed green.
     const container = open();
     typeInto(query<HTMLInputElement>(KEY_INPUT)!, FAKE_KEY);
-    const said = toastFrom(container, () => click(buttonWithText('Save')));
+    const said = toastsFrom(container, () => click(buttonWithText('Save')));
     assert.doesNotMatch(said, /Workspace ID cleared/);
   });
 
@@ -239,7 +245,7 @@ describe('ByokKeyModal Anthropic credential', () => {
     updateApiKeys({ anthropicKey: FAKE_KEY, anthropicWorkspaceId: 'wrkspc_01abc' });
     const container = open();
     typeInto(query<HTMLInputElement>(KEY_INPUT)!, OTHER_KEY);
-    const said = toastFrom(container, () => click(buttonWithText('Save')));
+    const said = toastsFrom(container, () => click(buttonWithText('Save')));
     assert.match(said, /Workspace ID cleared/);
   });
 });

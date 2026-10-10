@@ -80,11 +80,11 @@ export function createSceneBatch(
     if (!quantizedData && options.quantized === 'required') {
       // A subset of a quantized batch always fits its lattice range, so this
       // cannot happen unless the derived batch was built from pieces outside
-      // its source batch. Say so: the overlay pass (depthCompare 'equal')
-      // would otherwise drop every fragment of this batch with no signal.
+      // its source batch. Say so: a partial sub-batch drawn instead of its
+      // source would otherwise resolve coplanar faces differently, silently.
       console.warn(
         `[Scene] derived batch ${options.colorKey} could not inherit its source batch's quantization; ` +
-        'its overlay/partial depth will not match the base geometry (#4832).',
+        'its partial-batch depth will not match the base geometry (#4832).',
       );
     }
     if (quantizedData) {
@@ -151,6 +151,9 @@ export function createSceneBatch(
       indexBuffer,
       indexCount: merged.indices.length,
       color,
+      // #5582: every piece in a bucket shares its material (the colour key
+      // folds it in — see Scene.colorKey), so the first piece speaks for all.
+      ...(meshDataArray[0]?.material ? { finish: meshDataArray[0].material } : {}),
       expressIds,
       bindGroup,
       uniformBuffer,
@@ -189,6 +192,7 @@ export function createSceneBatchShell(
     indexBuffer: source.indexBuffer,
     indexCount: merged.indices.length,
     color: meshDataArray[0].color,
+    ...(meshDataArray[0]?.material ? { finish: meshDataArray[0].material } : {}), // #5582
     expressIds: meshDataArray.map((mesh) => mesh.expressId),
     modelIndices: meshDataArray.map((mesh) => mesh.modelIndex),
     bounds: merged.bounds,

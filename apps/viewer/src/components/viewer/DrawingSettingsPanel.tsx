@@ -12,8 +12,9 @@
  */
 
 import React, { useCallback, useState, useMemo } from 'react';
-import { X, Palette, Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Eye, EyeOff, Check, Copy, PenTool, Flame, Building2, Wrench, Printer, type LucideIcon } from 'lucide-react';
+import { Palette, Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Eye, EyeOff, Check, Copy, PenTool, Flame, Building2, Wrench, Printer, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -74,11 +75,7 @@ function PresetIcon({ iconName, className }: { iconName?: string; className?: st
   return <Icon className={className} />;
 }
 
-interface DrawingSettingsPanelProps {
-  onClose: () => void;
-}
-
-export function DrawingSettingsPanel({ onClose }: DrawingSettingsPanelProps) {
+export function DrawingSettingsPanel() {
   const { t } = useTranslation(); const graphicOverridePresets = useViewerStore((s) => s.graphicOverridePresets);
   const activePresetId = useViewerStore((s) => s.activePresetId);
   const setActivePreset = useViewerStore((s) => s.setActivePreset);
@@ -141,26 +138,18 @@ export function DrawingSettingsPanel({ onClose }: DrawingSettingsPanelProps) {
   }, [activePreset, customOverrideRules.length, addCustomRule, setActivePreset]);
 
   return (
-    <div className="flex flex-col h-full bg-background border-l">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/50">
-        <div className="flex items-center gap-2">
-          <Palette className="h-5 w-5 text-primary" />
-          <h2 className="font-semibold text-sm">{t('drawingUnderlay.settings.title')}</h2>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant={overridesEnabled ? 'default' : 'outline'}
-            size="sm"
-            onClick={toggleOverridesEnabled}
-            className="h-7 text-xs"
-          >
-            {t(overridesEnabled ? 'drawingUnderlay.settings.overridesEnabled' : 'drawingUnderlay.settings.overridesDisabled')}
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+    <div className="flex flex-col h-full bg-background">
+      {/* The inspector tab (#5495) carries the title; this row keeps only the
+          functional enable/disable toggle, not a redundant close button. */}
+      <div className="flex items-center justify-end px-4 py-2 border-b bg-muted/50">
+        <Button
+          variant={overridesEnabled ? 'default' : 'outline'}
+          size="sm"
+          onClick={toggleOverridesEnabled}
+          className="h-7 text-xs"
+        >
+          {t(overridesEnabled ? 'drawingUnderlay.settings.overridesEnabled' : 'drawingUnderlay.settings.overridesDisabled')}
+        </Button>
       </div>
 
       {/* Content */}
@@ -369,26 +358,25 @@ function CustomRuleItem({
   if (!isEditing) {
     return (
       <div
-        className="flex items-center gap-2 px-2 py-1.5 bg-muted/30 rounded text-xs cursor-pointer hover:bg-muted/50"
-        onClick={onEdit}
+        className="group flex items-center gap-2 px-2 py-1.5 bg-muted/30 rounded text-xs hover:bg-muted/50"
       >
-        <GripVertical className="h-3 w-3 text-muted-foreground" />
-        {rule.style.fillColor && (
-          <div
-            className="w-4 h-4 rounded border border-black/20"
-            style={{ backgroundColor: rule.style.fillColor }}
-          />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="font-medium truncate">{rule.name}</div>
-          <div className="text-muted-foreground truncate">
-            {ifcTypes.join(', ') || t('drawingUnderlay.settings.clickToEditPlaceholder')}
-          </div>
-        </div>
-        <Button
+        <button type="button" className="flex flex-1 min-w-0 items-center gap-2 text-left" onClick={onEdit}>
+          <GripVertical className="h-3 w-3 text-muted-foreground" />
+          {rule.style.fillColor && (
+            <span className="w-4 h-4 rounded border border-black/20" style={{ backgroundColor: rule.style.fillColor }} />
+          )}
+          <span className="flex-1 min-w-0">
+            <span className="block font-medium truncate">{rule.name}</span>
+            <span className="block text-muted-foreground truncate">
+              {ifcTypes.join(', ') || t('drawingUnderlay.settings.clickToEditPlaceholder')}
+            </span>
+          </span>
+        </button>
+        <IconButton
+          label={t(rule.enabled ? 'drawingUnderlay.settings.disableRule' : 'drawingUnderlay.settings.enableRule', { name: rule.name })}
           variant="ghost"
           size="icon-sm"
-          className="h-6 w-6 opacity-0 group-hover:opacity-100"
+          className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
           onClick={(e) => {
             e.stopPropagation();
             onUpdate({ enabled: !rule.enabled });
@@ -399,7 +387,7 @@ function CustomRuleItem({
           ) : (
             <EyeOff className="h-3 w-3 text-muted-foreground" />
           )}
-        </Button>
+        </IconButton>
       </div>
     );
   }
@@ -410,6 +398,7 @@ function CustomRuleItem({
       <div>
         <Label className="text-xs">{t('drawingUnderlay.settings.ruleNameLabel')}</Label>
         <Input
+          aria-label={t('drawingUnderlay.settings.ruleNameLabel')}
           value={rule.name}
           onChange={(e) => onUpdate({ name: e.target.value })}
           className="h-8 text-sm mt-1"
@@ -423,7 +412,7 @@ function CustomRuleItem({
           value={ifcTypes[0] || ''}
           onValueChange={handleIfcTypeChange}
         >
-          <SelectTrigger className="h-8 text-sm mt-1">
+          <SelectTrigger className="h-8 text-sm mt-1" aria-label={t('drawingUnderlay.settings.ifcClassLabel')}>
             <SelectValue placeholder={t('drawingUnderlay.settings.selectClassPlaceholder')} />
           </SelectTrigger>
           <SelectContent>
@@ -443,11 +432,13 @@ function CustomRuleItem({
           <div className="flex gap-1 mt-1">
             <input
               type="color"
+              aria-label={t('drawingUnderlay.settings.fillColorPickerLabel')}
               value={rule.style.fillColor || '#808080'}
               onChange={(e) => handleStyleChange('fillColor', e.target.value)}
               className="w-8 h-8 rounded border cursor-pointer"
             />
             <Input
+              aria-label={t('drawingUnderlay.settings.fillColorHexLabel')}
               value={rule.style.fillColor || '#808080'}
               onChange={(e) => handleStyleChange('fillColor', e.target.value)}
               className="h-8 text-xs font-mono flex-1"
@@ -459,11 +450,13 @@ function CustomRuleItem({
           <div className="flex gap-1 mt-1">
             <input
               type="color"
+              aria-label={t('drawingUnderlay.settings.strokeColorPickerLabel')}
               value={rule.style.strokeColor || '#000000'}
               onChange={(e) => handleStyleChange('strokeColor', e.target.value)}
               className="w-8 h-8 rounded border cursor-pointer"
             />
             <Input
+              aria-label={t('drawingUnderlay.settings.strokeColorHexLabel')}
               value={rule.style.strokeColor || '#000000'}
               onChange={(e) => handleStyleChange('strokeColor', e.target.value)}
               className="h-8 text-xs font-mono flex-1"
@@ -486,7 +479,7 @@ function CustomRuleItem({
               }
             }}
           >
-            <SelectTrigger className="h-8 text-sm flex-1">
+            <SelectTrigger className="h-8 text-sm flex-1" aria-label={t('drawingUnderlay.settings.lineWeightLabel')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -502,6 +495,7 @@ function CustomRuleItem({
             <div className="flex items-center gap-1">
               <Input
                 type="number"
+                aria-label={t('drawingUnderlay.settings.customLineWeightInputLabel')}
                 min={0.05}
                 max={2}
                 step={0.05}

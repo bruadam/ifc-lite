@@ -51,7 +51,7 @@ function anthropicSse(events: Array<Record<string, unknown>>): Response {
 }
 
 const HELLO_STREAM: Array<Record<string, unknown>> = [
-  { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
+  { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
   { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
   { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } },
   { type: 'content_block_stop', index: 0 },
@@ -68,7 +68,7 @@ async function streamOnce(
   let error: Error | null = null;
   try {
     await streamAnthropicChat(credentials, {
-      model: 'claude-opus-5',
+      model: 'claude-opus-5-5',
       messages: [{ role: 'user', content: 'hi' }],
       system: 'be brief',
       onChunk: () => undefined,
@@ -245,11 +245,69 @@ test('sampling params are sent only for models flagged acceptsSamplingParams', a
     return captured;
   };
 
-  // gpt-5.6-sol carries no flag, so it must not receive a temperature.
-  const reasoning = await bodyFor('gpt-5.6-sol');
+  // GPT-6 carries no flag, so it must not receive a temperature.
+  const reasoning = await bodyFor('gpt-6-sol');
   assert.equal('temperature' in reasoning, false, 'reasoning models reject temperature with a 400');
 
   // An id absent from the registry must fail closed the same way.
   const unknown = await bodyFor('some/model-not-in-the-registry');
   assert.equal('temperature' in unknown, false, 'an unknown model must not be sent sampling params');
+});
+
+test('OpenAI 429 reports the provider cause instead of always claiming a rate limit (#6097)', async () => {
+  const cases = [
+    { code: 'credit_balance_exhausted', message: 'credits exhausted', expected: /API credits are exhausted/ },
+    { code: 'project_spend_limit_exceeded', message: 'project cap', expected: /project spend limit reached/ },
+    { code: 'rate_limit_exceeded', message: 'too many requests', expected: /rate limit reached/ },
+    { code: 'insufficient_quota', message: 'You exceeded your current quota.', expected: /You exceeded your current quota/ },
+    { code: '', message: '', expected: /Check API rate limits, billing, and project limits/ },
+  ];
+
+  for (const { code, message, expected } of cases) {
+    await withMockFetch(
+      async () => jsonResponse({ error: { code, message } }, 429),
+      async () => {
+        const reported: Error[] = [];
+        await streamOpenAiChat('sk-test', {
+          model: 'gpt-6-sol',
+          messages: [{ role: 'user', content: 'hi' }],
+          onChunk: () => undefined,
+          onComplete: () => assert.fail('A rejected request must not complete'),
+          onError: (error) => { reported.push(error); },
+        });
+        assert.equal(reported.length, 1, `expected one error for ${code}`);
+        assert.match(reported[0]?.message ?? '', expected);
+      },
+    );
+  }
+});
+
+// #6809: inspect the real SDK/fetch request for each provider protocol.
+test('BYOK protocols honor output budgets and reject invalid budgets without a request', async () => {
+  for (const protocol of ['anthropic', 'completions', 'responses'] as const) {
+    for (const requested of [undefined, 256, 50_000, 0, -1, 1.5, Number.NaN]) {
+      let payload: Record<string, unknown> | undefined;
+      let error: Error | undefined;
+      await withMockFetch(async (_url, init) => {
+        payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return protocol === 'anthropic' ? anthropicSse(HELLO_STREAM) : sseResponse([]);
+      }, async () => {
+        const options = {
+          model: protocol === 'anthropic' ? 'claude-opus-5-5' : protocol === 'responses' ? CODEX_MODEL_ID : 'gpt-4o',
+          messages: [{ role: 'user' as const, content: 'hi' }], maxOutputTokens: requested,
+          onChunk: () => {}, onComplete: () => {}, onError: (e: Error) => { error = e; },
+        };
+        if (protocol === 'anthropic') await streamAnthropicChat({ apiKey: 'sk-ant-test', workspaceId: '' }, options);
+        else await streamOpenAiChat('sk-test', options);
+      });
+      if (requested === undefined || requested === 256 || requested === 50_000) {
+        assert.equal(error, undefined);
+        const key = protocol === 'anthropic' ? 'max_tokens' : protocol === 'responses' ? 'max_output_tokens' : 'max_completion_tokens';
+        assert.equal(payload?.[key], requested === 256 ? 256 : protocol === 'anthropic' ? 32_000 : 8192);
+      } else {
+        assert.match(error?.message ?? '', /positive safe integer/);
+        assert.equal(payload, undefined);
+      }
+    }
+  }
 });

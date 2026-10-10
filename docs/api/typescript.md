@@ -45,21 +45,27 @@ ifc-lite ships its public npm packages under the `@ifc-lite/*` scope, plus the `
 | [`@ifc-lite/wasm`](#ifc-litewasm) | WebAssembly bindings for IFC-Lite |
 | [`@ifc-lite/codegen`](#ifc-litecodegen) | TypeScript code generator from IFC EXPRESS schemas |
 | [`create-ifc-lite`](#create-ifc-lite) | Create IFC-Lite projects with one command |
+| [`@ifc-lite/ai`](https://www.npmjs.com/package/@ifc-lite/ai) | Provider-independent AI request core: transport contract, typed outcomes, root budgets, usage receipts and bounded JSON output parsing |
 | [`@ifc-lite/bcf-api`](https://www.npmjs.com/package/@ifc-lite/bcf-api) | BCF API (OpenCDE) REST client for connecting to BCF servers |
 | [`@ifc-lite/charts`](https://www.npmjs.com/package/@ifc-lite/charts) | Headless chart data binding for IFC-Lite: aggregate model rows into buckets that keep their element ids, build ECharts options, render SVG |
 | [`@ifc-lite/documents-api`](https://www.npmjs.com/package/@ifc-lite/documents-api) | OpenCDE Documents API 1.0 client: select, download, query and upload documents against a buildingSMART Documents API server |
 | [`@ifc-lite/flow`](https://www.npmjs.com/package/@ifc-lite/flow) | Keyed-data graph runtime for BIM workflows: typed ports, item/list/group lifting, memoised evaluation, and element tracking for re-runnable graphs |
 | [`@ifc-lite/flow-nodes`](https://www.npmjs.com/package/@ifc-lite/flow-nodes) | Standard node library for @ifc-lite/flow over the ifc-lite SDK: model reads and writes, tables, viewer, and a sandboxed Script node |
+| [`@ifc-lite/history-export`](https://www.npmjs.com/package/@ifc-lite/history-export) | IFC history properties, change sets and verified offline history packages |
+| [`@ifc-lite/load-trace`](https://www.npmjs.com/package/@ifc-lite/load-trace) | Dependency-free load-trace spans: performance.measure plus a per-load, cross-thread span tree with worker clock alignment and Chrome-trace export |
 | [`@ifc-lite/merge`](https://www.npmjs.com/package/@ifc-lite/merge) | Three-way merge engine for IFCX layers — MergePlan with auto-merged ops and explicit conflict records, merge-layer emission, rebase, and revert. |
+| [`@ifc-lite/model-match`](https://www.npmjs.com/package/@ifc-lite/model-match) | Model revision matching with explicit evidence |
 | [`@ifc-lite/oauth-pkce`](https://www.npmjs.com/package/@ifc-lite/oauth-pkce) | Browser OAuth 2.0 Authorization Code + PKCE flow, shared by ifc-lite's file-source providers |
 | [`@ifc-lite/opencde-foundation`](https://www.npmjs.com/package/@ifc-lite/opencde-foundation) | buildingSMART OpenCDE Foundation API client: version discovery, auth discovery, OAuth2 flows and the shared HTTP client used by every OpenCDE service client |
 | [`@ifc-lite/plugin-api`](https://www.npmjs.com/package/@ifc-lite/plugin-api) | Dependency-free type surface for ifc-lite file-source plugins |
 | [`@ifc-lite/regex-guard`](https://www.npmjs.com/package/@ifc-lite/regex-guard) | A shared, dependency-free guard against catastrophic-backtracking (ReDoS) regex patterns compiled from untrusted input |
 | [`@ifc-lite/rules`](https://www.npmjs.com/package/@ifc-lite/rules) | Filter-rule vocabulary, evaluator and .rules.json information-validation engine for IFC-Lite |
+| [`@ifc-lite/semantic`](https://www.npmjs.com/package/@ifc-lite/semantic) | Portable semantic datasets, profiles, validation and IFC identity resolution |
+| [`@ifc-lite/source-autodesk`](https://www.npmjs.com/package/@ifc-lite/source-autodesk) | Autodesk Forma and Data Exchange cloud-source provider for ifc-lite |
 | [`@ifc-lite/source-commit-http`](https://www.npmjs.com/package/@ifc-lite/source-commit-http) | Generic commit-aware file-source provider for ifc-lite, over a documented REST contract |
 | [`@ifc-lite/source-dalux`](https://www.npmjs.com/package/@ifc-lite/source-dalux) | Dalux Build (Box) file-source provider for ifc-lite |
 | [`@ifc-lite/source-dropbox`](https://www.npmjs.com/package/@ifc-lite/source-dropbox) | Dropbox file-source provider for ifc-lite |
-| [`@ifc-lite/source-msgraph`](https://www.npmjs.com/package/@ifc-lite/source-msgraph) | Microsoft Graph (OneDrive/SharePoint) file-source provider for ifc-lite |
+| [`@ifc-lite/source-msgraph`](https://www.npmjs.com/package/@ifc-lite/source-msgraph) | Microsoft Graph file-source provider for the signed-in user's own OneDrive |
 | [`@ifc-lite/wasm-lifecycle`](https://www.npmjs.com/package/@ifc-lite/wasm-lifecycle) | Shared WASM engine load-retry classification and cross-realm panic-forwarding, used by @ifc-lite/geometry and @ifc-lite/parser |
 <!-- END GENERATED: package-index -->
 
@@ -195,6 +201,9 @@ class GeometryProcessor {
   // Stream geometry for large files (async generator of streaming events)
   processStreaming(/* buffer + streaming options; see the .d.ts */): AsyncGenerator<StreamingGeometryEvent>;
 
+  // Authored IfcSweptDiskSolid curves and derived centreline measurements
+  extractSweptDiskDescriptions(buffer: Uint8Array, ids?: Uint32Array): SweptDiskDescriptions | null;
+
   // Rust-side exporters surfaced on the processor
   exportGlb(buffer, includeMetadata?, hidden?, isolated?, hiddenTypesCsv?, lit?): Uint8Array | null;
   exportGlbFromMeshes(meshes: MeshData[], includeMetadata?, lit?): Uint8Array | null;
@@ -218,6 +227,18 @@ class GeometryProcessor {
   exportHbjson(buffer, name): Uint8Array | null;
 }
 ```
+
+`extractSweptDiskDescriptions` returns `null` until `init()` completes. Omit
+`ids` to inspect every product, or pass an empty `Uint32Array` to select none.
+The result is keyed by product STEP ID and contains ordered exact line and arc
+segments, the disk `Radius` and `InnerRadius`, and per-segment and total
+centreline lengths in metres. Arc `bend_angle` is an unsigned radian measure;
+the directrix's signed `sweep_angle` keeps its travel direction. Coordinates
+are double-precision, absolute IFC Z-up world metres. `source_modified` marks
+a CSG operand whose final visible shape may differ. Unsupported records have
+an empty directrix and `directrix_metrics: null`. `diagnostics` reports
+malformed representation walks. The returned data is an analytic description,
+not a render overlay or a mesh.
 
 ### GeometryResult and MeshData
 
@@ -836,6 +857,14 @@ For editing an **already-parsed** `IfcDataStore`, the package exposes anchored b
 
 `addColumnToStore`, `addWallToStore`, `addSlabToStore`, `addBeamToStore`, `addDoorToStore`, `addWindowToStore`, `addSpaceToStore`, `addRoofToStore`, `addPlateToStore`, `addMemberToStore`.
 
+Hosted builders take a `HostAnchor` from `resolveHostAnchor(dataStore, hostExpressId, mutationView)` instead: `addOpeningToStore` (IfcOpeningElement + IfcRelVoidsElement in an IfcWall or IfcSlab), `addHostedDoorToStore` and `addHostedWindowToStore` (the opening plus an IfcDoor / IfcWindow filling it through IfcRelFillsElement).
+
+`addHostedElementInStore(dataStore, editor, hostExpressId, spec)` is the atomic hosted command operation used by the viewer, SDK and MCP. A spec chooses `kind: 'opening' | 'door' | 'window'` and the corresponding builder `params`. It resolves the live anchor and refuses wall cuts outside the host, overlapping existing openings, or having unreadable geometry. `readHostOpeningExtents(dataStore, hostExpressId, mutationView)` returns host-frame native-unit bounds and reports unreadable openings.
+
+`bim.store.joinWalls(modelId, aExpressId, bExpressId, options?)` exposes the existing `joinWallsInStore` core through SDK, sandbox and MCP. It returns the new `IfcRelConnectsPathElements` reference. The core now atomically protects hosted cuts against both joined end faces and refuses unreadable cut geometry. `recordCompoundMutation` and `undoRecordedMutationOperations` in `@ifc-lite/mutations` record and restore complete compound overlay graphs, including forgotten earlier entities, as one operation.
+
+Type objects and materials take the storey-free anchor from `resolveAuthoringAnchor(dataStore, mutationView)`: `addElementTypeToStore` and `assignTypeInStore` (IfcRelDefinesByType), and `addMaterialToStore`, `addMaterialLayerSetToStore`, `addMaterialLayerSetUsageToStore` and `assignMaterialInStore` (IfcRelAssociatesMaterial). The `assign*` builders take the model's existing relationships from `readRelatedLists`.
+
 ```typescript
 import { StoreEditor } from '@ifc-lite/mutations';
 import { addColumnToStore, resolveSpatialAnchor } from '@ifc-lite/create';
@@ -921,7 +950,7 @@ function extractViewpointState(viewpoint: BCFViewpoint): {
 
 ### Utilities
 
-GUID conversion (`uuidToIfcGuid`, `ifcGuidToUuid`, `generateIfcGuid`, `isValidIfcGuid`), ARGB colour helpers (`parseARGBColor`, `toARGBColor`), 3D marker overlay (`computeMarkerPositions`, `BCFOverlayRenderer`), and `createBCFFromIDSReport` to turn an IDS validation report into BCF topics.
+GUID conversion (`uuidToIfcGuid`, `ifcGuidToUuid`, `generateIfcGuid`, `isValidIfcGuid`), ARGB colour helpers (`parseARGBColor`, `toARGBColor`), 3D marker positioning (`computeMarkerPositions`), and `createBCFFromIDSReport` to turn an IDS validation report into BCF topics.
 
 ---
 
@@ -1016,7 +1045,7 @@ Headless model-diff engine: classifies entities as added / modified / deleted / 
 
 ## @ifc-lite/lens
 
-Rule-based 3D filtering and colorization for IFC models: `evaluateLens`, `evaluateAutoColorLens`, `matchesCriteria`, class/data-source discovery (`discoverClasses`, `discoverDataSources`), and `BUILTIN_LENSES` presets.
+Rule-based 3D filtering and colorization for IFC models: `evaluateLens` applies shared rule selections, `evaluateAutoColorLens` groups by data values, and class/data-source discovery (`discoverClasses`, `discoverDataSources`) supports the `BUILTIN_LENSES` presets.
 
 ## @ifc-lite/lists
 

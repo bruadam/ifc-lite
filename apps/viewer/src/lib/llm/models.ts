@@ -76,16 +76,17 @@ function titleCaseProvider(rawProvider: string): string {
     .join(' ');
 }
 
-function humanizeModelSlug(slug: string): string {
+/** `z-ai/glm-5.3-flash` → `GLM 5.3 Flash`: version dots between digits are kept. */
+export function humanizeModelSlug(slug: string): string {
   const withoutTier = slug.split(':')[0] ?? slug;
   return withoutTier
-    .replace(/[._-]+/g, ' ')
+    .replace(/[_-]+|(?<!\d)\.|\.(?!\d)/g, ' ')
     .split(' ')
     .filter(Boolean)
     .map((word) => {
       if (/^[0-9.]+$/.test(word)) return word;
       const upper = word.toUpperCase();
-      if (upper === 'GPT' || upper === 'OSS' || upper === 'R1') return upper;
+      if (upper === 'GPT' || upper === 'GLM' || upper === 'OSS' || upper === 'R1') return upper;
       if (word.length <= 2) return upper;
       return word.charAt(0).toUpperCase() + word.slice(1);
     })
@@ -140,8 +141,8 @@ export const FREE_MODELS: LLMModel[] = rawFreeModels.map(applyCapabilities);
 
 const ANTHROPIC_BYOK_MODELS: LLMModel[] = [
   {
-    id: 'claude-opus-5',
-    name: 'Claude Opus 5',
+    id: 'claude-opus-5-5',
+    name: 'Claude Opus 5.5',
     provider: 'Anthropic',
     tier: 'byok',
     source: 'anthropic',
@@ -151,8 +152,8 @@ const ANTHROPIC_BYOK_MODELS: LLMModel[] = [
     cost: '$$$',
   },
   {
-    id: 'claude-opus-4-8',
-    name: 'Claude Opus 4.8',
+    id: 'claude-fable-5-1',
+    name: 'Claude Fable 5.1',
     provider: 'Anthropic',
     tier: 'byok',
     source: 'anthropic',
@@ -162,19 +163,8 @@ const ANTHROPIC_BYOK_MODELS: LLMModel[] = [
     cost: '$$$',
   },
   {
-    id: 'claude-fable-5',
-    name: 'Claude Fable 5',
-    provider: 'Anthropic',
-    tier: 'byok',
-    source: 'anthropic',
-    contextWindow: 1_000_000,
-    supportsImages: true,
-    supportsFileAttachments: true,
-    cost: '$$$',
-  },
-  {
-    id: 'claude-sonnet-5',
-    name: 'Claude Sonnet 5',
+    id: 'claude-sonnet-5-5',
+    name: 'Claude Sonnet 5.5',
     provider: 'Anthropic',
     tier: 'byok',
     source: 'anthropic',
@@ -184,7 +174,7 @@ const ANTHROPIC_BYOK_MODELS: LLMModel[] = [
     cost: '$$',
   },
   {
-    id: 'claude-haiku-4-5',
+    id: 'claude-haiku-4-5-20251001',
     name: 'Claude Haiku 4.5',
     provider: 'Anthropic',
     tier: 'byok',
@@ -200,8 +190,19 @@ const ANTHROPIC_BYOK_MODELS: LLMModel[] = [
 
 const OPENAI_BYOK_MODELS: LLMModel[] = [
   {
-    id: 'gpt-5.6-sol',
-    name: 'GPT-5.6 Sol',
+    id: 'gpt-6-astra',
+    name: 'GPT-6 Astra',
+    provider: 'OpenAI',
+    tier: 'byok',
+    source: 'openai',
+    contextWindow: 1_050_000,
+    supportsImages: true,
+    supportsFileAttachments: true,
+    cost: '$$$',
+  },
+  {
+    id: 'gpt-6.1-sol',
+    name: 'GPT-6.1 Sol',
     provider: 'OpenAI',
     tier: 'byok',
     source: 'openai',
@@ -211,19 +212,8 @@ const OPENAI_BYOK_MODELS: LLMModel[] = [
     cost: '$$',
   },
   {
-    id: 'gpt-5.6-terra',
-    name: 'GPT-5.6 Terra',
-    provider: 'OpenAI',
-    tier: 'byok',
-    source: 'openai',
-    contextWindow: 1_050_000,
-    supportsImages: true,
-    supportsFileAttachments: true,
-    cost: '$$',
-  },
-  {
-    id: 'gpt-5.6-luna',
-    name: 'GPT-5.6 Luna',
+    id: 'gpt-6-luna',
+    name: 'GPT-6 Luna',
     provider: 'OpenAI',
     tier: 'byok',
     source: 'openai',
@@ -242,7 +232,7 @@ const OPENAI_BYOK_MODELS: LLMModel[] = [
     supportsImages: false,
     supportsFileAttachments: true,
     cost: '$$',
-    // Still current: there is no 5.6 Codex.
+    // Older specialized choice; the current Sol model is listed above.
     openaiApi: 'responses',
   },
 ];
@@ -250,8 +240,9 @@ const OPENAI_BYOK_MODELS: LLMModel[] = [
 export const BYOK_MODELS: LLMModel[] = [...ANTHROPIC_BYOK_MODELS, ...OPENAI_BYOK_MODELS];
 export const ALL_MODELS = [...FREE_MODELS, ...BYOK_MODELS];
 
+export const UNCONFIGURED_MODEL_ID = 'llm-model-missing';
 const FALLBACK_MODEL: LLMModel = {
-  id: 'llm-model-missing',
+  id: UNCONFIGURED_MODEL_ID,
   name: 'No model configured',
   provider: 'Unknown',
   tier: 'free',
@@ -269,27 +260,35 @@ export const DEFAULT_BYOK_MODEL = BYOK_MODELS[0] ?? DEFAULT_FREE_MODEL;
  * Where an id this picker no longer offers should land.
  *
  * A selection persists in localStorage, so dropping an id silently reassigns
- * whoever had it to the default. That default is Opus 5, which is why this
- * matters: a Haiku user (1/5 per MTok) would land on Opus 5 (5/25) without
+ * whoever had it to the default. That default is Opus 5.5, which is why this
+ * matters: a Haiku user would land on a much more expensive model without
  * being told, and BYOK means it is their bill. An OpenAI user would land on an
  * Anthropic model and be asked for a key they never needed.
  *
  * Two kinds of entry, and the difference is worth keeping straight: the first
  * is the same model under a new name, the rest are a different model at a
  * similar price. "No longer offered here" is not the same as "retired" -- the
- * provider still serves Sonnet 4.6 and GPT-5.4; this picker just does not list
+ * provider may still serve older models; this picker just does not list
  * them any more, and their holders have to land somewhere. Same tier and same
- * provider beats the Opus 5 default, which is dearer and, for the OpenAI rows,
+ * provider beats the Opus 5.5 default, which is dearer and, for the OpenAI rows,
  * would demand a key the user never had.
  */
 const MODEL_ID_MIGRATIONS: Record<string, string> = {
-  // Same model: the dated snapshot and the alias.
-  'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
+  // Same model: the alias and the dated snapshot.
+  'claude-haiku-4-5': 'claude-haiku-4-5-20251001',
   // Dropped from the picker: nearest listed model, same provider and tier.
-  'claude-sonnet-4-6': 'claude-sonnet-5',
-  'gpt-5.5': 'gpt-5.6-sol',
-  'gpt-5.4': 'gpt-5.6-sol',
-  'gpt-5.4-mini-2026-03-17': 'gpt-5.6-luna',
+  'claude-opus-5': 'claude-opus-5-5',
+  'claude-opus-4-8': 'claude-opus-5-5',
+  'claude-fable-5': 'claude-fable-5-1',
+  'claude-sonnet-4-6': 'claude-sonnet-5-5',
+  'claude-sonnet-5': 'claude-sonnet-5-5',
+  'gpt-6-sol': 'gpt-6.1-sol',
+  'gpt-5.6-sol': 'gpt-6.1-sol',
+  'gpt-5.6-terra': 'gpt-6.1-sol',
+  'gpt-5.6-luna': 'gpt-6-luna',
+  'gpt-5.5': 'gpt-6.1-sol',
+  'gpt-5.4': 'gpt-6.1-sol',
+  'gpt-5.4-mini-2026-03-17': 'gpt-6-luna',
 };
 
 /** Resolve an id this picker no longer lists to one it does. */

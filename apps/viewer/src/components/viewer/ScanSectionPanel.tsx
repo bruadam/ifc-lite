@@ -8,12 +8,12 @@
  *
  * A thin band of the loaded point cloud(s) around the active section plane,
  * projected into drawing space and drawn as dots. Slide-in panel matching
- * the DXF underlay / sheet setup panels' shape.
+ * the DXF underlay / sheet setup panels' shape. The "Vector outline" mode
+ * (#6871) traces the band into closed rings, drawn as lines and written to
+ * the DXF export on their own layer.
  */
 
 import React from 'react';
-import { ScanLine, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
@@ -21,39 +21,44 @@ import {
   SCAN_SECTION_THICKNESS_MIN,
   SCAN_SECTION_THICKNESS_MAX,
 } from '@/hooks/scanSectionMath';
+import {
+  SCAN_OUTLINE_MAX_GAP_MIN,
+  SCAN_OUTLINE_MAX_GAP_MAX,
+  type ScanOutlineLayer,
+} from '@/lib/scan-outline/scan-outline';
 
 interface ScanSectionPanelProps {
-  onClose: () => void;
   hasPointCloud: boolean;
   totalInBand: number;
   renderedCount: number;
+  /** Traced outline (#6871); `null` while disabled, tracing or failed. */
+  outline?: ScanOutlineLayer | null;
+  /** The last trace failed; shown instead of "tracing". */
+  outlineFailed?: boolean;
 }
 
+const formatLength = (metres: number): string =>
+  metres >= 1 ? `${metres.toFixed(2)} m` : `${Math.round(metres * 1000)} mm`;
+
 export function ScanSectionPanel({
-  onClose,
   hasPointCloud,
   totalInBand,
   renderedCount,
+  outline = null,
+  outlineFailed = false,
 }: ScanSectionPanelProps): React.ReactElement {
   const { t } = useTranslation();
   const displayOptions = useViewerStore((s) => s.drawing2DDisplayOptions);
   const updateDisplayOptions = useViewerStore((s) => s.updateDrawing2DDisplayOptions);
 
-  const { showScanSection, scanSectionThickness, scanSectionOpacity, scanSectionIncludeInExport } = displayOptions;
+  const {
+    showScanSection, scanSectionThickness, scanSectionOpacity, scanSectionIncludeInExport,
+    scanSectionOutline, scanSectionOutlineMaxGap,
+  } = displayOptions;
 
   return (
-    <div className="flex flex-col h-full bg-background border-l">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/50">
-        <div className="flex items-center gap-2">
-          <ScanLine className="h-5 w-5 text-primary" />
-          <h2 className="font-semibold text-sm">{t('scanSectionPanel.title')}</h2>
-        </div>
-        <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('scanSectionPanel.closeAriaLabel')}>
-          <X className="h-4 w-4" aria-hidden="true" />
-        </Button>
-      </div>
-
+    <div className="flex flex-col h-full bg-background">
+      {/* The inspector tab (#5495) carries the title; no panel-owned header. */}
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
         <label className="flex items-center justify-between gap-2 cursor-pointer">
@@ -73,11 +78,9 @@ export function ScanSectionPanel({
         )}
 
         <div className="flex flex-col gap-1">
-          <Label htmlFor="scan-section-thickness" className="text-[10px] text-muted-foreground">
+          <Label htmlFor="scan-section-thickness" className="text-2xs text-muted-foreground">
             {t('scanSectionPanel.bandThicknessLabel', {
-              value: scanSectionThickness >= 1
-                ? `${scanSectionThickness.toFixed(2)} m`
-                : `${Math.round(scanSectionThickness * 1000)} mm`,
+              value: formatLength(scanSectionThickness),
             })}
           </Label>
           <input
@@ -94,7 +97,7 @@ export function ScanSectionPanel({
         </div>
 
         <div className="flex flex-col gap-1">
-          <Label htmlFor="scan-section-opacity" className="text-[10px] text-muted-foreground">
+          <Label htmlFor="scan-section-opacity" className="text-2xs text-muted-foreground">
             {t('scanSectionPanel.dotOpacityLabel', { percent: Math.round(scanSectionOpacity * 100) })}
           </Label>
           <input
@@ -119,8 +122,56 @@ export function ScanSectionPanel({
           />
         </label>
 
+        <label
+          className="flex items-center justify-between gap-2 cursor-pointer"
+          title={t('scanSectionPanel.outlineTitle')}
+        >
+          <span className="text-xs">{t('scanSectionPanel.outlineLabel')}</span>
+          <input
+            type="checkbox"
+            checked={scanSectionOutline}
+            onChange={(e) => updateDisplayOptions({ scanSectionOutline: e.target.checked })}
+            className="accent-teal-600"
+          />
+        </label>
+
+        {scanSectionOutline && (
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="scan-section-outline-gap" className="text-2xs text-muted-foreground">
+              {t('scanSectionPanel.outlineMaxGapLabel', { value: formatLength(scanSectionOutlineMaxGap) })}
+            </Label>
+            <input
+              id="scan-section-outline-gap"
+              type="range"
+              min={SCAN_OUTLINE_MAX_GAP_MIN}
+              max={SCAN_OUTLINE_MAX_GAP_MAX}
+              step={0.01}
+              value={scanSectionOutlineMaxGap}
+              onChange={(e) => updateDisplayOptions({ scanSectionOutlineMaxGap: Number(e.target.value) })}
+              className="h-1 accent-teal-600 cursor-pointer"
+              title={t('scanSectionPanel.outlineMaxGapTitle')}
+            />
+          </div>
+        )}
+
+        {hasPointCloud && showScanSection && scanSectionOutline && (
+          <output className="block text-2xs text-muted-foreground">
+            {outlineFailed
+              ? <span className="text-destructive">{t('scanSectionPanel.outlineFailedMessage')}</span>
+              : outline === null
+              ? t('scanSectionPanel.outlineTracingMessage')
+              : t('scanSectionPanel.outlineSummary', {
+                  count: outline.rings.length,
+                  cell: formatLength(outline.diagnostics.cellSize),
+                })}
+            {outline?.diagnostics.cellCapHit && (
+              <span className="block text-amber-600">{t('scanSectionPanel.outlineCapHitMessage')}</span>
+            )}
+          </output>
+        )}
+
         {hasPointCloud && (
-          <p className="text-[11px] text-muted-foreground border-t pt-2">
+          <p className="text-2xs text-muted-foreground border-t pt-2">
             {!showScanSection
               ? t('scanSectionPanel.overlayHiddenMessage')
               : renderedCount >= totalInBand

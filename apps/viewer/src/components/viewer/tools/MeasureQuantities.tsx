@@ -42,20 +42,10 @@
  *   alignment, it is NOT invalidated by federation re-baking. It is the sum of
  *   EVERY meshed face, not one side, so it is never comparable to a
  *   `NetSideArea`/`GrossSideArea` and is labelled its own "mesh" row.
- *   GPU-instanced-only elements have no flat mesh to sum and are reported as
- *   "no mesh" here too — there is no per-entity area side channel analogous
- *   to `instancedGeometryVolumes`. A mesh record that IS present but never
- *   triangulated anything (`indices.length < 3`, including the empty-array
- *   case) is likewise "no mesh", not "measured 0 m²" — those are different
- *   claims, and only the second one is true of a record with no triangles to
- *   have summed (`measure-modes/mesh-area.ts`'s `collectMeshAreas`). A mesh
- *   whose triangles genuinely sum to zero (e.g. every triangle degenerate)
- *   IS "measured" — that zero is a real answer, not an absence.
- *   Mesh area needs no `IfcDataStore`, so its collection never depends on
- *   one: `collectMeshAreas` takes mesh data alone (see its own doc comment)
- *   specifically so a future store-related early return elsewhere in this
- *   component cannot end up gating it, structurally rather than by
- *   convention.
+ *   GPU-instanced-only elements and mesh records with fewer than three indices
+ *   have no measurable mesh area; a triangulated mesh with degenerate faces
+ *   instead has a measured zero. `collectMeshAreas` takes mesh data without an
+ *   `IfcDataStore`, so missing store data cannot suppress a mesh measurement.
  *
  * - **Mass derived** — geometry volume x the material density the file declares
  *   in `Pset_MaterialCommon.MassDensity` (#2736). This is the ONLY number on
@@ -119,6 +109,7 @@ import {
   type WeightBasis,
   type WeightOutcome,
 } from './measure-modes/weight';
+import { SourceQuantityInspection } from './SourceQuantityInspection';
 
 const QUANTITY_TYPE_LABEL_KEY: Record<number, TranslationKey> = {
   0: 'measure.qty.length',
@@ -488,7 +479,7 @@ export function MeasureQuantities() {
 
   if (!summary) {
     return (
-      <div className="border-t px-2 py-2 text-center text-[10px] text-muted-foreground">
+      <div className="px-3 py-8 text-center text-xs text-muted-foreground">
         {t('measure.quantities.selectPrompt')}
       </div>
     );
@@ -507,19 +498,19 @@ export function MeasureQuantities() {
     && derivedWeights.length === 0;
 
   return (
-    <div className="border-t px-2 py-2 space-y-1.5">
+    <div className="space-y-1.5 px-3 py-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-primary">
+        <span className="flex items-center gap-1 font-mono text-2xs uppercase tracking-wider text-foreground">
           <Boxes className="h-3 w-3" />
           {t('measure.quantities.header')}
         </span>
-        <span className="font-mono text-[9px] text-muted-foreground">
+        <span className="font-mono text-2xs text-muted-foreground">
           {t('measure.quantities.elementsCount', { count: elements })}
         </span>
       </div>
 
       {nothing ? (
-        <div className="flex items-start gap-1.5 text-[10px] leading-tight text-muted-foreground">
+        <div className="flex items-start gap-1.5 text-2xs leading-tight text-muted-foreground">
           <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" />
           <span>
             {t('measure.quantities.nothingFound')}
@@ -527,36 +518,40 @@ export function MeasureQuantities() {
         </div>
       ) : (
         <div className="space-y-0.5 overflow-x-auto">
+          {declared.length > 0 && <div className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">{t('measure.quantities.authoredHeading')}</div>}
           {declared.map((r) => (
             <div
               key={`${r.quantityType}-${r.basis}`}
               className="flex items-baseline gap-2 whitespace-nowrap"
               title={r.provenance.join('\n')}
             >
-              <span className="w-[5.5rem] shrink-0 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+              <span className="w-[5.5rem] shrink-0 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
                 {QUANTITY_TYPE_LABEL_KEY[r.quantityType] ? t(QUANTITY_TYPE_LABEL_KEY[r.quantityType]) : r.quantityType}{' '}
                 {BASIS_LABEL_KEY[r.basis] ? t(BASIS_LABEL_KEY[r.basis]!) : ''}
               </span>
-              <span className="font-mono text-[11px] tabular-nums">{render(r.total, r.quantityType)}</span>
+              <span className="font-mono text-2xs tabular-nums">{render(r.total, r.quantityType)}</span>
               {r.contributing < elements && (
-                <span className="font-mono text-[9px] text-amber-600 dark:text-amber-500">
+                <span className="font-mono text-2xs text-amber-600 dark:text-amber-500">
                   {r.contributing}/{elements}
                 </span>
               )}
             </div>
           ))}
 
+          {(geometry.proved > 0 || meshArea.withMesh > 0 || derivedWeights.length > 0) &&
+            <div className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">{t('measure.quantities.computedHeading')}</div>}
+
           {geometry.proved > 0 && (
             <div
               className="flex items-baseline gap-2 whitespace-nowrap"
               title={t('measure.quantities.volumeMeshTitle')}
             >
-              <span className="w-[5.5rem] shrink-0 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+              <span className="w-[5.5rem] shrink-0 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
                 {t('measure.quantities.volumeMeshLabel')}
               </span>
-              <span className="font-mono text-[11px] tabular-nums">{render(geometry.total, 2)}</span>
+              <span className="font-mono text-2xs tabular-nums">{render(geometry.total, 2)}</span>
               {geometry.unproved > 0 && (
-                <span className="font-mono text-[9px] text-amber-600 dark:text-amber-500">
+                <span className="font-mono text-2xs text-amber-600 dark:text-amber-500">
                   {geometry.proved}/{elements}
                 </span>
               )}
@@ -568,12 +563,12 @@ export function MeasureQuantities() {
               className="flex items-baseline gap-2 whitespace-nowrap"
               title={t('measure.quantities.areaMeshTitle')}
             >
-              <span className="w-[5.5rem] shrink-0 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+              <span className="w-[5.5rem] shrink-0 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
                 {t('measure.quantities.areaMeshLabel')}
               </span>
-              <span className="font-mono text-[11px] tabular-nums">{render(meshArea.total, 1)}</span>
+              <span className="font-mono text-2xs tabular-nums">{render(meshArea.total, 1)}</span>
               {meshArea.withoutMesh > 0 && (
-                <span className="font-mono text-[9px] text-amber-600 dark:text-amber-500">
+                <span className="font-mono text-2xs text-amber-600 dark:text-amber-500">
                   {meshArea.withMesh}/{elements}
                 </span>
               )}
@@ -592,14 +587,14 @@ export function MeasureQuantities() {
               className="flex items-baseline gap-2 whitespace-nowrap"
               title={[t(DERIVED_WEIGHT_TITLE_KEY[r.basis as Exclude<WeightBasis, 'declared'>]), ...r.provenance].join('\n')}
             >
-              <span className="w-[5.5rem] shrink-0 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+              <span className="w-[5.5rem] shrink-0 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
                 {t(DERIVED_WEIGHT_LABEL_KEY[r.basis as Exclude<WeightBasis, 'declared'>])}
               </span>
-              <span className="font-mono text-[11px] tabular-nums">
+              <span className="font-mono text-2xs tabular-nums">
                 {render(r.total, MEASURABLE_QUANTITY_TYPES.Weight)}
               </span>
               {r.contributing < elements && (
-                <span className="font-mono text-[9px] text-amber-600 dark:text-amber-500">
+                <span className="font-mono text-2xs text-amber-600 dark:text-amber-500">
                   {r.contributing}/{elements}
                 </span>
               )}
@@ -615,7 +610,7 @@ export function MeasureQuantities() {
           volume; stating it here is what lets the two features be compared
           instead of quietly differing. */}
       {!nothing && (
-        <div className="font-mono text-[9px] leading-tight text-muted-foreground">
+        <div className="font-mono text-2xs leading-tight text-muted-foreground">
           {t('measure.quantities.legend')}
         </div>
       )}
@@ -624,19 +619,19 @@ export function MeasureQuantities() {
           label: a derived mass is a calculation of ours, not a quantity the
           file authored, and the reader is told which density it used. */}
       {derivedWeights.length > 0 && (
-        <div className="font-mono text-[9px] leading-tight text-muted-foreground">
+        <div className="font-mono text-2xs leading-tight text-muted-foreground">
           {derivedWeights.some((r) => r.basis === 'derived-library-density')
             ? t('measure.quantities.massLegendWithEstimated')
             : t('measure.quantities.massLegend')}
         </div>
       )}
       {weights.withheld['density-ambiguous'] > 0 && (
-        <div className="font-mono text-[9px] leading-tight text-muted-foreground">
+        <div className="font-mono text-2xs leading-tight text-muted-foreground">
           {t('measure.quantities.densityAmbiguous', { count: weights.withheld['density-ambiguous'] })}
         </div>
       )}
       {weights.withheld['weight-unit-is-force'] > 0 && (
-        <div className="flex items-start gap-1.5 font-mono text-[9px] leading-tight text-amber-600 dark:text-amber-500">
+        <div className="flex items-start gap-1.5 font-mono text-2xs leading-tight text-amber-600 dark:text-amber-500">
           <TriangleAlert className="mt-0.5 h-2.5 w-2.5 shrink-0" />
           <span>
             {t('measure.quantities.weightUnitIsForce', { count: weights.withheld['weight-unit-is-force'] })}
@@ -645,17 +640,17 @@ export function MeasureQuantities() {
       )}
 
       {geometry.unproved > 0 && (
-        <div className="font-mono text-[9px] leading-tight text-muted-foreground">
+        <div className="font-mono text-2xs leading-tight text-muted-foreground">
           {t('measure.quantities.unprovedVolume', { count: geometry.unproved })}
         </div>
       )}
       {meshArea.withoutMesh > 0 && (
-        <div className="font-mono text-[9px] leading-tight text-muted-foreground">
+        <div className="font-mono text-2xs leading-tight text-muted-foreground">
           {t('measure.quantities.noMeshToMeasure', { count: meshArea.withoutMesh })}
         </div>
       )}
       {meshAreaIncomplete > 0 && (
-        <div className="flex items-start gap-1.5 font-mono text-[9px] leading-tight text-amber-600 dark:text-amber-500">
+        <div className="flex items-start gap-1.5 font-mono text-2xs leading-tight text-amber-600 dark:text-amber-500">
           <TriangleAlert className="mt-0.5 h-2.5 w-2.5 shrink-0" />
           <span>
             {t('measure.quantities.meshAreaIncomplete', { count: meshAreaIncomplete })}
@@ -663,15 +658,16 @@ export function MeasureQuantities() {
         </div>
       )}
       {rescaled > 0 && (
-        <div className="font-mono text-[9px] leading-tight text-muted-foreground">
+        <div className="font-mono text-2xs leading-tight text-muted-foreground">
           {t('measure.quantities.rescaledVolume', { count: rescaled })}
         </div>
       )}
       {withoutStore > 0 && (
-        <div className="font-mono text-[9px] leading-tight text-muted-foreground">
+        <div className="font-mono text-2xs leading-tight text-muted-foreground">
           {t('measure.quantities.unresolvedElements', { count: withoutStore })}
         </div>
       )}
+      <SourceQuantityInspection />
     </div>
   );
 }

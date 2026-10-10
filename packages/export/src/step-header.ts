@@ -52,7 +52,7 @@ import type { ExportPass, StepExportOptions, StepExportResult } from './step-exp
  */
 export type StepHeaderOptions = Pick<
   StepExportOptions,
-  | 'description' | 'author' | 'organization' | 'authorization' | 'originatingSystem'
+  | 'description' | 'additionalDescriptions' | 'author' | 'organization' | 'authorization' | 'originatingSystem'
   | 'application' | 'filename' | 'timeStamp'
 >;
 
@@ -72,6 +72,8 @@ export function buildStepHeader(
         : ['Exported from ifc-lite'];
   // Honest provenance: never claim untouched source output. Append (never
   // overwrite) one item when ifc-lite actually changed the file.
+  description.push(...(options.additionalDescriptions ?? []));
+
   if (modifications > 0) {
     description.push(
       `Re-exported by ifc-lite, ${modifications} modification${modifications === 1 ? '' : 's'}`,

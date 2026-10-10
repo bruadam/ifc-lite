@@ -1367,7 +1367,7 @@ never report success on zero evidence.
 
 Each recipe's `rules` file runs against ONE model at a time, mirroring the
 `ids` loop — a rule federated across every model in the recipe (`targets`,
-`unique` scope `'federation'`) is [`check`](#check--rule-set-validation)'s
+`unique` scope `'federation'`) is [`check`](#check-rule-set-validation)'s
 job, not `delivery`'s.
 
 The consolidated report records, per model, its declared path and a SHA-256
@@ -1453,11 +1453,30 @@ ifc-lite flow validate audit.flow.json
 |------------|---------|
 | `run <graph> <file.ifc>` | Evaluate the graph. `--input <nodeId.param=value>` (repeatable; JSON values parse, others are strings), `--out <file>` (IFC with the run's mutations applied), `--tracking <file>` / `--no-tracking` (element sets of tracked creation nodes; default `<graph>.tracking.json` beside the graph), `--json` |
 | `describe <graph>` | Print declared inputs (with param defaults) and outputs (with value kind and access). `--json` |
+| `run ... --checkpoint <file>` | A graph with AI nodes pauses for review: the run saves a review checkpoint to `<file>`, prints the proposal and its digest, and exits **3**. A run that wrote to the model or opened a different model before pausing also needs `--out`; the resume must start from that file. `--ai-max-requests` / `--ai-max-output-tokens` set the run's AI root budget (default 12 requests, 24,000 output tokens) |
+| `review <checkpoint> --approve <digest>` / `--reject` | Approve exactly the proposal that was shown (the digest must match) or decline it. Without a flag it prints the checkpoint. `--json` |
+| `resume <graph> <file.ifc> --checkpoint <file>` | Claim an approved checkpoint once, check that the graph, `--input` values and model are the ones the pause recorded, restore every completed node without running it again (no AI request is sent for the reviewed proposal), and run what was paused. `--out`, `--next-checkpoint <file>` when the graph pauses again |
 | `validate <graph>` | Validate the document's wiring against the node registry (unknown types, missing ports, type-incompatible edges, unconnected required inputs, `inputs`/`outputs` markers that name nothing) and report each node as `ok`, `noop`, `unavailable` or `unknown` on this host. Exit 2 on any wiring problem or unrunnable node. `--json` |
 
 `run` exits 1 when any node failed; per-lane errors inside a lifted node do not fail the run
 (the lane yields `null`) and are listed under `errors` in the summary. Secrets are resolved from
 environment variables; a node that requires one the host lacks is reported as `unavailable`.
+
+AI nodes (`ai.classify`, `ai.summarize`, `ai.extract`) run only when the environment names an
+OpenAI-compatible provider: `IFC_LITE_AI_MODEL` and `IFC_LITE_AI_API_KEY` (and optionally
+`IFC_LITE_AI_BASE_URL`, default OpenRouter). `IFC_LITE_AI_STRUCTURED_OUTPUT=true`
+enables JSON Schema requests for a compatible upstream model; `false` disables
+them. Only the exact `https://api.openai.com/v1` endpoint defaults to enabled;
+other endpoints default to parser-only. These settings also apply to MCP.
+Without the required model and key the graph is refused before the model is
+opened. The key never appears in output or in a checkpoint.
+
+```bash
+ifc-lite flow run roles.flow.json model.ifc --checkpoint roles.checkpoint.json   # exit 3: paused for review
+ifc-lite flow review roles.checkpoint.json                                       # print the proposal and its digest
+ifc-lite flow review roles.checkpoint.json --approve <digest>
+ifc-lite flow resume roles.flow.json model.ifc --checkpoint roles.checkpoint.json --out roles.ifc
+```
 
 A graph with a tracked creation node (`model.addElement`) re-run on its own output updates the
 elements it made — same GlobalIds, changed geometry — and removes the ones whose lanes vanished:
@@ -1574,9 +1593,14 @@ Run `ifc-lite schema` to see the full API before writing eval expressions.
 
 ## Command Reference
 
+The `semantic` command reads JSON/SPARQL providers, generates shared profile artifacts, validates JSON or RDF, and operates an authenticated HTTPS relay. See [Headless semantic records](semantic-headless.md) for flags, result formats, credential references, and reproduction examples.
+
 <!-- BEGIN GENERATED: cli-commands -->
 | Command | Description |
 |---------|-------------|
+| `match` | Find likely model revisions |
+| `commits` | Access a commit source |
+| `history` | Build and export model history |
 | `info` | Model summary (schema, entities, storeys) |
 | `query` | Query entities by type/properties/quantities |
 | `props` | All properties for a single entity |
@@ -1613,5 +1637,39 @@ Run `ifc-lite schema` to see the full API before writing eval expressions.
 | `gym` | reset/step/reward environment loop (JSONL over stdin/stdout) |
 | `delivery` | Repeatable delivery check (structural + IDS + rule sets) from a saved recipe |
 | `check` | Run a .rules.json information-validation rule set (same engine as the viewer) |
-| `flow` | Evaluate a node graph headlessly |
+| `semantic` | Shared semantic profiles, SHACL and JSON/SPARQL providers |
+| `flow` | Evaluate a node graph headlessly; pause and resume reviewed AI proposals |
 <!-- END GENERATED: cli-commands -->
+
+## Model revision matching and history
+
+`ifc-lite match new.ifc previous.ifc --json` returns revision candidates with
+verdicts, reasons, and overlap measurements. It never accepts identity by itself.
+Use `--geometry` for geometry evidence, `--no-content` to disable content matching,
+`--exclude-types IfcOpeningElement,...`, or repeated `--threshold name=value`.
+
+Build a portable mainline from ordered deliveries:
+
+```bash
+ifc-lite history build first.ifc second.ifc third.ifc --include-artifacts --out history.ifchistory.zip
+ifc-lite history inspect history.ifchistory.zip --json
+ifc-lite history stamp history.ifchistory.zip --out stamped.ifc
+ifc-lite history changes history.ifchistory.zip --since 1 --out changes.ifc --bcf deleted.bcf --csv deleted.csv
+```
+
+Commit ids are SHA-256 digests; `--since` also accepts a 1-based index. Build
+supports `--by-content`, `--geometry`, and repeated `--identity-in` / `--lineage-in`
+for reviewed, digest-pinned sidecars. Original delivery bytes remain unchanged.
+`--pset` chooses a custom property set; `--omit-authors` omits history author fields.
+Packages can be opened in the viewer to browse their history offline.
+
+For remote sources set `IFC_LITE_COMMIT_URL` and `IFC_LITE_COMMIT_TOKEN`, then use
+`ifc-lite commits projects`, `models --project P`, `list --project P --model M`,
+`show --project P --model M --commit C`, or `download` with the same coordinates
+and `--out file.ifc`. `diff` adds `--base C`; `element` takes `--key GlobalId`.
+Results are JSON and paginated listings expose `--cursor` / `--limit`.
+
+`commits create-model --project P --name NAME` creates an empty model.
+`commits upload revision.ifc --project P --model M --parent C --idempotency-key UUID`
+requires an evaluated head (`none` for the first commit). The service refuses
+stale parents. Reuse the idempotency key only when retrying the same upload.

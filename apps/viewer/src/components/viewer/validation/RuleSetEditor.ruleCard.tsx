@@ -77,7 +77,7 @@ export function RuleCard({ rule, onChange, onRemove, models, schemaVersion }: Ru
       </div>
 
       <section className="flex flex-col gap-1.5">
-        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
           {t('validationEditor.ruleCard.applicability')}
         </h4>
         <RuleBlockEditor
@@ -90,7 +90,7 @@ export function RuleCard({ rule, onChange, onRemove, models, schemaVersion }: Ru
       </section>
 
       <section className="flex flex-col gap-1.5">
-        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
           {t('validationEditor.ruleCard.requirement')}
         </h4>
         <RequirementEditor
@@ -105,7 +105,7 @@ export function RuleCard({ rule, onChange, onRemove, models, schemaVersion }: Ru
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+            className="flex items-center gap-1 text-2xs font-medium text-muted-foreground hover:text-foreground"
           >
             <ChevronDown className={`h-3 w-3 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
             {t('validationEditor.ruleCard.advanced')}
@@ -139,6 +139,7 @@ export function RuleCard({ rule, onChange, onRemove, models, schemaVersion }: Ru
               min={0}
               value={rule.cardinality?.minApplicable ?? ''}
               placeholder={t('validationEditor.ruleCard.cardinalityAny')}
+              aria-label={t('validationEditor.ruleCard.cardinalityMin')}
               onChange={(e) => {
                 const raw = e.target.value;
                 const minApplicable = raw === '' ? undefined : Math.max(0, Number.parseInt(raw, 10) || 0);
@@ -153,6 +154,7 @@ export function RuleCard({ rule, onChange, onRemove, models, schemaVersion }: Ru
               min={0}
               value={rule.cardinality?.maxApplicable ?? ''}
               placeholder={t('validationEditor.ruleCard.cardinalityAny')}
+              aria-label={t('validationEditor.ruleCard.cardinalityMax')}
               onChange={(e) => {
                 const raw = e.target.value;
                 const maxApplicable = raw === '' ? undefined : Math.max(0, Number.parseInt(raw, 10) || 0);
@@ -178,7 +180,7 @@ function cleanCardinality(
 function SeverityToggle({ value, onChange }: { value: 'error' | 'warning'; onChange: (v: 'error' | 'warning') => void }) {
   const { t } = useTranslation();
   return (
-    <div className="inline-flex rounded border border-zinc-200 bg-white p-0.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="inline-flex rounded border border-zinc-200 bg-white p-0.5 text-2xs dark:border-zinc-800 dark:bg-zinc-950">
       {(['error', 'warning'] as const).map((s) => (
         <button
           key={s}

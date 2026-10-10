@@ -21,7 +21,8 @@
 import { CLASH_TABLE_COLUMNS, clashTableRows, type ClashElementRef, type ClashTableRow } from '@ifc-lite/clash';
 import { tableToCsv } from '@ifc-lite/export';
 import { useViewerStore } from '@/store';
-import { downloadFile, sanitizeFilename } from '@/lib/export/download';
+import { activeModelName, buildExportFilename, downloadFile, modelExportFilename } from '@/lib/export/download';
+import { effectiveStoreyId } from '@/lib/effective-storey';
 
 export interface ClashTableExportResult {
   rows: number;
@@ -39,7 +40,7 @@ export function buildClashTable(): ClashTableRow[] | null {
     const hit = state.resolveGlobalIdInModel(ref.model, ref.ref);
     if (!hit) return undefined;
     const store = state.models.get(hit.modelId)?.ifcDataStore;
-    const storeyId = store?.spatialHierarchy?.elementToStorey.get(hit.expressId);
+    const storeyId = store ? effectiveStoreyId(store, state.mutationViews.get(hit.modelId), hit.expressId) : undefined;
     if (!storeyId) return undefined;
     return store?.entities.getName(storeyId) || undefined;
   };
@@ -59,10 +60,8 @@ export function exportClashTableCsv(
 ): ClashTableExportResult | null {
   const rows = buildClashTable();
   if (!rows) return null;
-  const state = useViewerStore.getState();
-  const modelName = state.activeModelId ? state.models.get(state.activeModelId)?.name : undefined;
-  const base = modelName ? `${modelName.replace(/\.[^.]+$/, '')}-clashes` : 'clashes';
-  const filename = `${sanitizeFilename(base)}.csv`;
+  const modelName = activeModelName(useViewerStore.getState());
+  const filename = modelName ? modelExportFilename(modelName, 'csv', '-clashes') : buildExportFilename('clashes', 'csv');
   emit(tableToCsv(CLASH_TABLE_COLUMNS, rows), filename, 'text/csv');
   return { rows: rows.length, filename };
 }

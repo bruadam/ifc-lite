@@ -17,6 +17,7 @@ import type { PointPickNode } from './point-picker.js';
 import type { GpuUploadOutcome } from './gpu-upload-guard.js';
 import { capturePointRteSnapshot, isPointRteSnapshotCurrent } from './pick-rte-snapshot.js';
 import { computeDrawingBufferSize } from './renderer-viewport.js';
+import { pickPieceKey, planPickMeshHydration } from './pick-mesh-budget.js';
 
 /**
  * Supplied by the renderer when point clouds are loaded — returns the
@@ -26,6 +27,13 @@ import { computeDrawingBufferSize } from './renderer-viewport.js';
 export type PointPickProvider = () =>
   | { nodes: ReadonlyArray<PointPickNode>; sizing: PointPickSizing }
   | null;
+
+interface PickViewport {
+    width: number;
+    height: number;
+    scaleX: number;
+    scaleY: number;
+}
 
 export class PickingManager {
     private camera: Camera;
@@ -56,11 +64,19 @@ export class PickingManager {
      * (4x the bytes at DPR 2), and splat pick sizes stay in the draw's space.
      * Clamped to 8192, the WebGPU-guaranteed `maxTextureDimension2D`.
      */
-    private pickViewport(): { width: number; height: number; scaleX: number; scaleY: number } | null {
+    private pickViewport(): PickViewport | null {
         const rect = this.canvas.getBoundingClientRect();
         const size = computeDrawingBufferSize(rect.width, rect.height, 1, 8192);
         if (!size) return null;
         return { width: size.width, height: size.height, scaleX: size.width / rect.width, scaleY: size.height / rect.height };
+    }
+
+    /** A queued readback belongs to its original CSS-to-texel mapping (#6882). */
+    private isPickViewportCurrent(viewport: PickViewport): boolean {
+        const current = this.pickViewport();
+        return current !== null
+            && current.width === viewport.width && current.height === viewport.height
+            && current.scaleX === viewport.scaleX && current.scaleY === viewport.scaleY;
     }
 
     /** Renderer wires this on init so the manager can fetch point nodes lazily. */
@@ -97,56 +113,8 @@ export class PickingManager {
 
         if (this.scene.isGeometryDataReleased()) return 'cpu';
 
-        // Collect every pickable expressId. We use the scene's authoritative
-        // mesh-data id set rather than each batch's `expressIds`, because a batch
-        // only records the PRIMARY expressId of each merged piece. When a door or
-        // window is colour-fused into a batch keyed by its host wall / opening,
-        // the filler's id lives only in the per-vertex entityIds (registered in
-        // meshDataMap by Scene.addMeshData). Reading batch.expressIds alone would
-        // skip the filler, so under isolation its mesh is never hydrated and
-        // pick() returns null (#1358).
-        const expressIds = new Set<number>(this.scene.getAllMeshDataExpressIds());
-
-        // Track how many individual mesh pieces already exist for each (expressId:modelIndex).
-        // Multi-piece elements (windows/doors with submeshes) need all pieces for reliable picking.
-        const existingPieceCounts = new Map<string, number>();
-        for (const mesh of this.scene.getMeshes()) {
-            const key = `${mesh.expressId}:${mesh.modelIndex ?? 'any'}`;
-            existingPieceCounts.set(key, (existingPieceCounts.get(key) ?? 0) + 1);
-        }
-
-        // Build required piece counts from MeshData for all visible entities.
-        const requiredPieceCounts = new Map<string, number>();
-        const visibleExpressIds: number[] = [];
-        for (const expressId of expressIds) {
-            if (!isEntityVisible(expressId, options?.hiddenIds, options?.isolatedIds)) continue;
-            visibleExpressIds.push(expressId);
-
-            const pieces = this.scene.getMeshDataPieces(expressId);
-            if (!pieces) continue;
-            for (const piece of pieces) {
-                const key = `${piece.expressId}:${piece.modelIndex ?? 'any'}`;
-                requiredPieceCounts.set(key, (requiredPieceCounts.get(key) ?? 0) + 1);
-            }
-        }
-
-        // Count how many meshes we'd need to create for full GPU picking
-        // For multi-model and multi-piece elements, count missing piece instances per key.
-        let toCreate = 0;
-        for (const [key, requiredCount] of requiredPieceCounts) {
-            const existingCount = existingPieceCounts.get(key) ?? 0;
-            if (requiredCount > existingCount) {
-                toCreate += requiredCount - existingCount;
-            }
-        }
-
-        // PERFORMANCE: fall back to CPU for large models instead of creating GPU meshes.
-        // GPU picking requires individual mesh buffers; for 60K+ elements this is too slow.
-        // The CPU paths use bounding boxes - no GPU buffers needed.
-        const MAX_PICK_MESH_CREATION = 500;
-        if (toCreate > MAX_PICK_MESH_CREATION || (visibleExpressIds.length > 0 && requiredPieceCounts.size === 0)) {
-            return 'cpu';
-        }
+        const { overBudget, visibleExpressIds, existingPieceCounts } = planPickMeshHydration(this.scene, options);
+        if (overBudget) return 'cpu';
 
         // For smaller models, create GPU meshes for picking
         // Only create meshes for VISIBLE elements (not hidden, and either no isolation or in isolated set)
@@ -165,7 +133,7 @@ export class PickingManager {
             const pieces = this.scene.getMeshDataPieces(expressId);
             if (pieces) {
                 for (const piece of pieces) {
-                    const meshKey = `${piece.expressId}:${piece.modelIndex ?? 'any'}`;
+                    const meshKey = pickPieceKey(piece);
                     const ordinal = seenOrdinalsByKey.get(meshKey) ?? 0;
                     seenOrdinalsByKey.set(meshKey, ordinal + 1);
                     const baselineExisting = baselineExistingCounts.get(meshKey) ?? 0;
@@ -262,6 +230,7 @@ export class PickingManager {
             clip,
             pointRteSnapshot,
         );
+        if (!this.isPickViewportCurrent(viewport)) return null;
         if (pointRteSnapshot
             && !isPointRteSnapshotCurrent(this.camera, pointRteSnapshot)) {
             return null;
@@ -365,9 +334,10 @@ export class PickingManager {
                 // device-loss abort. The box hits are already computed and this
                 // branch could not throw at all before the point pass was added,
                 // so degrade to them instead of failing the whole rectangle select.
-                console.warn('[PickingManager] point-cloud rect pick failed; returning bounding-box hits only:', err);
-                return boxHits;
+                console.warn('[PickingManager] point-cloud rect pick failed; returning current-viewport bounding-box hits only:', err);
+                return this.isPickViewportCurrent(viewport) ? boxHits : new Set();
             }
+            if (!this.isPickViewportCurrent(viewport)) return new Set();
             if (pointRteSnapshot && !isPointRteSnapshotCurrent(this.camera, pointRteSnapshot)) {
                 return boxHits;
             }
@@ -391,7 +361,8 @@ export class PickingManager {
             clip,
             pointRteSnapshot,
         );
-        return pointRteSnapshot && !isPointRteSnapshotCurrent(this.camera, pointRteSnapshot)
+        return !this.isPickViewportCurrent(viewport)
+            || (pointRteSnapshot && !isPointRteSnapshotCurrent(this.camera, pointRteSnapshot))
             ? new Set()
             : hits;
     }

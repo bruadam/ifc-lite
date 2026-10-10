@@ -19,18 +19,14 @@ import { extractPropertiesOnDemand } from '../src/columnar-parser.js';
 import { contiguousSourceBytes, type IfcSourceBytes } from '../src/source-bytes.js';
 
 /**
- * Resolve a fixture from the external ara3d worktree. Tests skip cleanly
- * when the fixture is unavailable so fresh clones don't break.
+ * Resolve a fixture from the repo's own `tests/models/ara3d` (`pnpm fixtures`).
+ * Tests skip cleanly when the fixture is unavailable so fresh clones don't
+ * break. No machine-specific path: a fixture only one developer's disk has
+ * would make the suite pass or skip depending on whose machine runs it.
  */
 function fixture(name: string): string | null {
-  const candidates = [
-    resolve('/Users/louistrue/Development/ifc-lite-fixtures-wt/tests/models/ara3d', name),
-    resolve(__dirname, '..', '..', '..', 'tests', 'models', 'ara3d', name),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
+  const candidate = resolve(__dirname, '..', '..', '..', 'tests', 'models', 'ara3d', name);
+  return existsSync(candidate) ? candidate : null;
 }
 
 function readFixture(name: string): ArrayBuffer | null {
@@ -407,4 +403,28 @@ it('worker hydration resolves spatial nodes and live authored space membership (
   hydrated.elementToContainer!.delete(5);
   expect(hydrated.getPath(5)).toEqual([]);
   expect(hydrated.getContainingSpace(5)).toBeNull();
+});
+
+// #6499: a source-less reconstructed store must retain its pre-extracted fact
+// across a second worker handoff, rather than reverting to a STEP-byte scan.
+describe('pre-extracted georeferencing transport (#6499)', () => {
+  it('preserves rotated CRS metadata and explicit absence through repeated structured-clone handoffs', async () => {
+    const sample = resolve(__dirname, '../../../apps/viewer/public/samples/building-architecture.ifc');
+    const bytes = readFileSync(sample);
+    const store = await new IfcParser().parseColumnar(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    const { extractGeoreferencingOnDemand } = await import('../src/on-demand-georeferencing.js');
+    const expected = extractGeoreferencingOnDemand(store);
+    expect(expected?.projectedCRS?.name).toBe('EPSG:32760');
+    store.georeferencing = expected;
+    let payload = structuredClone(toTransport(store).payload);
+    // No resource bytes are required when the immutable fact was transmitted.
+    const empty = contiguousSourceBytes(new Uint8Array());
+    const restored = fromTransport(payload, empty);
+    expect(extractGeoreferencingOnDemand(restored)).toEqual(expected);
+    expect(restored.lengthUnitScale).toBe(0.001);
+    payload = structuredClone(toTransport(restored).payload);
+    expect(extractGeoreferencingOnDemand(fromTransport(payload, empty))).toEqual(expected);
+    restored.georeferencing = null;
+    expect(extractGeoreferencingOnDemand(fromTransport(structuredClone(toTransport(restored).payload), store.source))).toBeNull();
+  });
 });

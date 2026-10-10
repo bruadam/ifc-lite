@@ -23,11 +23,12 @@
  */
 
 import '@/test/setup-dom.js';
+import 'fake-indexeddb/auto';
 // `__APP_VERSION__` is a vite `define` (see vite.config.ts) baked in at build
 // time; under plain Node it doesn't exist, so StatusBar's footer version
 // string needs a stand-in before it renders.
 (globalThis as unknown as { __APP_VERSION__: string }).__APP_VERSION__ = '0.0.0-test';
-import { describe, it, beforeEach, after } from 'node:test';
+import { describe, it, beforeEach, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -167,6 +168,7 @@ beforeEach(async () => {
     selectedStoreys: new Set<number>(),
     mutationViews: new Map(),
     mutationVersion: 0,
+    geometryStreamingActive: false,
   });
 });
 
@@ -244,6 +246,45 @@ describe('StatusBar — "N elements" counts physical elements that have a shape 
     assert.equal(elementsText(container), '1 / 3 element');
   });
 
+  it('counts a newly contained wall in the selected storey (#5249)', () => {
+    const view = new MutablePropertyView(store.properties, '__legacy__');
+    view.setExpressIdWatermark(100);
+    const created = view.createEntity('IfcWall', [guid(101), null, 'New wall', null, null, null, null, null]);
+    view.createEntity('IfcRelContainedInSpatialStructure', [
+      guid(102), null, null, null, [`#${created.expressId}`], `#${STOREY_ID}`,
+    ]);
+    useViewerStore.setState({
+      mutationViews: new Map([['__legacy__', view]]),
+      geometryResult: geometry([...MESHED_IDS, created.expressId]),
+      selectedStoreys: new Set([STOREY_ID]),
+    });
+    const container = render();
+    assert.equal(elementsText(container), '4 / 5 elements');
+  });
+
+  it('drops source members when their containment relationship moves to a building (#5249)', () => {
+    const view = new MutablePropertyView(store.properties, '__legacy__');
+    view.setAttribute(80, 'RelatingStructure', '#3');
+    useViewerStore.setState({
+      mutationViews: new Map([['__legacy__', view]]),
+      selectedStoreys: new Set([STOREY_ID]),
+    });
+    const container = render();
+    assert.equal(elementsText(container), '0 / 4 elements');
+  });
+
+  it('counts the children of a source building retyped into a storey (#5249 review)', () => {
+    const view = new MutablePropertyView(store.properties, '__legacy__');
+    view.setEntityType(3, 'IfcBuildingStorey');
+    useViewerStore.setState({
+      mutationViews: new Map([['__legacy__', view]]),
+      geometryResult: geometry([...MESHED_IDS, 57]),
+      selectedStoreys: new Set([3]),
+    });
+    const container = render();
+    assert.equal(elementsText(container), '1 / 5 element');
+  });
+
   it('falls back to the schema test alone before any mesh has arrived', () => {
     // Mid-stream: no geometry yet. Applying the shape test here would report a
     // model that plainly has objects as empty.
@@ -286,3 +327,69 @@ function setMeshedIds(expressIds: readonly number[]): void {
     geometryResult: geometry(expressIds),
   });
 }
+
+// #6411: while geometry streams, each publish carries more meshes and the
+// count walks every one of them, twice a second on a large load. The count
+// follows the streaming refresh cadence instead and is exact once streaming
+// ends.
+describe('StatusBar — object count while geometry streams (#6411)', () => {
+  it('holds the count between refreshes and lands the exact count when streaming ends', () => {
+    let clock = 0;
+    mock.method(performance, 'now', () => clock);
+    try {
+      useViewerStore.setState({
+        geometryStreamingActive: true,
+        geometryResult: geometry(MESHED_IDS.filter((id) => id !== 56)),
+      });
+      const container = render();
+      assert.equal(elementsText(container), '2 elements');
+
+      clock = 1;
+      act(() => useViewerStore.setState({ geometryResult: geometry(MESHED_IDS) }));
+      assert.equal(elementsText(container), '2 elements', 'a publish within the refresh window is held');
+
+      act(() => useViewerStore.setState({ geometryStreamingActive: false }));
+      assert.equal(elementsText(container), '4 elements', 'streaming ended: the exact count');
+    } finally {
+      mock.restoreAll();
+    }
+  });
+
+  it('passes a non-geometry change through at once, even while streaming', async () => {
+    let clock = 0;
+    mock.method(performance, 'now', () => clock);
+    try {
+      useViewerStore.setState({
+        geometryStreamingActive: true,
+        geometryResult: geometry(MESHED_IDS.filter((id) => id !== 56)),
+      });
+      const container = render();
+      assert.equal(elementsText(container), '2 elements');
+      // Metadata arriving is a new data store, not progress: it must not wait
+      // for the geometry refresh even though geometry changed with it.
+      const reparsed = await parseFixture();
+      clock = 1;
+      act(() => useViewerStore.setState({ ifcDataStore: reparsed, geometryResult: geometry(MESHED_IDS) }));
+      assert.equal(elementsText(container), '4 elements');
+    } finally {
+      mock.restoreAll();
+    }
+  });
+
+  it('refreshes a long stream once the refresh is due', () => {
+    let clock = 0;
+    mock.method(performance, 'now', () => clock);
+    try {
+      useViewerStore.setState({
+        geometryStreamingActive: true,
+        geometryResult: geometry(MESHED_IDS.filter((id) => id !== 56)),
+      });
+      const container = render();
+      clock = 60_000;
+      act(() => useViewerStore.setState({ geometryResult: geometry(MESHED_IDS) }));
+      assert.equal(elementsText(container), '4 elements');
+    } finally {
+      mock.restoreAll();
+    }
+  });
+});

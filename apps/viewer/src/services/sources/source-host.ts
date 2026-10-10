@@ -61,6 +61,13 @@ function errorMessage(error: unknown): string {
 }
 
 export class SourceHost {
+  private readonly sessionProviders = new Set<string>();
+  registerSession(provider: FileSourceProvider): boolean {
+    if (!this.register(provider)) return false;
+    this.sessionProviders.add(provider.manifest.name);
+    return true;
+  }
+
   private readonly providers = new Map<string, FileSourceProvider>();
   private readonly failures: ProviderRegistrationFailure[] = [];
   private readonly options: SourceHostOptions;
@@ -151,6 +158,7 @@ export class SourceHost {
 
   unregister(name: string): void {
     this.providers.delete(name);
+    this.sessionProviders.delete(name);
   }
 
   get(name: string): FileSourceProvider | undefined {
@@ -158,7 +166,7 @@ export class SourceHost {
   }
 
   list(): FileSourceProvider[] {
-    return [...this.providers.values()];
+    return [...this.providers.values()].filter(p => !this.sessionProviders.has(p.manifest.name));
   }
 
   /** Providers that failed to register, in registration order. Render these in the sources panel so a stale/misconfigured provider is visible instead of silently absent. */

@@ -1,5 +1,81 @@
 # @ifc-lite/mutations
 
+## 3.1.0
+
+### Minor Changes
+
+- [#6541](https://github.com/LTplus-AG/ifc-lite/pull/6541) [`93098dc`](https://github.com/LTplus-AG/ifc-lite/commit/93098dcb7f4125326db5d602977c5b3f9e9083cb) Thanks [@louistrue](https://github.com/louistrue)! - Expose canonical atomic wall joins through SDK, sandbox and MCP. Protect hosted cuts at joined end faces and use shared compound recording to restore complete earlier overlay graphs in one undo.
+  
+  The SDK backend contract now requires `StoreBackendMethods.joinWalls`. Third-party backends must implement this method when upgrading.
+  
+  `joinWallsInStore` now refuses unreadable hosted opening geometry and cuts that would extend beyond either joined end face. These calls previously succeeded, so callers must handle the expanded runtime error contract when upgrading `@ifc-lite/create`.
+
+- [#6539](https://github.com/LTplus-AG/ifc-lite/pull/6539) [`e8ced94`](https://github.com/LTplus-AG/ifc-lite/commit/e8ced940d5cd6c9789f1221c5aeb7cdae883da3b) Thanks [@louistrue](https://github.com/louistrue)! - Expose the current named, positional and type override entity IDs for effective ownership checks. Hosted GlobalId validation indexes immutable source IfcRoot ownership once and checks live overrides and creations without decoding unrelated geometry on each placement.
+
+## 3.0.0
+
+### Major Changes
+
+- [#6180](https://github.com/LTplus-AG/ifc-lite/pull/6180) [`0943da2`](https://github.com/LTplus-AG/ifc-lite/commit/0943da2a068efd24847cdb1282a4c55f766563e4) Thanks [@louistrue](https://github.com/louistrue)! - Remove `BulkQueryEngine` property predicates and their legacy typed-operator adapters. Use `@ifc-lite/rules` `FilterGroup[]` with `evaluateFilterGroupsFederated` to obtain model-scoped Express IDs, then pass those IDs in `BulkQueryEngine` `select.expressIds`. The Bulk engine constructor no longer accepts a PropertyTable fourth argument; shift later arguments left. The viewer Bulk editor now uses the Rules filter builder and evaluator.
+
+### Minor Changes
+
+- [#6003](https://github.com/LTplus-AG/ifc-lite/pull/6003) [`48e64d4`](https://github.com/LTplus-AG/ifc-lite/commit/48e64d44d418c913860c21e457d9053690ebd66c) Thanks [@louistrue](https://github.com/louistrue)! - Bulk "Set Attribute" now writes the attribute ([#5867](https://github.com/LTplus-AG/ifc-lite/issues/5867)).
+  
+  `BulkQueryEngine`'s `SET_ATTRIBUTE` action used to be skipped for every entity, so a run reported success with nothing changed. It now writes through `MutablePropertyView.setAttribute`, the same path the Properties panel uses, and records the overlay value it replaces so the run undoes cleanly.
+  
+  `SET_ATTRIBUTE.attribute` takes the exact EXPRESS attribute name, one of the new `BULK_WRITABLE_ATTRIBUTES` export (`Name`, `Description`, `ObjectType`, `Tag`). The old lower-case spellings (`name`, `description`, `objectType`) never wrote anything and are now refused. An entity whose effective class (a retype wins) does not declare the attribute, for example `ObjectType` on a type object or `Tag` on a storey, fails the run with a per-entity error instead of being skipped silently. `BulkQueryEngine` takes the model's `schemaVersion` as a new optional last constructor argument so that check follows the file's own schema; without it, every bundled schema must declare the attribute. An unwritable attribute name is refused once for the whole run. The Bulk editor offers the same list, `Tag` included, and passes the model's schema.
+
+- [#5997](https://github.com/LTplus-AG/ifc-lite/pull/5997) [`28ae5b0`](https://github.com/LTplus-AG/ifc-lite/commit/28ae5b0bf1ce37fd592651113f3e765caa980291) Thanks [@louistrue](https://github.com/louistrue)! - Ctrl+Z reaches Bulk edits and CSV imports on any loaded model ([#5958](https://github.com/LTplus-AG/ifc-lite/issues/5958)).
+  
+  - The Bulk editor and the CSV importer default to the active model, and a run on another loaded model makes that model active. Undo replays the active model's history, so a run recorded on a different model used to be unreachable from Ctrl+Z and the ribbon Undo (it is reachable again whenever its model is active).
+  - A run is recorded chunk by chunk under one batch id, so it is one undo step unless another edit lands while it yields; that edit then keeps its place in history between the run's parts (one Ctrl+Z each). Previously the run was recorded only at the end, on top of that edit, and undoing the run overwrote it.
+  - A Bulk run cancelled during its last yield no longer reports "Cancelled after N of N".
+  
+  `CsvConnector` (`@ifc-lite/mutations`) no longer loses track of writes when an import throws partway. `import()` and `importAsync()` report every mutation that reached the view in `stats.mutations` and `mutationsCreated`, including the ones applied before a transform or `setProperty` threw, so a host can still undo them. `importAsync()` takes a new `onApplied` option, called after each apply batch with the mutations it wrote (the failing batch's applied part included), so a host can record undo history as the import goes.
+
+- [#6005](https://github.com/LTplus-AG/ifc-lite/pull/6005) [`efc652c`](https://github.com/LTplus-AG/ifc-lite/commit/efc652c475f71b0d884d5c746b3156516618d1e3) Thanks [@louistrue](https://github.com/louistrue)! - Undo and redo now work for creating or deleting a whole property set, and for whole quantity-set creation and quantity or quantity-set deletion ([#5965](https://github.com/LTplus-AG/ifc-lite/issues/5965)). Each whole-set mutation records its set's overlay rows before and after the edit on the new `Mutation.setOverlay` field (typed `SetOverlaySnapshot`), and `MutablePropertyView.restoreSetOverlay` puts either side back exactly. Previously the viewer moved these entries between the undo and redo stacks without touching the view, so an undone set still reached the panel and "Export changes", and an undone deletion stayed deleted.
+
+### Patch Changes
+
+- [#6422](https://github.com/LTplus-AG/ifc-lite/pull/6422) [`84cd157`](https://github.com/LTplus-AG/ifc-lite/commit/84cd157d5afe30572481bd3c2b96a57c92dbbe19) Thanks [@louistrue](https://github.com/louistrue)! - Spatial bulk selections now use live membership when supplied and reject stale or missing hierarchy data instead of applying an unscoped edit. Part of [#5236](https://github.com/LTplus-AG/ifc-lite/issues/5236) and [#5249](https://github.com/LTplus-AG/ifc-lite/issues/5249).
+- Updated dependencies [[`8901816`](https://github.com/LTplus-AG/ifc-lite/commit/8901816fa9171b1af0a9af5036105db0fa72cb24), [`36fcb46`](https://github.com/LTplus-AG/ifc-lite/commit/36fcb4614d66a4d2fc57ae0efdcb7c8edba4d3d1)]:
+  - @ifc-lite/data@6.1.0
+  - @ifc-lite/regex-guard@0.3.0
+
+## 2.8.0
+
+### Minor Changes
+
+- [#5912](https://github.com/LTplus-AG/ifc-lite/pull/5912) [`66f3d7e`](https://github.com/LTplus-AG/ifc-lite/commit/66f3d7eb085e77a27e4a0bae096daa70b43620c9) Thanks [@louistrue](https://github.com/louistrue)! - Bulk edits and CSV imports are now one undo step each ([#5861](https://github.com/LTplus-AG/ifc-lite/issues/5861)).
+  
+  The Bulk property editor and the CSV importer write straight to the model's property overlay, so neither run reached the undo history: Ctrl+Z did nothing, the model was not flagged as having unsaved changes, and cancelling a Bulk run left the chunks it had already applied in place with no way back. Both now record their run as a single undo step (one Ctrl+Z reverts the run, one Ctrl+Y re-applies it) and mark the model as changed. A cancelled Bulk run says how far it got, and undo reverts what it applied.
+  
+  Undo and redo of a batch no longer recurse once per change and commit the stacks in one update, so a 10,000-element batch undoes in milliseconds instead of overflowing the call stack.
+  
+  `ImportStats` (`@ifc-lite/mutations`) gains `mutations`, the list of mutations the import applied, so a host with an undo history can record them.
+
+## 2.7.1
+
+### Patch Changes
+
+- [#5545](https://github.com/LTplus-AG/ifc-lite/pull/5545) [`5c02af8`](https://github.com/LTplus-AG/ifc-lite/commit/5c02af8b7fda4d2fe53f79d3f00b9d192fc664d9) Thanks [@louistrue](https://github.com/louistrue)! - **Behaviour change:** element rules now read list, enumerated and table property values member by member, in search, applicability and validation, and so in everything built on the same filter evaluator (appearance query scopes, clash set filters, chart filters). The `unit` requirement's reported value lists each member with its unit. In validation, `eq` and `ne` choose number or text comparison per member, so one text cell in a table no longer forces every number cell to a text comparison. A positive operator passes when ANY member matches. A negated operator (`ne`, `notContains`, `notMatches`) passes only when NO member has the value.
+  
+  Before, these rules compared the joined display string, so results change for existing list-valued properties. Against the list `Colors = (Red, Blue)`:
+  - `Colors = Blue` used to fail and now passes.
+  - `Colors = "Red, Blue"` used to pass and now fails.
+  - `Colors != Red` used to pass and now fails.
+  
+  Each bound of a range is checked against the members on its own, so on a table `>= 15 AND <= 5` passes when some cell is ≥ 15 and another is ≤ 5. In search, negated operators also stop passing on a single non-matching property set when a regex set name matches several sets. That is the NONE rule validation already applied.
+  
+  The set checks (`unique`, `aggregate`, `compare`) still read each property as one whole value (a list's joined text, a table's `Table (N rows)` summary), so their results do not change.
+  
+  Bounded values and complex properties keep their display value. Lens colouring, the CLI's `--where` and bulk-edit queries are not rules and keep their own matching. Models whose properties come from a server-parsed property table carry no structure marker, so they keep the joined value.
+  
+  `@ifc-lite/parser` marks each extracted property with a `structure` (`enumerated`, `bounded`, `list`, `table`, `reference`, `complex`) when it is not a single value, and exports the `ExtractedProperty` type. `@ifc-lite/data`'s `Property` declares the same field, and `MutablePropertyView` keeps it on base properties. The filter value suggestions offer list members. `propertyCandidates` and `readSubjectWhole` are exported.
+- Updated dependencies [[`ccc491e`](https://github.com/LTplus-AG/ifc-lite/commit/ccc491efac18ce496af47c91b1ef4fc04ebecca5), [`7215c2a`](https://github.com/LTplus-AG/ifc-lite/commit/7215c2a9344ede37c90680e1eb2a6c2b70c0ee3d), [`5c02af8`](https://github.com/LTplus-AG/ifc-lite/commit/5c02af8b7fda4d2fe53f79d3f00b9d192fc664d9)]:
+  - @ifc-lite/data@6.0.0
+
 ## 2.7.0
 
 ### Minor Changes

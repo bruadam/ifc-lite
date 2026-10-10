@@ -7,6 +7,7 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ViewerState } from '../../apps/viewer/src/store';
+import { DEVICE_LOST_SIGNAL, skipForGpuDeviceLoss, type GpuDeviceLossWatch } from './gpu-device-loss';
 
 declare global {
   var __ifc_lite_viewer_store__: { getState(): ViewerState };
@@ -39,9 +40,11 @@ export interface ControlTripletLoad {
   xyz: string;
   timeout: number;
   strictGpu: boolean;
+  /** The page's shared device-loss watch; its console evidence counts as a GPU failure. */
+  deviceLoss?: GpuDeviceLossWatch;
 }
 
-const GPU_FAILURE = /webgpu|gpu(?:device|adapter)?|createbuffer|device.*lost|lost.*device|poperrorscope/i;
+const GPU_FAILURE = new RegExp(`webgpu|gpu(?:device|adapter)?|createbuffer|device.*lost|lost.*device|poperrorscope|${DEVICE_LOST_SIGNAL.source}`, 'i');
 
 function point3(value: unknown, label: string): Point3 {
   if (!Array.isArray(value) || value.length !== 3 || !value.every((component) => typeof component === 'number' && Number.isFinite(component))) {
@@ -156,17 +159,27 @@ export async function loadControlTriplet(
   page: Page, testInfo: TestInfo, files: ControlTripletLoad, pageErrors: readonly string[],
 ): Promise<ModelSnapshot | null> {
   let pageErrorStart = pageErrors.length;
+  let loadFailed = false;
   try {
-    await loadThroughViewer(page, files.ifc, 1, files.timeout);
-    const primary = (await snapshotModels(page)).find((model) => model.name === 'terrain.ifc');
-    expect(primary, 'IFC model registered from the primary load').toBeDefined();
-    await assertSingleModelResolution(page, primary!.id);
-    pageErrorStart = pageErrors.length;
-    await loadThroughViewer(page, files.landxml, 2, files.timeout);
-    pageErrorStart = pageErrors.length;
-    await loadThroughViewer(page, files.xyz, 3, files.timeout);
-    return primary!;
+    const loadAll = async () => {
+      await loadThroughViewer(page, files.ifc, 1, files.timeout);
+      const primary = (await snapshotModels(page)).find((model) => model.name === 'terrain.ifc');
+      expect(primary, 'IFC model registered from the primary load').toBeDefined();
+      await assertSingleModelResolution(page, primary!.id);
+      pageErrorStart = pageErrors.length;
+      await loadThroughViewer(page, files.landxml, 2, files.timeout);
+      pageErrorStart = pageErrors.length;
+      await loadThroughViewer(page, files.xyz, 3, files.timeout);
+      return primary!;
+    };
+    // Only a rejection of loadAll itself reaches the diagnostics below: the skip
+    // raceLoss throws on a device loss must not, because their page.evaluate can
+    // fail on the closing page and turn the skip into a failure.
+    const guardedLoadAll = () => loadAll().catch((error: unknown) => { loadFailed = true; throw error; });
+    // Skip at the first console loss signal rather than after the load wait times out (#7008).
+    return files.deviceLoss ? await files.deviceLoss.raceLoss('the control-triplet load', guardedLoadAll) : await guardedLoadAll();
   } catch (error) {
+    if (!loadFailed) throw error;
     const state = await page.evaluate(() => {
       const current = globalThis.__ifc_lite_viewer_store__.getState();
       return {
@@ -179,12 +192,14 @@ export async function loadControlTriplet(
       pageErrors: pageErrors.slice(pageErrorStart),
       state,
     });
-    if (files.strictGpu || !GPU_FAILURE.test(gpuFailureText)) throw error;
+    const watched = files.strictGpu ? null : await files.deviceLoss?.lost(1_000) ?? null;
+    if (files.strictGpu || (watched === null && !GPU_FAILURE.test(gpuFailureText))) throw error;
     const body = (await page.locator('body').innerText()).slice(0, 2_000);
     await testInfo.attach('software-webgpu-device-loss', {
-      body: JSON.stringify({ failure: String(error), gpuFailureText: JSON.parse(gpuFailureText), body }, null, 2),
+      body: JSON.stringify({ failure: String(error), gpuFailureText: JSON.parse(gpuFailureText), watched, body }, null, 2),
       contentType: 'application/json',
     });
+    skipForGpuDeviceLoss('the control-triplet load', watched ?? String(error).slice(0, 300));
     return null;
   }
 }

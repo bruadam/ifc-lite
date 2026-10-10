@@ -1,5 +1,88 @@
 # @ifc-lite/clash
 
+## 2.4.4
+
+### Patch Changes
+
+- [#6579](https://github.com/LTplus-AG/ifc-lite/pull/6579) [`d92c25d`](https://github.com/LTplus-AG/ifc-lite/commit/d92c25da46cc45ac65028ccb452dc3f1703f5615) Thanks [@louistrue](https://github.com/louistrue)! - Compare large clash runs without exceeding JavaScript's call-argument limit when appending revision buckets. Preserve every occurrence and deterministic ordering while avoiding temporary copies of reloaded bucket ranges.
+- Updated dependencies [[`1051a74`](https://github.com/LTplus-AG/ifc-lite/commit/1051a74edca83eb3e6104562a7a65e0e645ac45b), [`89be760`](https://github.com/LTplus-AG/ifc-lite/commit/89be760d4eb8adba93e9f5660f6e4ceda0c507d5), [`6dace7b`](https://github.com/LTplus-AG/ifc-lite/commit/6dace7b05927505e9a9529674c635a505ce0c887), [`7780cb0`](https://github.com/LTplus-AG/ifc-lite/commit/7780cb05878c574ebd2a9f631ca6757233e845d3), [`dd8e27c`](https://github.com/LTplus-AG/ifc-lite/commit/dd8e27cccbfd27cc6c16f09d66542c1c9bd17075), [`e01487f`](https://github.com/LTplus-AG/ifc-lite/commit/e01487ff2f40fa758b73b3ec9a6abba9f9ff646b), [`526a91b`](https://github.com/LTplus-AG/ifc-lite/commit/526a91bdf33e2be2d6167df95a68db343b5337c0), [`4c0ebf2`](https://github.com/LTplus-AG/ifc-lite/commit/4c0ebf24c8c7b8470602300d56f0b1bd7c2a01e0), [`ec983d3`](https://github.com/LTplus-AG/ifc-lite/commit/ec983d378bfccc2b65fb636a76e321a2c9482aa4)]:
+  - @ifc-lite/geometry@7.7.0
+  - @ifc-lite/wasm@10.3.0
+  - @ifc-lite/parser@9.2.0
+
+## 2.4.3
+
+### Patch Changes
+
+- [#6022](https://github.com/LTplus-AG/ifc-lite/pull/6022) [`46efab7`](https://github.com/LTplus-AG/ifc-lite/commit/46efab72317a6f9603f236f6f4784e1c7bdb6be4) Thanks [@louistrue](https://github.com/louistrue)! - A through-penetration between two boxes no longer reports a depth larger than the distance that actually separates them.
+  
+  When one box pierces clean through another (a duct through a wall, two crossing walls), the engine reports the bounding-box estimate instead of the exact box depth, because the exact depth is inflated by the piercing member's own length. For rotated boxes that estimate is inflated too, and when a member pokes out of the far face by only microns, float32 rounding decides per placement whether the pair counts as a through-penetration. A 26 mm overlap was reported as 0.026 m at one position and 0.786 m at another, depending only on where the model sat.
+  
+  The reported depth of a through-penetration between two boxes is now capped by the exact box depth. That distance is proven to separate the pair, so a larger number over-reports it. In the case above, both sides of the tie now report the same 26 mm, and the result is still labelled an estimate. A thin member through a thick element, where the estimate is smaller than the exact depth, is unchanged. On 11 sample models (about 370 clash records), no reported depth or label changes.
+- Updated dependencies [[`f8303f2`](https://github.com/LTplus-AG/ifc-lite/commit/f8303f2ef22706718b616a20b4c04d22c86d5e4d), [`46efab7`](https://github.com/LTplus-AG/ifc-lite/commit/46efab72317a6f9603f236f6f4784e1c7bdb6be4), [`05a2221`](https://github.com/LTplus-AG/ifc-lite/commit/05a222113355eea2e89d81acab74c62a5e77aa3f), [`cd11f20`](https://github.com/LTplus-AG/ifc-lite/commit/cd11f203e11701ce8a9d0364baa4255b71a2fd0e), [`888a9a7`](https://github.com/LTplus-AG/ifc-lite/commit/888a9a72e1b1f59a0692942b15612a62c87033cb), [`8ac81f7`](https://github.com/LTplus-AG/ifc-lite/commit/8ac81f7346ac346d2b8279b44df72a1679d105f3), [`438f9f8`](https://github.com/LTplus-AG/ifc-lite/commit/438f9f89c86ee8d36fc51aa6affa1c400d0657b4), [`64fc00a`](https://github.com/LTplus-AG/ifc-lite/commit/64fc00a700124a9a2ee73a778110704fe49ca36a), [`c1bff6c`](https://github.com/LTplus-AG/ifc-lite/commit/c1bff6c774cc6fbc51d0600d337ad516f3e60a21), [`443e013`](https://github.com/LTplus-AG/ifc-lite/commit/443e013ac6c1b5664a43c9b5df2e5600219c706b), [`d3d2d6f`](https://github.com/LTplus-AG/ifc-lite/commit/d3d2d6fd64ef66ffb6dc4f117c188661ecfa05a5), [`c2b72b7`](https://github.com/LTplus-AG/ifc-lite/commit/c2b72b78ac6da3830267eec5f32cc6baf22055d8), [`1edec99`](https://github.com/LTplus-AG/ifc-lite/commit/1edec99fb723acf61863cb6cf30d480dcb69786f), [`509a65e`](https://github.com/LTplus-AG/ifc-lite/commit/509a65e267ea45a4f5e8285a1e34b9b54fa70dbb), [`9bd4d3c`](https://github.com/LTplus-AG/ifc-lite/commit/9bd4d3c88336de33eb20d3d405989c1f2d8297cf), [`d0d79ed`](https://github.com/LTplus-AG/ifc-lite/commit/d0d79ed15415c7391640ad0660ad17f8d5ebbb5b), [`17bbdf2`](https://github.com/LTplus-AG/ifc-lite/commit/17bbdf29a624072119c22cc1a50538f9edef5ad5), [`88b454a`](https://github.com/LTplus-AG/ifc-lite/commit/88b454a10da0f27b90799cbc1469fccf9d70a2c7), [`05a2221`](https://github.com/LTplus-AG/ifc-lite/commit/05a222113355eea2e89d81acab74c62a5e77aa3f), [`72b6b77`](https://github.com/LTplus-AG/ifc-lite/commit/72b6b77e3ef810c5ea9d22b9e9df178e749094c3), [`3f38367`](https://github.com/LTplus-AG/ifc-lite/commit/3f383676a094ad28724b4fd789e240740a865d64), [`1eb821b`](https://github.com/LTplus-AG/ifc-lite/commit/1eb821b9e6223fdf0243d3ad3dd7e0ca14e84e13), [`0476281`](https://github.com/LTplus-AG/ifc-lite/commit/0476281b0476ec65564e65b6fc7cfe729a3982bb), [`773a54f`](https://github.com/LTplus-AG/ifc-lite/commit/773a54ff450d872bc6cd49ec7e0a1108b965cf96), [`da22190`](https://github.com/LTplus-AG/ifc-lite/commit/da22190245789a7e3240b8dbb6de5717415ac448), [`eb09636`](https://github.com/LTplus-AG/ifc-lite/commit/eb096369e13edcbb933c989ab87372d5062e975b), [`9828849`](https://github.com/LTplus-AG/ifc-lite/commit/9828849515862f0649f31a6433a5870e77249709), [`59b0668`](https://github.com/LTplus-AG/ifc-lite/commit/59b06685f2a0604c0ff305b63d831a81ecaff199), [`10b3a44`](https://github.com/LTplus-AG/ifc-lite/commit/10b3a44ea325740562be7cafab14e28beebd3180), [`673cb3f`](https://github.com/LTplus-AG/ifc-lite/commit/673cb3f38c1eea117c2176565b6937538c3dfaa5), [`0ae5784`](https://github.com/LTplus-AG/ifc-lite/commit/0ae5784d8251134aab778e9c86e787f2f77286cd)]:
+  - @ifc-lite/parser@9.1.0
+  - @ifc-lite/wasm@10.2.0
+  - @ifc-lite/geometry@7.6.0
+  - @ifc-lite/ifcx@4.3.0
+  - @ifc-lite/query@2.5.2
+  - @ifc-lite/encoding@2.3.0
+
+## 2.4.2
+
+### Patch Changes
+
+- Updated dependencies [[`f64353f`](https://github.com/LTplus-AG/ifc-lite/commit/f64353f10fb643a664a9f3f485ef009b1d2622f8), [`f30de14`](https://github.com/LTplus-AG/ifc-lite/commit/f30de14f957df133a3b6be8aa61fea934d76956a), [`3396e12`](https://github.com/LTplus-AG/ifc-lite/commit/3396e1241d8111c530b546659d006a35b6a5aed6)]:
+  - @ifc-lite/bcf@5.0.0
+  - @ifc-lite/wasm@10.1.2
+
+## 2.4.1
+
+### Patch Changes
+
+- [#5724](https://github.com/LTplus-AG/ifc-lite/pull/5724) [`bf32c6a`](https://github.com/LTplus-AG/ifc-lite/commit/bf32c6a128d9ce1c8d9d2a0efcfe7f8754c3d01c) Thanks [@louistrue](https://github.com/louistrue)! - Clash depths between rotated boxes no longer drift with the model's distance from the origin.
+  
+  Box recognition, which lets the engine report an exact box-to-box penetration depth labelled as measured, rebuilt each box's centre from absolute world coordinates along axes taken from a single triangle each. Any error in those axes was multiplied by the element's distance from the origin. A 20 mm overlap between a 50 mm curtain-wall panel and a mullion, both rotated, read 23 mm (30 mm for a three-axis rotation) 123 m from the origin. From 1 km out it fell back to the AABB estimate (0.25 m / 1.38 m), and 10 km out the panel was not recognised as a box at all.
+  
+  Recognition now measures from a point on the element instead of the world origin. It takes each axis from the area-weighted normals of all the faces in that direction, makes the frame exactly orthonormal starting from the most precise faces, and sizes its tolerances from the float32 noise of the coordinates, capped at 0.1 rad so noise alone never certifies a non-box. The same 20 mm overlap now reads 20.0 mm and is certified at every placement up to 10 km, where the remaining 0.4 mm is the float32 resolution of the input itself. The TypeScript and Rust/WASM kernels change identically.
+  
+  On eight sample models the results at their own placement are unchanged.
+
+- [#5764](https://github.com/LTplus-AG/ifc-lite/pull/5764) [`d376d2c`](https://github.com/LTplus-AG/ifc-lite/commit/d376d2c02ff35ea25efca5983626fa0b8073bc90) Thanks [@louistrue](https://github.com/louistrue)! - Flush contacts are no longer reported as hard clashes at an element dimension depending on where the model sits.
+  
+  When two elements' bounding boxes overlap but no triangles cross, the engine decides between a hard clash and a face touch by checking whether a probe point lies inside both solids. For elements that meet flush, the probe (the centre of the bounding-box overlap) lies on the shared face, where the inside/outside test is decided by float32 rounding. When it came out "inside", the pair was reported as a hard clash at the bounding-box overlap, e.g. 0.5 m for two footings or 0.3 m for two walls. Moving the whole model changed which pairs that happened to.
+  
+  A probe now counts only when it is farther from each surface than the pair's own depth floor along the probe's direction, the same floor that decides hard vs touch. The enclosed-solid check uses the same rule, so there is one definition of "clearly inside". On the sample models this turns 87 such pairs (12 on one model, 75 on another) from hard clashes into touches. In every one, no vertex of either element lies deeper inside the other than that floor. No new hard clashes appear, and the verdicts that change when a model is moved 10 km drop on every affected model (from 145 to 75 on the largest; to 0 on another).
+
+- [#5721](https://github.com/LTplus-AG/ifc-lite/pull/5721) [`f947f8e`](https://github.com/LTplus-AG/ifc-lite/commit/f947f8e92e23535fe4e6ba21c2ebd2a854540ce5) Thanks [@louistrue](https://github.com/louistrue)! - Fix a genuine interpenetration being reported as a zero-depth touch when the two elements also share a coplanar face and sit off the world axes. A curtain-wall panel and a mullion authored to the same height overlap laterally by 20 mm while their tops and bottoms are flush; rotated off-axis, the pair read as `touch` at distance 0, and with touch reporting off the clash vanished from the report entirely. Tolerance made no difference, and every overlap from 0.5 mm to 20 mm behaved the same way.
+  
+  The cause was the scope of one of the three candidates the noise-floor gate tests. `crossingVertexPenetration` is a sampling probe, not a depth metric — its own documentation says so, and it underestimates by an amount that depends on tessellation. It exists to stop a *fabricated AABB estimate* promoting a flush contained pair to `hard`. But it was consulted even when the pair had a certified exact box depth, and there a mullion corner lying on a face the two boxes share bakes, through f32, a noise-width inside once the pair is rotated. The probe reported that as a sub-floor penetration and vetoed a depth the box MTD had already measured correctly.
+  
+  Mesh evidence now guards the estimate and only the estimate. Two boxes that are genuinely flush still report `touch` through the box-MTD term instead, so the flush case is unchanged.
+- Updated dependencies [[`7fae2b8`](https://github.com/LTplus-AG/ifc-lite/commit/7fae2b8b2d6264a90af3235d95e0a4f6c257b9d7), [`bf32c6a`](https://github.com/LTplus-AG/ifc-lite/commit/bf32c6a128d9ce1c8d9d2a0efcfe7f8754c3d01c), [`d376d2c`](https://github.com/LTplus-AG/ifc-lite/commit/d376d2c02ff35ea25efca5983626fa0b8073bc90), [`975c430`](https://github.com/LTplus-AG/ifc-lite/commit/975c43086065cc7eaaf841d18f6f5ecbe626f0bd), [`b218ab4`](https://github.com/LTplus-AG/ifc-lite/commit/b218ab440fc09011c6bb1d39524525120e119cb1), [`7215c2a`](https://github.com/LTplus-AG/ifc-lite/commit/7215c2a9344ede37c90680e1eb2a6c2b70c0ee3d), [`e6ebbef`](https://github.com/LTplus-AG/ifc-lite/commit/e6ebbefde52670adbdb0c35bc19baed0453ca42f), [`5c02af8`](https://github.com/LTplus-AG/ifc-lite/commit/5c02af8b7fda4d2fe53f79d3f00b9d192fc664d9), [`6bf4181`](https://github.com/LTplus-AG/ifc-lite/commit/6bf418103e872f13666037ae4868e03468e3840c), [`d2cfb9e`](https://github.com/LTplus-AG/ifc-lite/commit/d2cfb9e66affc2674d6de5da44ecdc5d8a76b59e), [`477c1d5`](https://github.com/LTplus-AG/ifc-lite/commit/477c1d5ef5bb5057ff12f9d074270ec2359b39e1), [`db7f991`](https://github.com/LTplus-AG/ifc-lite/commit/db7f991eb63998c65389a28e7331ac984a5448ad)]:
+  - @ifc-lite/bcf@4.2.1
+  - @ifc-lite/wasm@10.1.1
+  - @ifc-lite/parser@9.0.0
+  - @ifc-lite/geometry@7.5.2
+  - @ifc-lite/ifcx@4.2.1
+  - @ifc-lite/query@2.5.1
+
+## 2.4.0
+
+### Minor Changes
+
+- [#5691](https://github.com/LTplus-AG/ifc-lite/pull/5691) [`e682e6d`](https://github.com/LTplus-AG/ifc-lite/commit/e682e6da5f939aeca5940a65dd1cd338955e9c0f) Thanks [@louistrue](https://github.com/louistrue)! - Whether a reported clash counts as "touching" no longer depends on where the model sits in world space.
+  
+  `isTouching` (used by the viewer's "hide touching" filter) treats a `hard` clash as a contact when its depth is within a band. That band came from the largest absolute coordinate of the clash's bounds over all three axes, times 2^-22, so a model 10 km out along X gave a vertical contact about 2.4 mm of slack from the X coordinate alone. A genuine 1 mm overlap was listed as a clash at the origin and hidden as "touching" 10 km away.
+  
+  Every `hard` clash now carries `depthFloor`: the float32 noise floor of its own depth along the direction that depth was measured, which is the same floor the engine classified it against (defined once in the shared clash-math source, identical in the TypeScript and Rust/WASM kernels). `isTouching` uses `max(TOUCHING_EPSILON, depthFloor)` as its default band, so reporting and classification follow one rule. An explicit `eps` still overrides it.
+  
+  `Clash.depthFloor` is a new optional field, set on every `hard` clash and absent on every other status. A clash without it — recorded before this release, rehydrated from BCF or JSON without it, or built by hand — keeps the previous band unchanged. The WASM `ClashRunResult` gains a `depthFloor` getter (NaN for non-hard records), and the Rust `ClashSession` gains `run_rule_with_depth_floors`; `run_rule` and `ClashRecord` are unchanged.
+
+### Patch Changes
+
+- Updated dependencies [[`e682e6d`](https://github.com/LTplus-AG/ifc-lite/commit/e682e6da5f939aeca5940a65dd1cd338955e9c0f), [`5cfc6ff`](https://github.com/LTplus-AG/ifc-lite/commit/5cfc6ffd905db7fb512bddf1ddfa392c2156bd09)]:
+  - @ifc-lite/wasm@10.1.0
+
 ## 2.3.3
 
 ### Patch Changes

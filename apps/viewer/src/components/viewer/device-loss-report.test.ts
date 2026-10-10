@@ -413,6 +413,20 @@ describe('subscribeViewportHealth wires every way the view can stop', () => {
     assert.equal(captures.length, 2, 'each recovered device starts a new reportable loss episode');
   });
 
+  it('notifies overlay owners only after successful GPU recovery (#5778)', async () => {
+    const h = makeSource();
+    let restored = 0;
+    h.source.recoverDevice = async () => ({ ok: true, omissions: ['line-overlays'] });
+    const unsubscribe = subscribeViewportHealth(h.source, undefined, () => { restored++; });
+    try {
+      h.listeners.deviceLost[0]({ message: SAFARI_LOST, reason: 'unknown' });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      assert.equal(restored, 1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('cancels an active point-cloud ingest before starting recovery', async () => {
     const h = makeSource();
     const order: string[] = [];
@@ -432,6 +446,24 @@ describe('subscribeViewportHealth wires every way the view can stop', () => {
     } finally {
       unsubscribe();
       useViewerStore.getState().setActiveStreamCanceller(null);
+    }
+  });
+
+  it('leaves a primary model load running: recovery re-uploads it, it is not cancelled (#5849)', async () => {
+    const h = makeSource();
+    let cancelled = 0;
+    const cancelModelLoad = () => { cancelled += 1; };
+    useViewerStore.setState({ activeLoadCanceller: cancelModelLoad });
+    h.source.recoverDevice = async () => ({ ok: true, omissions: [] });
+    const unsubscribe = subscribeViewportHealth(h.source);
+    try {
+      h.listeners.deviceLost[0]({ message: SAFARI_LOST, reason: 'unknown' });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      assert.equal(cancelled, 0, 'a device loss must not cancel the model load');
+      assert.strictEqual(useViewerStore.getState().activeLoadCanceller, cancelModelLoad);
+    } finally {
+      unsubscribe();
+      useViewerStore.setState({ activeLoadCanceller: null });
     }
   });
 

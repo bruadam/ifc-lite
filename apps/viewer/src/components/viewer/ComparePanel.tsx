@@ -9,30 +9,33 @@
  * `useCompareOverlay`) and listed here. Row click selects + frames the element.
  */
 
-import { useEffect, useMemo } from 'react';
-import { GitCompareArrows, X, Trash2, ChevronLeft } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { tourAnchor, TOUR_ANCHORS } from '@/lib/tours/anchors';
+import { lazy, Suspense, useEffect, useMemo } from 'react';
+import { GitCompareArrows, ChevronLeft } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useViewerStore } from '@/store';
 import { useCompare } from '@/hooks/useCompare';
 import { useCompareOverlay } from '@/hooks/useCompareOverlay';
-import { COMPARE_COLORS } from '@/lib/compare/overlay';
 import type { CompareRef } from '@/lib/compare/buildFingerprints';
 import { modelsAsCompared } from '@/lib/compare/comparedModels';
 import { describeChange, type ChangeDetail } from '@/lib/compare/describeChange';
 import { ChangeDetailView } from './compare/ChangeDetailView';
 import { BcfFromChange } from './compare/BcfFromChange';
 import { useBcfFromChange } from './compare/useBcfFromChange';
-import { CompareResultsList, CountBadge, LISTED_STATES, type CompareBucket } from './compare/CompareResultsList';
+import { CompareResultsList, LISTED_STATES, type CompareBucket } from './compare/CompareResultsList';
+import { CompareResultView } from './compare/CompareResultView';
+import { CompareSetupControls } from './compare/CompareSetupControls';
 import { CompareRunControls } from './compare/CompareRunControls';
+import { SavedComparisonLibrary } from './compare/SavedComparisonLibrary';
 import { CompareExportBar } from './compare/CompareExportBar';
+const CompareAnalysisSections = lazy(() => import('./compare/CompareAnalysisSections').then(module => ({ default: module.CompareAnalysisSections })));
+import { AnalysisPanel, AnalysisStaleRegion } from './analysis/AnalysisPanel';
+import { AnalysisEmptyState } from './analysis/AnalysisEmptyState';
+import { loadDemoRevisions } from '@/lib/tours/demo-kit';
 import { useCompareSuggestions } from './compare/useCompareSuggestions';
 import { focusRefs } from './compare/focusRefs';
-import { changedTypeCounts, contentMatchRows, hasReportableChanges, MAX_ROWS_PER_GROUP, type CompareMatchRow, type CompareRow } from './compare/changeRow';
+import { changedTypeCounts, contentMatchRows, hasReportableChanges, type CompareMatchRow, type CompareRow } from './compare/changeRow';
 import { contentMatchCounts, contentMatchingRan } from '@/lib/compare/contentMatches';
-import { productTypeSplit, typeObjectHint } from '@/lib/compare/productTypeCounts';
+import { productTypeSplit } from '@/lib/compare/productTypeCounts';
 import { duplicateAuthoredKeyInfo } from '@/lib/compare/authoredKeys';
 import type { DiffState, DiffEntry } from '@ifc-lite/diff';
 
@@ -57,10 +60,6 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
   const matchByContent = useViewerStore((s) => s.compareMatchByContent);
   const keyProperty = useViewerStore((s) => s.compareKeyProperty);
   const excludedTypes = useViewerStore((s) => s.compareExcludedTypes);
-  // #5312 (#5214 finding 2, warn half): dirtyModels already tracks unsaved
-  // viewer edits (ExportDialog.tsx already consumes it) — Compare's data
-  // channel does not, so warn rather than silently comparing stale data.
-  const dirtyModels = useViewerStore((s) => s.dirtyModels);
   const selectedKey = useViewerStore((s) => s.compareSelectedKey);
   const setBaseModelId = useViewerStore((s) => s.setCompareBaseModelId);
   const setHeadModelId = useViewerStore((s) => s.setCompareHeadModelId);
@@ -77,7 +76,7 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
   // in-flight `runComparison()` only learns "the user cleared" by watching
   // THIS wrapper get called, so every clear in this panel must go through it
   // or a stale result can resurrect itself once the run resolves.
-  const { running, result, error, runComparison, clearCompare } = useCompare();
+  const { running, result, error, runComparison, cancelComparison, clearCompare } = useCompare();
   // Row names and change details read the stores the diff was computed from (#5312).
   const models = useMemo(() => modelsAsCompared(liveModels, result?.comparedStores), [liveModels, result]);
 
@@ -115,17 +114,13 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
     const empty = new Map<DiffState, CompareBucket>();
     if (!result) return empty;
     const out = new Map<DiffState, CompareBucket>();
-    for (const { state } of LISTED_STATES) out.set(state, { rows: [], truncated: 0 });
+    for (const { state } of LISTED_STATES) out.set(state, { rows: [] });
 
     for (const entry of result.diff.entries) {
       const bucket = out.get(entry.state);
       if (!bucket) continue; // skip unchanged
       const ref = renderRef(entry);
       if (!ref) continue;
-      if (bucket.rows.length >= MAX_ROWS_PER_GROUP) {
-        bucket.truncated++;
-        continue;
-      }
       const store = models.get(ref.modelId)?.ifcDataStore;
       const name = store?.entities.getName(ref.localId) || '';
       const ifcType = (entry.head ?? entry.base)?.ifcType ?? 'IfcProduct';
@@ -154,13 +149,6 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
 
   const counts = result?.diff.counts;
   const canRun = !!baseModelId && !!headModelId && baseModelId !== headModelId && !running;
-
-  // Checked against BOTH the live A/B picker (before a run) and the ids the
-  // currently-shown result was built from (on the result) — a picker change
-  // made after running, with no re-run yet, must not go silent.
-  const unsavedEditsWarning = [baseModelId, headModelId, result?.baseModelId, result?.headModelId].some(
-    (id) => id != null && dirtyModels.has(id),
-  );
 
   // Products vs type objects (headline-count confusion, see `productTypeCounts.ts`).
   const split = useMemo(
@@ -218,29 +206,32 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
   const bcfComposing = bcf.formOpen && !!selectedRow;
 
   return (
-    <div className="h-full flex flex-col bg-background text-foreground overflow-hidden min-w-0">
-      {/* Header */}
-      <div className="flex items-center gap-2 p-3 border-b border-border">
-        <GitCompareArrows className="h-4 w-4 text-primary shrink-0" />
-        <span className="text-sm font-semibold tracking-tight min-w-0">{t('comparePanel.panel.title')}</span>
-        <div className="ml-auto flex items-center gap-1 shrink-0">
-          {result && !bcfComposing && (
-            <Button variant="ghost" size="icon" className="h-7 w-7" title={t('comparePanel.panel.clearResultsTitle')} onClick={clearCompare}>
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
-          {onClose && (
-            <Button variant="ghost" size="icon" className="h-7 w-7" title={t('comparePanel.panel.closeTitle')} onClick={onClose}>
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </div>
-
+    <AnalysisPanel
+      icon={<GitCompareArrows className="text-primary" />}
+      title={t('comparePanel.panel.title')}
+      onClose={onClose}
+      // Composing a BCF topic hides the diff chrome, re-run and clear included.
+      run={bcfComposing ? undefined : {
+        hasResult: result != null,
+        running,
+        onRerun: () => { void runComparison(); },
+        onCancel: cancelComparison,
+        rerunLabel: t('comparePanel.panel.rerunTitle'),
+        cancelLabel: t('comparePanel.runControls.cancel'),
+      }}
+      onClearResults={clearCompare}
+      error={bcfComposing ? null : error}
+      progress={running ? { label: t('comparePanel.panel.comparing') } : null}
+      staleFor={result}
+    >
+      {!bcfComposing && <SavedComparisonLibrary result={result} running={running} />}
       {modelList.length < 2 ? (
-        <div className="p-4 text-sm text-muted-foreground">
-          {t('comparePanel.panel.loadSecondModel')}
-        </div>
+        <AnalysisEmptyState
+          icon={<GitCompareArrows className="size-8" />}
+          title={t('comparePanel.panel.needTwoModels')}
+          description={t('comparePanel.panel.loadSecondModel')}
+          loadDemo={loadDemoRevisions}
+        />
       ) : (
         <>
           {/* Diff chrome (run controls, counts, report, results, detail) — hidden
@@ -249,7 +240,8 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
               pre-filled form, so re-running / exports / browsing only get in the way. */}
           {!bcfComposing && (
             <>
-              <CompareRunControls
+              <CompareSetupControls />
+      <CompareRunControls
                 models={modelList}
                 baseModelId={baseModelId}
                 headModelId={headModelId}
@@ -271,10 +263,9 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
                 canRun={canRun}
                 running={running}
                 onRun={() => void runComparison()}
-                error={error}
+                onCancel={cancelComparison}
                 geometryUnavailable={!!result?.geometryUnavailable}
                 placementOnlyGeometry={!!result?.placementOnlyGeometry}
-                unsavedEditsWarning={unsavedEditsWarning}
                 excludedTypes={excludedTypes}
                 changedTypeCounts={typeCounts}
                 onAddExcludedType={addExcludedType}
@@ -282,71 +273,38 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
                 onClearExcludedTypes={clearExcludedTypes}
               />
 
-              {/* Counts. The Matched badge appears when the content pass RAN, not
-                  when it found something (#1891) — added/deleted are lower BECAUSE
-                  of it, so the number explaining the drop sits next to them. */}
-              {counts && (
-                <div
-                  className={cn(
-                    'grid gap-1 p-3 border-b border-border text-center',
-                    contentMatchingRan(result?.diff.contentMatches) ? 'grid-cols-5' : 'grid-cols-4',
+              <AnalysisStaleRegion className="flex-1 min-h-0 flex flex-col">
+                <CompareResultView
+                  result={result}
+                  split={split}
+                  matchedElements={contentMatchingRan(result?.diff.contentMatches) ? matchCounts.matchedElements : null}
+                  // Export the full change report (#1202): the report bar is the exact negation of the
+                  // results list's empty state; the sidecar bar (#4955) is always offered.
+                  exportBar={result && counts ? <CompareExportBar result={result} reportable={hasReportableChanges(counts, matchRows)} /> : null}
+                  list={(
+                    <CompareResultsList
+                      result={result}
+                      groups={groups}
+                      counts={counts}
+                      split={split}
+                      matchRows={matchRows}
+                      selectedKey={selectedKey}
+                      onFocus={focusEntry}
+                      onFocusGroup={focusGroup}
+                      onFocusMatch={focusMatch}
+                      onFocusMatchGroup={focusMatchGroup}
+                      suggestions={suggest.suggestions}
+                      suggestionDecisions={suggest.decisions}
+                      onFocusSuggestion={(row) => focusRefs(row.refs, row.key)}
+                      onFocusSuggestionGroup={(rows) => focusRefs(rows.flatMap((row) => row.refs), null)}
+                      onAcceptSuggestion={suggest.accept}
+                      onRejectSuggestion={suggest.reject}
+                      header={result ? <Suspense fallback={null}><CompareAnalysisSections result={result} /></Suspense> : null}
+                    />
                   )}
-                  {...tourAnchor(TOUR_ANCHORS.compareCounts)}
-                >
-                  <CountBadge
-                    label={t('comparePanel.resultsList.stateChanged')}
-                    value={split?.products.modified ?? counts.modified}
-                    color={COMPARE_COLORS.modified}
-                    hint={typeObjectHint(split?.typeObjects.modified ?? 0)}
-                  />
-                  <CountBadge
-                    label={t('comparePanel.resultsList.stateAdded')}
-                    value={split?.products.added ?? counts.added}
-                    color={COMPARE_COLORS.added}
-                    hint={typeObjectHint(split?.typeObjects.added ?? 0)}
-                  />
-                  <CountBadge
-                    label={t('comparePanel.resultsList.stateDeleted')}
-                    value={split?.products.deleted ?? counts.deleted}
-                    color={COMPARE_COLORS.deleted}
-                    hint={typeObjectHint(split?.typeObjects.deleted ?? 0)}
-                  />
-                  {contentMatchingRan(result?.diff.contentMatches) && (
-                    <CountBadge label={t('comparePanel.matchGroups.matchedLabel')} value={matchCounts.matchedElements} color={COMPARE_COLORS.matched} />
-                  )}
-                  <CountBadge label={t('comparePanel.panel.countUnchanged')} value={counts.unchanged} color={COMPARE_COLORS.unchanged} />
-                </div>
-              )}
-
-              {/* Export the full change report (#1202) — the report bar is the exact
-                  negation of the results list's empty state; the sidecar bar (#4955)
-                  is always offered, an identity map can be imported before any change. */}
-              {result && counts && (
-                <CompareExportBar result={result} reportable={hasReportableChanges(counts, matchRows)} />
-              )}
-
-              {/* Results list */}
-              <CompareResultsList
-                result={result}
-                groups={groups}
-                counts={counts}
-                split={split}
-                matchRows={matchRows}
-                selectedKey={selectedKey}
-                onFocus={focusEntry}
-                onFocusGroup={focusGroup}
-                onFocusMatch={focusMatch}
-                onFocusMatchGroup={focusMatchGroup}
-                suggestions={suggest.suggestions}
-                suggestionDecisions={suggest.decisions}
-                onFocusSuggestion={(row) => focusRefs(row.refs, row.key)}
-                onFocusSuggestionGroup={(rows) => focusRefs(rows.flatMap((row) => row.refs), null)}
-                onAcceptSuggestion={suggest.accept}
-                onRejectSuggestion={suggest.reject}
-              />
-
-              {/* What-changed detail for the selected element */}
-              {detail && selectedRow && <ChangeDetailView row={selectedRow} detail={detail} />}
+                  detail={detail && selectedRow ? <ChangeDetailView row={selectedRow} detail={detail} /> : null}
+                />
+              </AnalysisStaleRegion>
             </>
           )}
 
@@ -364,7 +322,7 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
               </button>
               <span className="text-muted-foreground shrink-0">{t('comparePanel.panel.topicFor')}</span>
               <span className="font-medium truncate min-w-0">{selectedRow.name || selectedRow.ifcType}</span>
-              <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+              <span className="ml-auto text-2xs text-muted-foreground shrink-0">
                 {selectedRow.ifcType.replace(/^Ifc/, '')}
               </span>
             </div>
@@ -389,6 +347,6 @@ export function ComparePanel({ onClose }: ComparePanelProps) {
           )}
         </>
       )}
-    </div>
+    </AnalysisPanel>
   );
 }

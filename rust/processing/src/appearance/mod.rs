@@ -35,7 +35,8 @@ mod mapping;
 mod page;
 mod transfer;
 mod transfer_types;
-mod transfer_math;
+/// Its `Point`, `sub`, `dot` and `cross` are shared with `scan_segmentation`.
+pub(crate) mod transfer_math;
 mod transfer_budget;
 mod transfer_surface;
 mod transfer_target;
@@ -302,3 +303,5 @@ fn plan_with_source(bytes:&[u8], request:&AppearanceRequest, source:&mut Source<
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tin_tests;

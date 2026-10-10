@@ -2,13 +2,16 @@
 
 **Status:** largely implemented. Wall, slab, and linear
 (beam / column / member) split ship via
-`apps/viewer/src/store/slices/splitToolSlice.ts`, `SplitOverlay.tsx` /
-`SplitNumericInput.tsx`, the `splitWallAtDistance` / `splitSlabByLine` /
-`splitLinearElementAtDistance` store actions, and helpers in
+the `element.split` command
+(`apps/viewer/src/lib/commands/modeling/commands/element-split.ts`),
+`SplitOverlay.tsx` / `SplitCursorInput.tsx`, the `splitWallAtDistance` / `splitSlabByLine` /
+`splitLinearElementAtDistance` `MutationSlice` store actions
+(`apps/viewer/src/store/slices/mutationSlice.ts`), and helpers in
 `wall-edit.ts`, `slab-edit.ts`, `linear-element-edit.ts`,
 `metadata-clone.ts`, and `polygon-clip.ts`. The multi-element plane
-split (Phase 6) is not yet wired, and some shipped names differ from the
-sketches below.
+split (Phase 6) ships as the `split.multi` command
+(`apps/viewer/src/lib/commands/modeling/commands/multi-split.ts`), and some
+shipped names differ from the sketches below.
 
 Splitting a wall (or slab, beam, column, space, roof, plate) into
 two coherent pieces is the single most-requested authoring gesture
@@ -122,24 +125,65 @@ a small floating input panel near the cursor accepts:
 Enter commits, Esc cancels. Same panel position as the existing
 measure-tool readout.
 
-### Multi-element split (Phase 2)
+### Multi-element split (`split.multi`, #6232 C5)
+
+Shipped as the Model workspace's "Split by line" command (Shift+K, the rail's
+scissors, the palette). Decision D6: it composes the per-element actions of
+this document in one transaction; there is no clip_mesh binding.
 
 ```text
-1. Draw a line tool (Shift-K?) places a free-floating "cutting
-   plane" represented in 2D as a yellow line + extruded plane
-   visualisation in 3D.
-2. The plane snaps to vertical / horizontal axes by default, to
-   any wall axis with Shift held.
-3. Every wall / slab / beam / column that intersects the plane is
-   highlighted blue.
-4. User clicks "Apply" in the floating prompt → all highlighted
-   elements split at the plane intersection in one mutation
-   (single undo).
-5. Esc cancels.
+1. Click two points (snapped, in the plan or in 3D): the cut is the vertical
+   plane through them. Like a slab cut it is a line that runs on, not a
+   segment.
+2. The targets are the selection; with nothing selected, every wall, beam
+   and slab of the active storey.
+3. The plane's ghost is drawn, the elements it will split are outlined in
+   the accent colour with a marker where it meets each axis, and the ones
+   it crosses but the split predicate refuses are outlined dashed in red
+   with the reason beside them. The bar counts both ("5 will split",
+   "3 refused"; the tooltip lists the reasons).
+4. The second click (or Enter) splits every crossed target through
+   `splitWallAtDistance`, `splitLinearElementAtDistance` and
+   `splitSlabByLine`, inside one `runTransaction`: one undo step, one
+   re-mesh request. The larger piece keeps each element's identity, the new
+   piece gets the derived GlobalId; hosted openings and fills follow the wall
+   piece they stand in. A refused target is left untouched. If a planned
+   split fails while committing, the whole commit is reverted.
+5. Esc starts over; Backspace drops the first point.
 ```
 
-This is the killer feature for building-wide cuts (e.g. "split
-everything along this gridline").
+### Trim / Extend (`element.trimExtend`, #6232 C1)
+
+The sibling of the split commands for changing an element's length rather than
+cutting it: the Model workspace's "Trim / Extend" (Shift+E, the rail's arrow to
+a line, the palette).
+
+```text
+1. Click the boundary: a wall or beam (its axis), a slab edge, or a guide
+   line the snap solver holds (a grid axis, an edge of anything else).
+2. Click walls and beams. Trim cuts the element back to the boundary and
+   removes the side you click; Extend lengthens the end nearest the click to
+   the boundary. The bar switches the mode, Shift flips it for one click.
+3. A wall meeting a boundary WALL is joined to it by the join core
+   (`computeWallJoin` / `joinWallsInStore`): a T where it ends on the wall's
+   path, an L at a corner, with the `IfcRelConnectsPathElements` and the
+   ending wall cut at the other's face. The wall's own end goes through the
+   ONE wall resize (`resizeWallMetres`). Against any other boundary the axis
+   end is put on the line and no join is written.
+4. Beams and members change their extrusion depth; a moved start moves the
+   placement point.
+```
+
+Refusals are shown before the click (the target is outlined red, the reason
+beside it) and said by a click on it: a boundary that stops before the
+element's line meets it, an element that already crosses it (Extend) or stops
+short of it (Trim), a trim that would leave under 5 cm, a trim that would cut
+through an opening, door or window hosted in the wall (the count is named; a
+wall's hosted elements are never moved to a piece, as a trim leaves none), and
+a wall or beam the readers cannot take, with the same reason the Split button
+gives for it. Extending a wall's start moves its placement, so the openings
+hosted in it are written back where they stood. One commit is one
+`runTransaction`: one undo step, one re-mesh request.
 
 ## Visual design
 
@@ -192,12 +236,12 @@ Input: wall #W with placement origin `S`, RefDirection `d`, profile
 XDim `L`, YDim `T`, height `H`. Split distance `t ∈ (0, L)` from
 start.
 
-Output:
-- Wall #W deleted (tombstone).
-- Wall #W₁: same `S`, same `d`, XDim `t`. Profile origin
-  `[t/2, 0]`.
-- Wall #W₂: placement origin `S + d·t`, same `d`, XDim `L - t`.
+Output, with the two pieces W₁ = `[0, t]` and W₂ = `[t, L]`:
+- W₁: same `S`, same `d`, XDim `t`. Profile origin `[t/2, 0]`.
+- W₂: placement origin `S + d·t`, same `d`, XDim `L - t`.
   Profile origin `[(L - t)/2, 0]`.
+- The longer piece IS #W, reshaped in place. The other piece is one
+  new wall (see "GlobalId policy" below).
 
 Sub-graph reuse:
 - Owner history, body context, storey placement — both halves
@@ -217,12 +261,35 @@ Hosted-element reassignment:
   follow the chain — door/window stays on whichever wall the
   void went to.
 
-GlobalId policy:
-- #W's GlobalId is **retired** (the entity is tombstoned).
-- #W₁ and #W₂ get fresh GlobalIds via `generateIfcGuid()`.
-- Audit trail: both new walls get an `ObjectType` suffix `(split
-  from #W's-globalid)` so downstream IDS / BCF round-trips know
-  the origin. Configurable.
+GlobalId policy (decided in #6232, implemented in #6233; applies to
+EVERY split path — wall, beam / column / member, slab / roof / plate
+/ space):
+- The **larger** piece keeps the source entity: same express id,
+  GlobalId, containment, type, material, property sets, and the
+  openings that are still inside it. It is reshaped in place.
+  "Larger" means length for walls, beams, members and columns, and
+  footprint area for slabs, roofs, plates and spaces. On a tie, the
+  piece containing the axis start (or the profile's first vertex)
+  keeps the identity.
+- Exactly **one** new element is authored for the other piece. Only
+  the openings inside it move host.
+- The new piece's GlobalId is
+  `uuidToIfcGuid(uuidV5(SPLIT_GLOBALID_NAMESPACE, "<sourceGlobalId>/split/<k>"))`
+  (`apps/viewer/src/lib/split-guid.ts`; `uuidV5` in
+  `@ifc-lite/encoding`). `k` starts at 0 and increments while the
+  candidate already exists in any loaded model, whether parsed or
+  authored this session.
+  - The GlobalId does not depend on the cut position. The same
+    source and the same set of existing ids always give the same
+    GlobalId, on any machine.
+  - Re-splitting the kept piece yields `k = 1, 2, …`.
+  - Splitting a child derives from the child's own GlobalId.
+- The whole split is one undo step: `element.split` commits it as one
+  modeling transaction. Undo restores exactly the original element (same
+  express id and GlobalId). The kept piece and the new piece are
+  re-meshed by the wasm re-mesh service (`requestRemesh`), and again on
+  undo / redo of that batch. The re-mesh also sends those meshes to
+  the collaboration room (#6391), so peers see the same geometry.
 
 Property carry-over:
 - `IfcRelDefinesByProperties` and `IfcRelDefinesByType` referring
@@ -328,8 +395,9 @@ interface SplitToolSlice {
 }
 ```
 
-Goes in a new `splitToolSlice.ts`, same shape as the existing
-`addElementSlice` (mode + anchor + hover + parameters).
+The sketch placed this in a new `splitToolSlice.ts`, same shape as the other
+tool slices (mode + anchor + hover + parameters). No file of that name exists
+today: the tool runs as the `element.split` command (see Status above).
 
 ## Store actions
 
@@ -395,7 +463,7 @@ Module limits respected: each stays under 400 LOC.
 ## Visual feedback layer
 
 New overlay `SplitOverlay.tsx` in `tools/`, sibling to
-`AddElementOverlay` / `GizmoOverlay` / `WallEndpointOverlay`.
+`GizmoOverlay` / `WallEndpointOverlay`.
 Mounted by `ToolOverlays` when `activeTool === 'split'`. Renders:
 
 - Cursor knife glyph (CSS cursor on the canvas)
@@ -403,7 +471,7 @@ Mounted by `ToolOverlays` when `activeTool === 'split'`. Renders:
   override pipeline — set a transient `pendingColorUpdates` entry,
   clear on hover-out)
 - Guide line — SVG anchored to projected world positions
-- Snap markers — reused from `AddElementOverlay`'s snap glyphs
+- Snap markers — reused from the snap engine's glyphs
 - Distance / percent readout — HTML over canvas, positioned at
   the cut point
 - Numeric input panel — same shape as the existing measure-tool
@@ -474,7 +542,7 @@ a sheet: "Split this wall at: [slider 0…length] [enter distance]
 | Element has overlapping decomposition (IfcRelAggregates) | Both halves inherit the same parent; warn if assembly semantics may be broken |
 | Pset linkage uses `IfcRelDefinesByProperties` with shared RelatedObjects | Both halves appear in the same rel's RelatedObjects list |
 | Wall is part of a layered wall (IfcMaterialLayerSet) | Layers preserved; layer-specific quantities recomputed per length |
-| Undo a split | Restore source wall, tombstone the two halves, rewind opening reassignments |
+| Undo a split | One step: restore the source's shape and mesh, remove the new piece, rewind opening reassignments |
 | Redo a split | Replay the entire composite mutation |
 | User splits a wall they're about to drag with the gizmo | Gizmo target becomes one of the new halves (selection moves automatically); drag accumulator resets |
 
@@ -533,11 +601,10 @@ Phase 6 is the killer feature.
    acceptable, or should we use a custom Pset (`Pset_SplitProvenance`)?
    Pset is cleaner for IDS but invisible in property panels by
    default. Default to Pset, expose a setting.
-2. **GlobalId reuse:** strict IFC says split → tombstone + two new
-   GIDs (we do this). Some downstream BCF tooling may have already
-   referenced the original; consider an optional "keep one GID"
-   mode that retains the original GID on the half containing the
-   cursor at split time.
+2. **GlobalId reuse:** resolved (#6232 "Decisions", #6233). The larger
+   piece keeps the source GlobalId, so BCF topics and other references
+   to the original stay valid. The other piece gets a deterministic v5
+   GlobalId. See "GlobalId policy" above.
 3. **Curved-wall future:** when curved walls are supported (Bezier),
    splitting at parameter `t` is mathematically easy. The harder
    problem is deciding which Pascal-style "curve handle" each half

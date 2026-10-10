@@ -6,6 +6,8 @@
  *  header chrome, "Add block" menu, empty state, and the pluralized export-result toast all read
  *  the catalogue and re-render in a registered locale. */
 import '@/test/setup-dom.js';
+import { documentPreviewReady } from '@/test/document-preview';
+import '@/test/content-fixture.js';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
@@ -26,7 +28,6 @@ const TEST_LOCALE: Catalogue = {
   'document.addBlock.text': 'Text mit Feldern',
   'document.addBlock.image': 'Bild / Logo',
   'document.panel.exportTitle': 'Diese Seite als PDF drucken',
-  'document.panel.closeAriaLabel': 'Dokumentbereich schließen',
   'document.panel.emptyBlocks': 'Noch keine Blöcke — "Block hinzufügen" oben.',
   'document.panel.exportSuccessWithProblems': {
     one: 'Dokument exportiert: {countDisplay} Seite ({problems})',
@@ -40,6 +41,7 @@ const TEST_LOCALE: Catalogue = {
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+  await documentPreviewReady();
 }
 
 function openMenu(trigger: HTMLElement): void {
@@ -65,13 +67,11 @@ describe('DocumentPanel localization (#4918)', () => {
   });
 
   it('translates the header chrome, the "Add block" menu, and falls back to English per missing key', async () => {
-    const onClose = (): void => {};
-    const ui = render(<DocumentPanel onClose={onClose} />);
+    const ui = render(<DocumentPanel />);
     await settle();
 
     assert.ok(ui.querySelector('select[aria-label="Document"]'));
     assert.equal(ui.textContent?.includes('Page'), true);
-    assert.ok(ui.querySelector('button[aria-label="Close document panel"]'));
     const trigger = [...ui.querySelectorAll('button')].find((b) => b.title === 'Add a block to the page')!;
     assert.ok(trigger);
     openMenu(trigger);
@@ -84,7 +84,6 @@ describe('DocumentPanel localization (#4918)', () => {
 
     assert.ok(ui.querySelector('select[aria-label="Dokument"]'));
     assert.equal(ui.textContent?.includes('Seite'), true);
-    assert.ok(ui.querySelector('button[aria-label="Dokumentbereich schließen"]'));
     const translatedTrigger = [...ui.querySelectorAll('button')].find((b) => b.title === 'Einen Block zur Seite hinzufügen')!;
     assert.ok(translatedTrigger, 'the trigger picks up the registered title');
     assert.equal(translatedTrigger.textContent?.includes('Block hinzufügen'), true);
@@ -99,7 +98,7 @@ describe('DocumentPanel localization (#4918)', () => {
   it('shows the "no blocks yet" empty state translated once every seeded block is removed', async () => {
     const ui = render(<DocumentPanel />);
     await settle();
-    for (const button of [...ui.querySelectorAll('button[aria-label="Remove block"]')]) click(button);
+    for (const button of ui.querySelectorAll('button[aria-label="Remove block"]')) click(button);
     await settle();
     assert.equal(ui.textContent?.includes('No blocks yet'), true);
 
@@ -112,7 +111,7 @@ describe('DocumentPanel localization (#4918)', () => {
     registerLocale('document-panel-x-export', TEST_LOCALE);
     const seams = async (): Promise<DocumentPdfSeams> => ({
       createDoc: async () => ({
-        addPage: () => {}, setFont: () => {}, setFontSize: () => {}, setTextColor: () => {},
+        addPage: () => {}, setFont: () => {}, setFontSize: () => {}, setTextColor: () => {}, fillRect: () => {},
         text: () => {}, addImage: () => {}, svg: async () => {}, table: () => {},
         pageCount: () => 1, output: () => new Blob(['pdf']),
       }),
@@ -131,7 +130,7 @@ describe('DocumentPanel localization (#4918)', () => {
     let toastText = '';
     for (let i = 0; i < 20 && !toastText; i++) {
       await settle();
-      toastText = document.body.querySelector('[data-sonner-toast], [role="status"]')?.textContent ?? document.body.textContent ?? '';
+      toastText = document.body.querySelector('[data-sonner-toast], [data-toast]')?.textContent ?? document.body.textContent ?? '';
       if (!/exportiert|Dokument/.test(toastText)) toastText = '';
     }
     assert.match(toastText, /Dokument exportiert: 1 Seite \(1 Bindung nicht aufgelöst\)/);

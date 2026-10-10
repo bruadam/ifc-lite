@@ -8,12 +8,14 @@
  */
 
 import { createLogger } from '@ifc-lite/data';
+import { runDomainExport } from './domain-export-call.js';
 import type { KmzAltitudeMode, TessellationQuality } from './types.js';
 import type { RtcFrame } from './rtc-frame.js';
 import type { HbjsonStats } from './hbjson-stats.js';
 import * as energyExport from './energy-export-bridge.js';
 import type { GeometryDiagnostics } from './diagnostics.js';
-import { getStartedSharedWasmModule } from './wasm-shared-module.js';
+import type { ExtrusionDefinitions, SweptDiskDescriptions } from './analytic-descriptions.js';
+import { initMainThreadEngine } from './main-engine-init.js';
 import {
   isWasmRuntimeTrap,
   notifyWasmRuntimeUnrecoverable,
@@ -95,22 +97,11 @@ export class IfcLiteBridge {
     return isWasmRuntimeTrap(error);
   }
 
-  /**
-   * An operation on THIS bridge's engine took a WebAssembly runtime trap
-   * (#1898). Everything a trap can wedge lives on the `IfcAPI` handle — the
-   * per-load pre-pass / entity / style caches behind its mutexes — so the
-   * recovery is to drop that handle. The next `init()` (on this bridge or any
-   * other) builds a clean one and works; the trap itself propagates to the
-   * caller unchanged, so the failing operation still fails loudly with its own
-   * stack.
-   *
-   * This deliberately does NOT latch any realm-wide state. The previous
-   * behaviour stored one Error in a module global and refused every later
-   * `init()` in the document, which bricked every unrelated main-thread
-   * consumer (model load, grid / drawing meshers, the other exporters) after a
-   * single failed export — while bridges that happened to be initialized
-   * already kept running, so the "unrecoverable" claim contradicted itself.
-   */
+  /** After a runtime trap, drop this bridge's potentially wedged IfcAPI and
+   * its per-load caches behind mutexes (#1898). The caller still gets the
+   * original error; a later init() builds a fresh handle. Do not latch a
+   * realm-wide failure: that previously bricked unrelated consumers even
+   * while their already-initialized bridges continued working. */
   private recordWasmRuntimeTrap(): void {
     this.disposeBestEffort();
   }
@@ -176,32 +167,15 @@ export class IfcLiteBridge {
         const wasmPath: string = requireFromHere.resolve('@ifc-lite/wasm/ifc-lite_bg.wasm');
         wasmInitArg = (await nodeFs.readFile(wasmPath)) as BufferSource;
       }
-      // Reuse the shared compiled module when some other consumer (an idle
-      // prewarm, or the N-worker pool on an earlier load) already fetched this
-      // binary — passing the `WebAssembly.Module` skips the network entirely and
-      // skips a redundant compile of the same ~3.9 MB. `getStartedSharedWasmModule`
-      // never *starts* a compile, so when nothing else did, this path is exactly
-      // what it was before: wasm-bindgen fetches from import.meta.url itself.
-      // Node is excluded — it hands over bytes it read off disk.
-      const sharedModule = wasmInitArg ? null : await (getStartedSharedWasmModule() ?? null);
-
-      // Browser: init() with no arg fetches from import.meta.url. Node: pass the
-      // bytes via the modern object form ({ module_or_path }) to avoid the
-      // deprecated positional-bytes signature.
-      //
-      // Wrapped in `initWasmWithRetry` (issue #1903) so one blip on the ~1.3 MB
-      // (brotli) engine download no longer kills the whole load. This was the
-      // only self-fetching `init()` in the app WITHOUT the retry both workers
-      // already use, and it is the one a first-time visitor hits first — a
-      // returning visitor has the binary in the immutable `/assets/*` cache.
-      // `isTransientWasmLoadError` gates the retry, so a corrupt/invalid module
-      // still fails fast; the shared-module and Node paths pass a prebuilt
-      // `Module`/bytes and cannot be transient, so they never retry.
-      const initArg = wasmInitArg ?? sharedModule ?? undefined;
-      await initWasmWithRetry(
-        () => init(initArg ? { module_or_path: initArg } : undefined),
-        { label: 'ifc-lite-bridge' },
-      );
+      // Raw package resolution and Node's supplied bytes retain their paths; the
+      // browser path joins the realm's one main-thread init (#7036), which a host
+      // may already have started when the load was requested.
+      if (wasmInitArg) {
+        const bytes = wasmInitArg;
+        await initWasmWithRetry(async () => { await init({ module_or_path: bytes }); }, { label: 'ifc-lite-bridge' });
+      } else {
+        await initMainThreadEngine();
+      }
 
       // The WASM bundle has no in-WASM thread pool; rayon `par_iter()`
       // (e.g. FacetedBrep preprocessing) runs sequentially on the main
@@ -437,6 +411,16 @@ export class IfcLiteBridge {
     }
   }
 
+  /** Exact authored swept-disk definitions and measurements in IFC world metres. */
+  extractSweptDiskDescriptions(content: Uint8Array, ids?: Uint32Array): SweptDiskDescriptions {
+    return this.runExport('extractSweptDiskDescriptions', content, (api) => api.extractSweptDiskDescriptions(content, ids) as SweptDiskDescriptions);
+  }
+
+  /** Exact authored extrusion sources and their world-space product occurrences. */
+  extractExtrusionDefinitions(content: Uint8Array, ids?: Uint32Array): ExtrusionDefinitions {
+    return this.runExport('extractExtrusionDefinitions', content, (api) => api.extrusionDefinitions(content, ids));
+  }
+
   /**
    * Export the render geometry in `content` as a Wavefront OBJ string.
    * `isolated`: `undefined` ⇒ no filter; empty `Uint32Array` ⇒ active but matching nothing.
@@ -519,6 +503,11 @@ export class IfcLiteBridge {
     return this.runExport('exportJson', content, (api) =>
       api.exportJson(content, pretty, includeProperties, includeQuantities),
     );
+  }
+
+  /** Plan coordinate compatibility patches; all domain math remains in Rust. */
+  planMapConversionNormalization(content: Uint8Array): string {
+    return this.runExport('planMapConversionNormalization', content, api => api.planMapConversionNormalization(content));
   }
 
   /**
@@ -720,18 +709,9 @@ export class IfcLiteBridge {
    * logging + fatal-wasm-error marking, mirroring the other bridge entry points.
    */
   private runExport<T>(op: string, content: Uint8Array, run: (api: IfcAPI) => T): T {
-    if (!this.ifcApi) {
-      throw new Error('IFC-Lite not initialized. Call init() first.');
-    }
-    try {
-      return run(this.ifcApi);
-    } catch (error) {
-      log.error(`Failed to ${op}`, error, { operation: op, data: { contentLength: content.length } });
-      if (this.isWasmRuntimeError(error)) {
-        this.recordWasmRuntimeTrap();
-      }
-      throw error;
-    }
+    return runDomainExport(this.ifcApi, op, content, run, error => {
+      if (this.isWasmRuntimeError(error)) this.recordWasmRuntimeTrap();
+    });
   }
 
   /**

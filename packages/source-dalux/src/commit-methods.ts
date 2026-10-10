@@ -240,7 +240,7 @@ export function createDaluxCommitMethods({ createClient }: DaluxCommitMethodDeps
     const url = nonEmptyString(commit.file.downloadLink)
       ?? `${client.baseUrl}/2.0/projects/${enc(ref.projectId)}/file_areas/${enc(commit.fileAreaId)}`
         + `/files/${enc(ref.modelId)}/revisions/${enc(ref.commitId)}/content`;
-    const bytes = await client.getBinary(url, options?.signal);
+    const bytes = await client.getBinary(url, options);
     options?.onProgress?.(bytes.byteLength, bytes.byteLength);
     return {
       format,

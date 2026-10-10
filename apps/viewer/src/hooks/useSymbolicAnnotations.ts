@@ -90,7 +90,7 @@ function useAnnotationParseTrigger(enabled: boolean, stores: SymbolicActiveStore
 
   useEffect(() => {
     if (!enabled) return undefined;
-    ensureParseFor(stores.map((s) => s.store));
+    ensureParseFor(stores.map((s) => ({ store: s.store, mutationView: s.mutationView })));
     return subscribeToParseCache(() => setVersion((v) => v + 1));
   }, [enabled, stores]);
 
@@ -110,17 +110,13 @@ function useAnnotationParseTrigger(enabled: boolean, stores: SymbolicActiveStore
 interface HiddenOwnerSets {
   global: ReadonlySet<number>;
   lens: ReadonlySet<number>;
-  byModel: ReadonlyMap<string, Set<number>>;
 }
-
-const EMPTY_NUM_SET: ReadonlySet<number> = new Set<number>();
 
 function useHiddenOwnerSets(): HiddenOwnerSets {
   return useViewerStore(
     useShallow((s) => ({
       global: s.hiddenEntities,
       lens: s.lensHiddenIds,
-      byModel: s.hiddenEntitiesByModel,
     })),
   );
 }
@@ -131,11 +127,9 @@ function makeHiddenOwnerPredicate(
   entry: SymbolicActiveStore,
   sets: HiddenOwnerSets,
 ): ((ownerId: number) => boolean) | undefined {
-  const perModel = sets.byModel.get(entry.modelId) ?? EMPTY_NUM_SET;
-  if (sets.global.size === 0 && sets.lens.size === 0 && perModel.size === 0) return undefined;
+  if (sets.global.size === 0 && sets.lens.size === 0) return undefined;
   const offset = entry.idOffset;
   return (ownerId: number): boolean => {
-    if (perModel.has(ownerId)) return true;
     const globalId = ownerId + offset;
     return sets.global.has(globalId) || sets.lens.has(globalId);
   };
@@ -217,7 +211,7 @@ export function useSymbolicAnnotations(params: {
     // Stores whose parse isn't cached yet drop out (logged below).
     const entries: SymbolicLineChannelsEntry[] = [];
     for (const entry of stores) {
-      const cached = placedSymbols(getParseFor(entry.store), entry.translation, fallbackY);
+      const cached = placedSymbols(getParseFor({ store: entry.store, mutationView: entry.mutationView }), entry.translation, fallbackY);
       if (cached) entries.push({ cached, isHidden: makeHiddenOwnerPredicate(entry, hiddenSets) });
       else if (debugEnabled()) console.log(`[annotations] store not yet ready: ${entry.modelId}`);
     }
@@ -248,7 +242,7 @@ export function useSymbolicAnnotations(params: {
  *
  * The section position is in world units (already converted from the
  * 0-100% slider via `axisMin + (position / 100) * (axisMax - axisMin)`
- * by the caller — Section2DPanel computes the same value to feed the
+ * by the caller — the Drawing panel's `useDrawingLayers` computes the same value to feed the
  * drawing generator).
  */
 export interface DrawingAnnotationData {
@@ -264,10 +258,10 @@ const EMPTY_DRAWING_ANNOTATIONS: DrawingAnnotationData = {
 };
 
 /**
- * Whether `Section2DPanel` should ask this hook for data at all.
+ * Whether the Drawing panel should ask this hook for data at all.
  *
  * Pulled out of the call site as its own predicate (rather than an inline
- * `&&` chain) so the gate is unit-testable independent of `Section2DPanel`,
+ * `&&` chain) so the gate is unit-testable independent of the Drawing panel,
  * which imports `useIfc` → `ifcConfig.ts` → `import.meta.env` and is
  * consequently unrenderable under this repo's `tsx --test` runner
  * (`import.meta.env` is `undefined` outside a Vite build).
@@ -373,7 +367,7 @@ export function useSymbolicAnnotationsForDrawing(params: {
       : (f: AnnotationFill2D) => fills.push(f);
 
     for (const entry of stores) {
-      const cached = placedSymbols(getParseFor(entry.store), entry.translation, fallbackY);
+      const cached = placedSymbols(getParseFor({ store: entry.store, mutationView: entry.mutationView }), entry.translation, fallbackY);
       if (!cached) continue;
 
       // Drawing-2D pulls BOTH annotation and grid buckets (issue #862
@@ -446,7 +440,7 @@ export function useSymbolicAnnotationsRichData(params: {
     // Stores whose parse isn't cached yet drop out.
     const entries: SymbolicRichChannelsEntry[] = [];
     for (const entry of stores) {
-      const cached = placedSymbols(getParseFor(entry.store), entry.translation, fallbackY);
+      const cached = placedSymbols(getParseFor({ store: entry.store, mutationView: entry.mutationView }), entry.translation, fallbackY);
       if (cached) entries.push({ cached, isHidden: makeHiddenOwnerPredicate(entry, hiddenSets), isMeshedFill: meshedFillItems(entry.meshes, id => entry.idOffset === 0 ? id : useViewerStore.getState().toGlobalId(entry.modelId, id)) });
     }
 

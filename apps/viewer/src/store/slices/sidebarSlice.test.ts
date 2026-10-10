@@ -110,15 +110,15 @@ describe('sidebarSlice (#1208)', () => {
     s.getState().applySidebarLayout({
       mode: 'nope',
       widthPct: 'x',
-      order: ['bcf', 'not-a-panel', 'bcf'],
+      order: ['bcf', 'not-a-panel', 'bcf', 'compare'],
       hiddenIds: ['properties', 'lens'],
     });
     assert.ok(['expanded', 'collapsed'].includes(s.getState().sidebarMode));
     assert.ok(Number.isFinite(s.getState().sidebarWidthPct));
-    // order: Hierarchy is migrated to the top (#1267), then the persisted bcf,
-    // no dupes / unknowns, every registry panel present.
+    // Hierarchy remains at the top (#1267), and captured panels retain their
+    // relative order while new tools join their task group (#6927).
     assert.strictEqual(s.getState().sidebarOrder[0], 'hierarchy');
-    assert.strictEqual(s.getState().sidebarOrder[1], 'bcf');
+    assert.ok(s.getState().sidebarOrder.indexOf('bcf') < s.getState().sidebarOrder.indexOf('compare'));
     assert.strictEqual(new Set(s.getState().sidebarOrder).size, WORKSPACE_PANELS.length);
     // Information is never hidden; a valid id is.
     assert.ok(!s.getState().sidebarHiddenIds.includes('properties'));
@@ -172,6 +172,27 @@ describe('sidebarSlice ordering (#1267)', () => {
     assert.ok(!s.getState().sidebarOrder.includes('ids' as never));
     assert.deepStrictEqual(s.getState().sidebarHiddenIds, ['validation']);
     assert.strictEqual(new Set(s.getState().sidebarOrder).size, WORKSPACE_PANELS.length);
+  });
+});
+
+describe('sidebarSlice task group migration (#5873)', () => {
+  it('groups an unchanged saved rail order and preserves a customized order', () => {
+    const previousDefault = [
+      'hierarchy',
+      ...WORKSPACE_PANELS.map((panel) => panel.id).filter((id) => id !== 'hierarchy'),
+    ] as SidebarSlice['sidebarOrder'];
+    const original = make();
+    original.getState().applySidebarLayout({ order: previousDefault });
+    const migrated = original.getState().sidebarOrder;
+    assert.strictEqual(migrated[0], 'hierarchy');
+    assert.notDeepStrictEqual(migrated, previousDefault);
+    assert.strictEqual(new Set(migrated).size, WORKSPACE_PANELS.length);
+
+    const customized = [...previousDefault];
+    customized.splice(customized.indexOf('extensions'), 1);
+    customized.unshift('extensions');
+    original.getState().applySidebarLayout({ order: customized });
+    assert.deepStrictEqual(original.getState().sidebarOrder, customized);
   });
 });
 

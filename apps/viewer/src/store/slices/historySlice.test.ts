@@ -134,6 +134,7 @@ describe('historyTeardown', () => {
       'historyPickA',
       'historyPickB',
       'localLineage',
+      'resolverPending',
     ]);
     assert.ok(
       !historyTeardown.owns.includes('historyPanelVisible' as never),

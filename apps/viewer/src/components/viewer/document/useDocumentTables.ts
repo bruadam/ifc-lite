@@ -24,22 +24,16 @@ import type { ListDefinition } from '@ifc-lite/lists';
 import { useViewerStore } from '@/store';
 import type { DocumentSpec, ListTableSource, TableBlock, ValidationTableSource } from '@/lib/document/types';
 import type { TableState } from '@/lib/document/resolve-table';
+import { resolveComparisonTableState } from '@/lib/document/resolve-comparison-table';
 import { resolveValidationTableState } from '@/lib/document/resolve-validation-table';
-import { runListFederated } from '@/lib/lists/run-list';
-import { buildExportModel } from '@/lib/lists/export/model';
-import { detectNumericColumns } from '../lists/list-table-utils';
+import { prepareListTable } from '@/lib/document/prepare-list-table';
 import { useListProviders } from '../lists/useListProviders';
-
-/** What a run is keyed by: the list's content, minus what cannot change its rows. */
-export function listFingerprint(list: ListDefinition): string {
-  const { id: _id, name: _name, description: _description, createdAt: _c, updatedAt: _u, ...content } = list;
-  void _id; void _name; void _description; void _c; void _u;
-  return JSON.stringify(content);
-}
+import { listFingerprint } from '@/lib/document/list-fingerprint';
 
 /** `true` when a list reads world coordinates, whose values move with the geometry and render frame. */
 export function listReadsGeometry(list: ListDefinition): boolean {
-  return list.columns.some((c) => c.source === 'geometry') || list.conditions.some((c) => c.source === 'geometry');
+  return list.columns.some((c) => c.source === 'geometry')
+    || list.groups.some((group) => group.rules.some((rule) => rule.kind === 'listCondition' && rule.source === 'geometry'));
 }
 
 /** Counts up each time `value` changes identity between renders. */
@@ -142,11 +136,12 @@ export function useDocumentTables(document: DocumentSpec | null): ReadonlyMap<st
     for (const b of blocks) definitions.set(fingerprints.get(b.id)!, b.source.list);
 
     let cancelled = false;
+    const controller = new AbortController();
     let cancelFrame: (() => void) | null = null;
     // One list per frame, in sequence: two heavy blocks must not double the stall.
     const runAt = (i: number): void => {
       if (cancelled || i >= wanted.length) return;
-      cancelFrame = nextFrame(() => {
+      cancelFrame = nextFrame(() => { void (async () => {
         if (cancelled) return;
         const fp = wanted[i];
         const list = definitions.get(fp);
@@ -156,20 +151,11 @@ export function useDocumentTables(document: DocumentSpec | null): ReadonlyMap<st
           // `executeList` already applied the list's `sortBy` per model; the export model is built
           // exactly as the Lists panel builds it for its own export.
           const live = providersRef.current;
-          const result = runListFederated(list, live.pairs, useViewerStore.getState());
-          const model = buildExportModel({
-            title: list.name,
-            columns: result.columns,
-            rows: result.rows,
-            grouping: list.grouping,
-            numericCols: detectNumericColumns(result.columns, result.rows),
-            columnWidths: [],
-            generatedAt: new Date().toLocaleString(),
-            modelUnits: live.modelUnits,
-            unitDisplayOverrides: useViewerStore.getState().unitDisplayOverrides,
-          });
-          state = { status: 'ok', model };
+          const storeState = useViewerStore.getState();
+          state = await prepareListTable(list, live.pairs, live.modelUnits, storeState, { signal: controller.signal });
+          if (cancelled) return;
         } catch (err) {
+          if (cancelled) return;
           // Shown in the block (preview and PDF), like the Lists panel's error box (#4317).
           console.error('[Documents] table block list run failed:', err);
           state = { status: 'error', message: err instanceof Error ? err.message : String(err) };
@@ -179,16 +165,19 @@ export function useDocumentTables(document: DocumentSpec | null): ReadonlyMap<st
           return { key: dataKey, byFingerprint: new Map(base).set(fp, state) };
         });
         runAt(i + 1);
-      });
+      })(); });
     };
     runAt(0);
-    return () => { cancelled = true; cancelFrame?.(); };
+    return () => { cancelled = true; controller.abort(); cancelFrame?.(); };
   }, [dataKey, wantedList, fingerprints, blocks, hasData]);
 
   return useMemo(() => {
     const out = new Map<string, TableState>();
     for (const [blockId, fp] of fingerprints) out.set(blockId, hasData ? (current.get(fp) ?? RESOLVING) : NO_MODEL);
     for (const [blockId, state] of validationStates) out.set(blockId, state);
+    for (const block of document?.blocks ?? []) {
+      if (block.kind === 'table' && block.source.kind === 'comparison') out.set(block.id, resolveComparisonTableState(block.source.comparison));
+    }
     return out;
-  }, [fingerprints, current, hasData, validationStates]);
+  }, [fingerprints, current, hasData, validationStates, document]);
 }

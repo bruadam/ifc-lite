@@ -48,6 +48,8 @@ export {
   STOREY_ELEVATION_MATCH_TOLERANCE_M,
   findStoreyByElevation,
 } from './storey-elevation.js';
+// The absent-RefDirection fill, one definition shared with the renderer (#5922).
+export { firstProjAxis } from './axis2-placement.js';
 export type { IfcStoreBase, IfcSourceHeader } from './data-store.js';
 export { getAggregatedChildren, collectAggregatedDescendants } from './decomposition.js';
 export type { DecompositionRelationships } from './decomposition.js';
@@ -140,7 +142,6 @@ export type {
 
 // Logging utilities
 export { createLogger, logger, type LogLevel, type LogContext } from './logger.js';
-export { readPackageVersion, UNKNOWN_VERSION } from './package-version.js';
 
 // SAB-safe TextDecoder helper. Both Firefox and Chromium reject
 // `TextDecoder.decode()` on SharedArrayBuffer-backed views as a
@@ -160,3 +161,14 @@ export {
   type EffectiveEntityOverlay,
   type EffectiveEntitySource,
 } from './effective-entities.js';
+
+// Shared reader for `__IFC_LITE_*` runtime perf flags (#6962). The viewer's
+// registry (apps/viewer/src/lib/perf/flags.ts) declares the flags; geometry
+// reads its own three through the same function.
+export {
+  readPerfFlagRaw,
+  readPerfFlagUrlParam,
+  parsePerfFlagUrlValue,
+  type PerfFlagBinding,
+  type PerfFlagGlobalName,
+} from './perf-flag-reader.js';

@@ -47,14 +47,13 @@ export interface ModelLike {
   fileSize: number;
   loadedAt: number;
   idOffset: number;
-  maxExpressId: number;
 }
 
 /**
  * Resolve a model by ID — checks the multi-model Map first,
  * then falls back to the legacy single-model state.
  */
-export function getModelForRef(state: ViewerState, modelId: string): ModelLike | undefined {
+export function getModelForRef(state: Pick<ViewerState, 'models' | 'ifcDataStore'>, modelId: string): ModelLike | undefined {
   const model = state.models.get(modelId);
   if (model) return model;
 
@@ -124,6 +123,5 @@ function buildLegacyModel(dataStore: IfcDataStore): ModelLike {
     fileSize: dataStore.source?.byteLength ?? 0,
     loadedAt: 0,
     idOffset: 0,
-    maxExpressId: dataStore.entities?.count ?? 0,
   };
 }

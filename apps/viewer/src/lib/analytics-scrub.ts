@@ -32,9 +32,9 @@ const URL_KEYS = new Set<string>([
   '$prev_pageview_pathname',
 ]);
 
-// String values that look like a filesystem path or a building-model file name.
+// Path / model-file-name values. `file:` needs a path after it: `file:open` is a command id.
 const PATHISH =
-  /[\\/][^\\/]*\.(?:ifc|ifcx|ifczip|bcf|bcfzip|glb|gltf|obj|csv|xlsx|pdf|json|step|stp|las|laz)\b|^(?:file|blob):|^[A-Za-z]:\\|\/Users\/|\/home\//i;
+  /[\\/][^\\/]*\.(?:ifc|ifcx|ifczip|bcf|bcfzip|glb|gltf|obj|csv|xlsx|pdf|json|step|stp|las|laz)\b|^file:(?:[\\/]|[A-Za-z]:)|^blob:|^[A-Za-z]:\\|\/Users\/|\/home\//i;
 
 // A building-model file name appearing INSIDE a longer string (an exception
 // message, typically). PATHISH above answers "is this whole value a path?";
@@ -106,8 +106,7 @@ const SDK_STRUCTURED_KEYS = new Set<string>([
   '$exception_list', '$exception_values', '$exception_types',
 ]);
 
-// Guard against pathological/cyclic payloads: bounded depth, and a seen-set so
-// a self-referencing object can't spin forever.
+// Bound depth and remember objects so pathological/cyclic payloads terminate.
 const MAX_SCRUB_DEPTH = 5;
 
 const scrubProperties = (
@@ -120,14 +119,15 @@ const scrubProperties = (
   seen.add(props);
   for (const k of Object.keys(props)) {
     const v = props[k];
-    // URL_KEYS must be checked BEFORE SENSITIVE_KEY: keys like `$current_url`
-    // match SENSITIVE_KEY's `url` word, so without this they'd be deleted
-    // outright instead of having their query/hash stripped — losing the route
-    // we intend to keep (see the URL_KEYS comment above).
+    // URL_KEYS must be checked BEFORE SENSITIVE_KEY: keys like `$current_url` match its `url`
+    // word, so they'd be deleted outright instead of having their query/hash stripped —
+    // losing the route we intend to keep (see the URL_KEYS comment above).
     if (URL_KEYS.has(k)) {
       if (typeof v === 'string') props[k] = stripQueryAndHash(v);
       continue;
     }
+    if (k === 'model_count' && typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) continue; // aggregate only
+    if (k === 'load_path' && typeof v === 'string' && /^(?:wasm|cache|server|point-cloud|landxml)$/.test(v)) continue; // closed pipeline id, never a file path (#6961)
     if (SENSITIVE_KEY.test(k)) {
       delete props[k];
       continue;

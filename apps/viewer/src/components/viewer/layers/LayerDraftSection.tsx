@@ -177,11 +177,11 @@ export function LayerDraftSection() {
 
   return (
     <div className="rounded-md border border-dashed bg-card/30 p-2">
-      <div className="flex items-center gap-1.5 pb-1.5 text-[11px] font-medium">
+      <div className="flex items-center gap-1.5 pb-1.5 text-2xs font-medium">
         <PenLine className="size-3" aria-hidden />
         <span>{t('layersPanel.draft.title')}</span>
         <span
-          className={`ml-auto rounded-full border px-1.5 py-px text-[10px] leading-none ${
+          className={`ml-auto rounded-full border px-1.5 py-px text-2xs leading-none ${
             pendingCount > 0
               ? 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
               : 'border-border text-muted-foreground'
@@ -191,12 +191,13 @@ export function LayerDraftSection() {
         </span>
       </div>
       {pendingCount === 0 && !sessionReady ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           {t('layersPanel.draft.emptyPrompt')}
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
           <Input
+            aria-label={t('layersPanel.draft.intentInputLabel')}
             value={intent}
             onChange={(e) => setIntent(e.target.value)}
             placeholder={t('layersPanel.draft.intentPlaceholder')}
@@ -205,6 +206,7 @@ export function LayerDraftSection() {
           />
           <div className="flex items-center gap-1.5">
             <Input
+              aria-label={t('layersPanel.draft.authorInputLabel')}
               value={author}
               onChange={(e) => setAuthor(e.target.value)}
               placeholder={t('layersPanel.draft.authorPlaceholder')}
@@ -214,7 +216,7 @@ export function LayerDraftSection() {
             {pendingCount > 0 && (
               <Button
                 size="sm"
-                className="h-7 gap-1 px-2 text-[11px]"
+                className="h-7 gap-1 px-2 text-2xs"
                 disabled={busy || intent.trim().length === 0}
                 onClick={() => void publish()}
               >
@@ -224,7 +226,7 @@ export function LayerDraftSection() {
             )}
           </div>
           {pendingCount > 0 && (
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               {t('layersPanel.draft.localRefNote', { ref: DEFAULT_LOCAL_REF })}
             </p>
           )}
@@ -233,14 +235,14 @@ export function LayerDraftSection() {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 gap-1 self-start px-2 text-[11px]"
+                className="h-7 gap-1 self-start px-2 text-2xs"
                 disabled={busy || intent.trim().length === 0}
                 onClick={() => void publishSession()}
               >
                 <Users className="size-3" aria-hidden />
                 {t(busy ? 'layersPanel.draft.publishing' : 'layersPanel.draft.publishSessionEdits')}
               </Button>
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-2xs text-muted-foreground">
                 {collabPeers.length > 0
                   ? t('layersPanel.draft.sessionEditsSinceJoining', {
                       count: collabPeers.length,

@@ -27,6 +27,15 @@ export type PointColorMode =
 
 export type PointSizeMode = 'fixed-px' | 'adaptive-world' | 'attenuated';
 
+/** The section plane the shader clips against: flip folded in, disabled → a harmless default. */
+export function resolveSectionPlaneUniform(
+  sp: { normal: [number, number, number]; distance: number; enabled: boolean; flipped?: boolean } | null | undefined,
+): { normal: [number, number, number]; distance: number; enabled: boolean } {
+  if (!sp || !sp.enabled) return { normal: [0, 1, 0], distance: 0, enabled: false };
+  if (!sp.flipped) return { normal: sp.normal, distance: sp.distance, enabled: true };
+  return { normal: [-sp.normal[0], -sp.normal[1], -sp.normal[2]], distance: -sp.distance, enabled: true };
+}
+
 /** Number of u32 words in the 256-bit LAS class-visibility mask. */
 export const CLASS_MASK_WORDS = 8;
 
@@ -102,6 +111,10 @@ export interface PointUniformInputs {
  * it onto the GPU. The two scratch typed-arrays must alias the same
  * underlying buffer so we can write floats and packed u32 flags in one
  * pass.
+ *
+ * Returns false without uploading when the node's origin lies outside this
+ * camera's RTE envelope: it cannot be rasterised this frame, so the caller
+ * skips its draw rather than reusing the previous frame's uniforms (#6128).
  */
 export function writePointCloudUniforms(
   device: GPUDevice,
@@ -109,7 +122,7 @@ export function writePointCloudUniforms(
   scratchU32: Uint32Array,
   node: PointCloudNode,
   inputs: PointUniformInputs,
-): void {
+): boolean {
   const u = scratch;
   const uU32 = scratchU32;
 
@@ -126,7 +139,7 @@ export function writePointCloudUniforms(
     u[16] = 1; u[21] = 1; u[26] = 1; u[31] = 1;
   }
   u[28] = 0; u[29] = 0; u[30] = 0; u[31] = 1;
-  inputs.relativeToEyeFrame.packDrawableOrigin(origin, u, 32);
+  if (!inputs.relativeToEyeFrame.tryPackDrawableOrigin(origin, u, 32)) return false;
   const camera = inputs.relativeToEyeFrame.getCameraWorld();
   // colorOverride — floats 40..43
   u[40] = inputs.fixedColor[0];
@@ -185,4 +198,5 @@ export function writePointCloudUniforms(
   // array view to exactly the uniform size + 4 alignment is identical
   // to the byteOffset/byteLength form on the buffer.
   device.queue.writeBuffer(node.uniformBuffer, 0, u, 0, POINT_UNIFORM_SIZE / 4);
+  return true;
 }

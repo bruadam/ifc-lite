@@ -9,33 +9,37 @@
  * executes — Export writes it unchanged.
  */
 
+import { trackExportCompleted } from '@/lib/analytics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
-import { Play, X } from 'lucide-react';
-import { parseFlowDocument, type FlowDocument, type NodeReport } from '@ifc-lite/flow';
+import { Play } from 'lucide-react';
+import { parseFlowDocument, type FlowDocument, type NodeReport, type NodeStatus } from '@ifc-lite/flow';
 import { useTranslation } from '@/i18n/useTranslation';
+import { useDialogs } from '@/components/ui/confirm-dialog';
 import { useViewerStore } from '@/store';
 import { addNode } from '@/lib/flow/editor-ops';
 import { downloadBlob, sanitizeFilename } from '@/lib/export/download';
 import { flowToJson } from '@/lib/flow/persistence';
-import { flowRegistry } from '@/lib/flow/runner';
+import { ensureFlowAiNodes, flowRegistry } from '@/lib/flow/runner';
 import { useContributedFlows } from '@/hooks/useContributedFlows';
 import { isContributedFlowId } from '@/services/extensions/host-flows.js';
 import { FlowCanvas, useCanvasDropPosition } from './FlowCanvas';
+import { AssistantAction } from '../assistant/AssistantAction';
 import { FlowExampleGallery, FlowExamplePicker } from './FlowExamples';
 import { FlowInspector } from './FlowInspector';
 import { FlowPalette } from './FlowPalette';
+import { FlowStartupPreference } from './FlowStartupPreference';
 import { FlowPlayer } from './FlowPlayer';
 import { FlowPublishButton } from './FlowPublishButton';
+import { FlowReviewCheckpoint } from './FlowReviewCheckpoint';
 import { useFlowRunner } from './useFlowRunner';
-
-type FlowView = 'editor' | 'player';
 
 const select = 'min-w-0 rounded border border-border bg-transparent px-1.5 py-0.5';
 const button = 'rounded border border-border px-2 py-0.5 hover:bg-muted disabled:opacity-50';
 
 function download(name: string, text: string): void {
   downloadBlob(new Blob([text], { type: 'application/json' }), `${sanitizeFilename(name, { fallback: 'flow' })}.flow.json`);
+  trackExportCompleted({ format: 'json', surface: 'flow_panel' });
 }
 
 function PaletteWithDrop({ onAdd }: { onAdd: (type: string, pos: [number, number]) => void }) {
@@ -43,8 +47,9 @@ function PaletteWithDrop({ onAdd }: { onAdd: (type: string, pos: [number, number
   return <FlowPalette registry={flowRegistry()} onAdd={(type) => onAdd(type, dropPosition())} />;
 }
 
-export function FlowPanel({ onClose }: { onClose: () => void }) {
+export function FlowPanel() {
   const { t } = useTranslation();
+  const { confirmDialog, promptDialog } = useDialogs();
   const savedFlows = useViewerStore((s) => s.savedFlows);
   const activeFlowId = useViewerStore((s) => s.activeFlowId);
   const flowDoc = useViewerStore((s) => s.flowDoc);
@@ -53,6 +58,7 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
   const flowRunning = useViewerStore((s) => s.flowRunning);
   const lastRun = useViewerStore((s) => s.flowLastRun);
   const lastError = useViewerStore((s) => s.flowLastError);
+  const storageError = useViewerStore((s) => s.flowStorageError);
   const activeModelId = useViewerStore((s) => s.activeModelId);
   const createFlow = useViewerStore((s) => s.createFlow);
   const openFlow = useViewerStore((s) => s.openFlow);
@@ -66,8 +72,12 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
   const { run, canRun } = useFlowRunner();
   const fileInput = useRef<HTMLInputElement>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [view, setView] = useState<FlowView>('editor');
+  const view = useViewerStore((s) => s.flowView);
+  const setView = useViewerStore((s) => s.setFlowView);
   const registry = flowRegistry();
+  // The AI nodes load with this panel; re-render once they are in the palette.
+  const [, setAiNodesLoaded] = useState(false);
+  useEffect(() => { void ensureFlowAiNodes().then(() => setAiNodesLoaded(true)); }, []);
 
   // Extension-contributed graphs (#5167 phase 4.2): read-only until the
   // user duplicates one into their own saved graphs.
@@ -109,16 +119,16 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
     setFlowDoc(doc);
   }, [setFlowDoc, isContributedOpen]);
 
-  const onNew = () => {
-    const name = window.prompt(t('flowPanel.newPrompt'), t('flowPanel.newDefaultName'));
+  const onNew = async () => {
+    const name = await promptDialog({ description: t('flowPanel.newPrompt'), defaultValue: t('flowPanel.newDefaultName') });
     if (name === null) return;
-    if (createFlow(name) === null) setNotice(t('flowPanel.limitReached'));
+    if (createFlow(name) === null) setNotice(useViewerStore.getState().flowStorageError ? null : t('flowPanel.limitReached'));
   };
 
   const onImportFile = async (file: File) => {
     try {
       const doc = parseFlowDocument(await file.text());
-      if (importFlow(doc) === null) setNotice(t('flowPanel.limitReached'));
+      if (importFlow(doc) === null) setNotice(useViewerStore.getState().flowStorageError ? null : t('flowPanel.limitReached'));
       else setNotice(null);
     } catch (err) {
       setNotice(t('flowPanel.importFailed', { reason: err instanceof Error ? err.message : String(err) }));
@@ -132,13 +142,13 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
    * created.
    */
   const onOpenExample = (doc: FlowDocument) => {
-    if (importFlow({ ...doc, id: crypto.randomUUID() }) === null) setNotice(t('flowPanel.limitReached'));
+    if (importFlow({ ...doc, id: crypto.randomUUID() }) === null) setNotice(useViewerStore.getState().flowStorageError ? null : t('flowPanel.limitReached'));
     else setNotice(null);
   };
 
-  const onDelete = () => {
+  const onDelete = async () => {
     if (!flowDoc || isContributedOpen) return;
-    if (!window.confirm(t('flowPanel.deleteConfirm', { name: flowDoc.name }))) return;
+    if (!await confirmDialog({ description: t('flowPanel.deleteConfirm', { name: flowDoc.name }), destructive: true })) return;
     deleteFlow(flowDoc.id);
   };
 
@@ -156,7 +166,7 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
   const onDuplicateContributed = () => {
     if (!openedContributed) return;
     const copy: FlowDocument = { ...openedContributed.doc, id: crypto.randomUUID() };
-    if (importFlow(copy) === null) setNotice(t('flowPanel.limitReached'));
+    if (importFlow(copy) === null) setNotice(useViewerStore.getState().flowStorageError ? null : t('flowPanel.limitReached'));
     else setNotice(null);
   };
 
@@ -168,7 +178,7 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
   };
 
   const statusCounts = useMemo(() => {
-    const c = { ok: 0, memo: 0, noop: 0, error: 0, skipped: 0 };
+    const c: Record<NodeStatus, number> = { ok: 0, memo: 0, noop: 0, error: 0, skipped: 0, review: 0, paused: 0, restored: 0 };
     for (const r of lastRun?.reports ?? []) c[r.status] += 1;
     return c;
   }, [lastRun]);
@@ -192,27 +202,34 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
         </select>
         <button type="button" className={button} onClick={onNew}>{t('flowPanel.new')}</button>
         <FlowExamplePicker onOpen={onOpenExample} />
+        <AssistantAction />
         <button type="button" className={button} onClick={() => fileInput.current?.click()}>{t('flowPanel.import')}</button>
         <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-label={t('flowPanel.importAriaLabel')} onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImportFile(f); e.target.value = ''; }} />
         {flowDoc && openedContributed && (
           <>
             <span className="text-muted-foreground">{t('flowPanel.contributed.badge', { extension: openedContributed.extensionName })}</span>
             <button type="button" className={button} onClick={onDuplicateContributed} aria-label={t('flowPanel.contributed.duplicateAriaLabel')}>{t('flowPanel.contributed.duplicate')}</button>
-            <button type="button" className={`${button} inline-flex items-center gap-1 border-[#7aa2f7] text-[#7aa2f7]`} disabled={!canRun} onClick={() => void run()} title={activeModelId ? t('flowPanel.runHint') : t('flowPanel.noModel')}>
-              <Play className="h-3 w-3" aria-hidden="true" />{flowRunning ? t('flowPanel.running') : t('flowPanel.run')}
-            </button>
           </>
         )}
         {flowDoc && !isContributedOpen && (
           <>
             <button type="button" className={button} onClick={() => download(flowDoc.name, flowToJson(flowDoc))}>{t('flowPanel.export')}</button>
             <button type="button" className={button} disabled={!flowDirty} onClick={saveFlow}>{t('flowPanel.save')}</button>
+            <FlowStartupPreference />
             <button type="button" className={button} onClick={onDelete}>{t('flowPanel.delete')}</button>
             <span className="text-muted-foreground">{flowDirty ? t('flowPanel.unsaved') : t('flowPanel.saved')}</span>
-            <div className="inline-flex rounded border border-border" role="group" aria-label={t('flowPanel.view.ariaLabel')} data-flow-view-toggle>
+          </>
+        )}
+        {/* Player and Publish run the graph and publish that run's writes; neither
+            edits nor persists the graph itself, so a read-only contributed graph
+            gets them too (#5634). Its publish provenance reads
+            `flow:ext:<extension>:<graph>`, naming the extension that shipped it. */}
+        {flowDoc && (!isContributedOpen || openedContributed) && (
+          <>
+            <fieldset className="inline-flex min-w-0 rounded border border-border p-0" aria-label={t('flowPanel.view.ariaLabel')} data-flow-view-toggle>
               <button type="button" className={`px-2 py-0.5 ${view === 'editor' ? 'bg-muted font-medium' : ''}`} aria-pressed={view === 'editor'} onClick={() => setView('editor')}>{t('flowPanel.view.editor')}</button>
               <button type="button" className={`px-2 py-0.5 ${view === 'player' ? 'bg-muted font-medium' : ''}`} aria-pressed={view === 'player'} onClick={() => setView('player')}>{t('flowPanel.view.player')}</button>
-            </div>
+            </fieldset>
             {view === 'editor' && (
               <button type="button" className={`${button} inline-flex items-center gap-1 border-[#7aa2f7] text-[#7aa2f7]`} disabled={!canRun} onClick={() => void run()} title={activeModelId ? t('flowPanel.runHint') : t('flowPanel.noModel')}>
                 <Play className="h-3 w-3" aria-hidden="true" />{flowRunning ? t('flowPanel.running') : t('flowPanel.run')}
@@ -224,8 +241,8 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
         {contributed.diagnostics.length > 0 && (
           <span className="text-amber-300">{t('flowPanel.contributed.diagnostics', { count: contributed.diagnostics.length })}</span>
         )}
+        {storageError && <output className="text-amber-300">{t('automationEditor.graphStorageError', { reason: storageError })}</output>}
         {notice && <span className="text-amber-300">{notice}</span>}
-        <button type="button" className="ml-auto rounded p-0.5 hover:bg-muted" onClick={onClose} aria-label={t('flowPanel.close')}><X className="h-3.5 w-3.5" /></button>
       </div>
 
       {flowDoc ? (
@@ -241,23 +258,27 @@ export function FlowPanel({ onClose }: { onClose: () => void }) {
             </div>
           </ReactFlowProvider>
         ) : (
-          <FlowPlayer doc={flowDoc} registry={registry} lastRun={lastRun} lastError={lastError} />
+          <FlowPlayer doc={flowDoc} registry={registry} lastRun={lastRun} lastError={lastError} onDocChange={onDocChange} />
         )
       ) : (
         <FlowExampleGallery onOpen={onOpenExample} />
       )}
 
+      {flowDoc && <FlowReviewCheckpoint doc={flowDoc} onResume={(checkpoint, values) => run(values, { resume: checkpoint })} />}
+
       {(lastRun || lastError) && (
-        <div className="flex flex-wrap items-center gap-x-3 border-t border-border px-3 py-1 text-[10px]" data-flow-run-bar>
+        <div className="flex flex-wrap items-center gap-x-3 border-t border-border px-3 py-1 text-2xs" data-flow-run-bar>
           {lastError && <span className="text-red-400">{t('flowPanel.run.failed')}: {lastError}</span>}
+          {lastError?.includes('backend feature "ai"') && <span className="text-amber-300">{t('flowReview.needsModel')}</span>}
           {lastRun && (
             <>
-              <span className={lastRun.ok ? 'text-emerald-300' : 'text-red-400'}>{lastRun.ok ? t('flowPanel.run.ok') : t('flowPanel.run.failed')}</span>
+              <span className={lastRun.ok ? 'text-emerald-300' : 'text-red-400'}>{!lastRun.ok ? t('flowPanel.run.failed') : lastRun.review.length ? t('flowPanel.run.awaitingReview') : t('flowPanel.run.ok')}</span>
               <span className="text-muted-foreground">{t('flowPanel.run.summary', statusCounts)}</span>
               {lastRun.writes > 0 && <span className="text-muted-foreground">{t('flowPanel.run.writes', { count: lastRun.writes })}</span>}
               {lastRun.log.filter((l) => l.level === 'error').slice(0, 3).map((l, i) => <span key={i} className="text-red-400">{l.nodeId}{l.laneKey ? `[${l.laneKey}]` : ''}: {l.message}</span>)}
             </>
           )}
+          {!flowRunning && <span className="ml-auto"><AssistantAction source="flowRun" labelKey="assistantSources.flowRun.discussRun" /></span>}
         </div>
       )}
     </div>

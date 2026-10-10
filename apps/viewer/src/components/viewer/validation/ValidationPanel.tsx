@@ -19,15 +19,22 @@
  * keeps its own document/report in the store regardless of which side is on
  * screen, and `useInformationValidation`'s rule-set/report state is equally
  * unaffected by which side is displayed.
+ *
+ * The third tab, "Manual validation" (#6401), is a checklist of verdicts
+ * recorded by eye (`ManualValidationTab`). Its state lives in
+ * `manualValidationSlice`, never in the shared `ValidationReport`, so it
+ * neither replaces nor is replaced by an IDS or information run.
  */
 
-import { useState } from 'react';
+import { AssistantAction } from '../assistant/AssistantAction';
+import { SavedValidationReports } from './SavedValidationReports';
+import { DefinitionLibraryToolbar } from './DefinitionLibraryToolbar';
 import { X } from 'lucide-react';
 import { useTranslation, type TranslationKey } from '@/i18n';
 import { useViewerStore } from '@/store';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { cn } from '@/lib/utils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { tourAnchor, TOUR_ANCHORS } from '@/lib/tours/anchors';
 import { IDSPanel } from '@/components/viewer/IDSPanel';
 import { IDSPanelResults } from '@/components/viewer/IDSPanelResults';
@@ -36,10 +43,17 @@ import { ValidationPanelEmpty, InformationValidationEntry } from './ValidationPa
 import { IdsSummary } from './ValidationPanel.idsSummary';
 import { useInformationValidation } from '@/hooks/validation/useInformationValidation';
 import { useValidationResults } from '@/hooks/validation/useValidationResults';
+import { useManualValidation } from '@/hooks/validation/useManualValidation';
+import { ManualValidationTab } from './ManualValidationTab';
 import type { RecentRuleSet } from '@/lib/validation/recent-rule-sets';
+import {
+  setValidationSourceChoice as setActiveSource,
+  useValidationSourceChoice,
+  type ValidationSourceChoice,
+} from '@/lib/validation/validation-source-choice';
 import type { RuleModelPickerModel } from './RuleModelPicker';
 
-type Source = 'ids' | 'rules';
+type Source = ValidationSourceChoice;
 
 interface ValidationPanelProps {
   onClose?: () => void;
@@ -49,21 +63,26 @@ export function ValidationPanel({ onClose }: ValidationPanelProps) {
   const { t } = useTranslation();
   const info = useInformationValidation();
   const results = useValidationResults();
+  const manual = useManualValidation();
+  const manualEditorKey = useViewerStore((state) => {
+    const entry = state.manualLibrary.checklists.find(candidate => candidate.id === state.manualLibrary.activeId);
+    return entry?.preferredModelFingerprint ? entry.id : 'manual-unbound';
+  });
+  const hasManualChecklists = useViewerStore((state) => state.manualLibrary.checklists.length > 0);
   const idsDocument = useViewerStore((s) => s.idsDocument);
+  const definitions = useViewerStore((s) => s.validationDefinitions);
   const validationSource = useViewerStore((s) => s.validationSource);
   const storeModels = useViewerStore((s) => s.models);
 
-  const [activeSource, setActiveSource] = useState<Source | null>(null);
+  // Shared with the IDS tour (#5608), which puts the panel on its IDS side.
+  const activeSource = useValidationSourceChoice((s) => s.choice);
   // Default, before any explicit pick: whichever side already has content,
-  // IDS first. `info.file` is local React state, lost on remount (e.g.
-  // switching to another sidebar panel and back) — a landed rules REPORT
-  // survives in the store regardless, so it counts as evidence of the
-  // 'rules' path too, even though re-entering "Edit rules" after such a
-  // remount has nothing to populate the editor with (a known gap; see PR
-  // report). Once the user (or this default) picks a source, the toggle
-  // below drives it explicitly and this fallback no longer applies.
+  // IDS first, then Information, then Manual validation (#6401). All three
+  // survive remounts. Once the user picks a source, the toggle drives it.
   const effectiveSource: Source | null =
-    activeSource ?? (idsDocument ? 'ids' : (info.file || validationSource === 'rules') ? 'rules' : null);
+    activeSource ?? ((idsDocument || definitions.entries.some(entry => entry.kind === 'ids')) ? 'ids'
+      : (info.file || definitions.entries.some(entry => entry.kind === 'rules') || validationSource === 'rules') ? 'rules'
+        : (manual.checklist || hasManualChecklists) ? 'manual' : null);
 
   const modelsForPicker: RuleModelPickerModel[] = [...storeModels.values()].map((m) => ({
     id: m.id, name: m.name, sourceFingerprint: m.sourceFingerprint,
@@ -93,10 +112,33 @@ export function ValidationPanel({ onClose }: ValidationPanelProps) {
     setActiveSource('rules');
   };
 
+  const handleNewChecklist = () => {
+    manual.newChecklist();
+    setActiveSource('manual');
+  };
+
+  const handleClose = onClose ? () => {
+    useViewerStore.getState().clearValidationRuleSetDraft();
+    onClose();
+  } : undefined;
+
+  // #6690: tabs, storage notices and expanded history must share a bounded
+  // scroll area; otherwise their combined height can leave no results pane.
+  const chrome = (
+    // Native keyboard scrolling requires this scroll region to receive focus.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+    <section aria-label={t('validationPanel.title')} tabIndex={0}
+      className="min-h-0 max-h-[35%] shrink-0 overflow-auto focus-visible:outline-2 focus-visible:outline-primary">
+      <PanelHeader title={t('validationPanel.title')} onClose={handleClose} />
+      {effectiveSource !== null && <SourceToggle />}
+      <SavedValidationReports />
+    </section>
+  );
+
   if (effectiveSource === null) {
     return (
-      <div className="h-full flex flex-col bg-background">
-        <PanelHeader title={t('validationPanel.title')} onClose={onClose} />
+      <div className="h-full flex flex-col bg-background" data-validation-panel>
+        {chrome}
         <ValidationPanelEmpty
           onSelectIds={() => setActiveSource('ids')}
           onOpenRuleSetFile={handleOpenRuleSetFile}
@@ -105,6 +147,13 @@ export function ValidationPanel({ onClose }: ValidationPanelProps) {
           onLoadRecent={handleLoadRecent}
           recentRuleSets={info.recentRuleSets}
           error={info.error}
+          manual={{
+            onNew: handleNewChecklist,
+            onOpenFile: async (file) => { if ((await manual.openFromFile(file)).ok) setActiveSource('manual'); },
+            onLoadRecent: (entry) => { manual.loadFromRecent(entry); setActiveSource('manual'); },
+            recent: manual.recent,
+            error: manual.error,
+          }}
         />
       </div>
     );
@@ -114,23 +163,26 @@ export function ValidationPanel({ onClose }: ValidationPanelProps) {
   const hasResults = validationSource === 'rules' && results.report !== null && !info.editing && !info.running;
 
   return (
-    <div className="h-full flex flex-col bg-background">
-      <PanelHeader title={t('validationPanel.title')} onClose={onClose} />
-      <SourceToggle active={effectiveSource} onChange={setActiveSource} />
-      {effectiveSource === 'ids' ? (
-        <div className="flex-1 min-h-0 flex flex-col">
-          <IDSPanel embedded />
-        </div>
-      ) : info.running ? (
+    <Tabs value={effectiveSource} onValueChange={(value) => setActiveSource(value === 'ids' || value === 'manual' ? value : 'rules')} className="h-full flex flex-col bg-background" data-validation-panel>
+      {chrome}
+      <TabsContent value="ids" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <IDSPanel embedded />
+      </TabsContent>
+      <TabsContent value="rules" className="mt-0 flex-1 min-h-0 flex flex-col">
+      {!hasResults && <DefinitionLibraryToolbar kind="rules" onNew={handleNewRuleSet} onImportFile={handleOpenRuleSetFile} />}
+      {info.running ? (
         <RunningState progress={info.progress} totalRules={info.file?.rules.length ?? 0} onCancel={info.cancel} />
       ) : hasResults ? (
         <div className="flex-1 min-h-0 flex flex-col">
-          <div className="p-2 border-b">
-            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => info.setEditing(true)}>
-              {t('validationPanel.editRules')}
-            </Button>
-          </div>
           <IDSPanelResults
+            summaryControls={<>
+              <DefinitionLibraryToolbar kind="rules" onNew={handleNewRuleSet} onImportFile={handleOpenRuleSetFile} />
+              <div className="p-2 border-b">
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => info.setEditing(true)}>
+                  {t('validationPanel.editRules')}
+                </Button>
+              </div>
+            </>}
             results={results}
             runValidation={async () => null}
             onEntityClick={(modelId, expressId) => results.focusEntity(modelId, expressId)}
@@ -151,7 +203,11 @@ export function ValidationPanel({ onClose }: ValidationPanelProps) {
           />
         </div>
       )}
-    </div>
+      </TabsContent>
+      <TabsContent value="manual" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <ManualValidationTab key={manualEditorKey} manual={manual} />
+      </TabsContent>
+    </Tabs>
   );
 }
 
@@ -159,11 +215,13 @@ function PanelHeader({ title, onClose }: { title: string; onClose?: () => void }
   return (
     <div className="flex items-center justify-between p-3 border-b">
       <span className="font-medium text-sm">{title}</span>
+      <div className="ml-auto flex items-center gap-1"><AssistantAction />
       {onClose && (
         <Button variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label={title} onClick={onClose}>
           <X className="h-4 w-4" />
         </Button>
       )}
+      </div>
     </div>
   );
 }
@@ -171,30 +229,25 @@ function PanelHeader({ title, onClose }: { title: string; onClose?: () => void }
 /** Persistent source switch (issue #5138's core UX ask): visible in every
  *  non-empty state so the user can move between IDS validation and
  *  Information validation without losing either side's state. */
-function SourceToggle({ active, onChange }: { active: Source; onChange: (source: Source) => void }) {
+function SourceToggle() {
   const { t } = useTranslation();
   const options: [Source, TranslationKey][] = [
     ['ids', 'validationPanel.toggle.ids'],
     ['rules', 'validationPanel.toggle.rules'],
+    ['manual', 'validationPanel.toggle.manual'],
   ];
   return (
-    <div className="flex items-center gap-1 px-3 py-1.5 border-b" role="tablist">
+    <TabsList className="flex h-auto flex-wrap justify-start gap-1 rounded-none border-b bg-transparent px-3 py-1.5">
       {options.map(([source, labelKey]) => (
-        <button
+        <TabsTrigger
           key={source}
-          type="button"
-          role="tab"
-          aria-selected={active === source}
-          onClick={() => onChange(source)}
-          className={cn(
-            'rounded px-2 py-1 text-xs transition-colors',
-            active === source ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
-          )}
+          value={source}
+          className="rounded px-2 py-1 text-xs transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
         >
           {t(labelKey)}
-        </button>
+        </TabsTrigger>
       ))}
-    </div>
+    </TabsList>
   );
 }
 

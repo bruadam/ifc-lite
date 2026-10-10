@@ -68,6 +68,8 @@ export function CommitRow({ row, canOpen, onAction }: CommitRowProps) {
   const { t } = useTranslation();
   const locale = getLocale();
   const { commit } = row;
+  const included = commit.meta?.historyPackageArtifactIncluded !== false;
+  canOpen &&= included;
   const stats = commitStatsText(commit);
   const handle = useCallback((action: CommitRowAction) => () => onAction(action, row), [onAction, row]);
 
@@ -122,6 +124,7 @@ export function CommitRow({ row, canOpen, onAction }: CommitRowProps) {
             </span>
           )}
         </div>
+        {!included && <p className="text-xs text-muted-foreground">{t('history.package.unavailable')}</p>}
         {row.isMerge && <div className="mt-0.5 text-[10px] text-muted-foreground">{t('history.timeline.mergeCommit')}</div>}
       </div>
 

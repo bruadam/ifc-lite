@@ -6,7 +6,8 @@
  * Types for IFC mutation tracking
  */
 
-import type { PropertyValueType, IfcAttributeValue as CanonicalIfcAttributeValue } from '@ifc-lite/data';
+import type { MutationType } from './mutation-type.js';
+import type { PropertyValueType, PropertySet, QuantitySet, IfcAttributeValue as CanonicalIfcAttributeValue } from '@ifc-lite/data';
 
 /**
  * IFC STEP attribute value, as produced by `EntityExtractor.extractEntity()`.
@@ -44,33 +45,10 @@ type _IfcAttributeValueMirrorInSync = AssertTrue<
   MutuallyAssignable<IfcAttributeValue, CanonicalIfcAttributeValue>
 >;
 
-/**
- * Property value types supported by mutations
- */
+/** Property value types supported by mutations */
 export type PropertyValue = string | number | boolean | null | PropertyValue[];
 
-/**
- * Types of mutations that can be applied to IFC data
- */
-export type MutationType =
-  | 'CREATE_PROPERTY'
-  | 'UPDATE_PROPERTY'
-  | 'DELETE_PROPERTY'
-  | 'CREATE_PROPERTY_SET'
-  | 'DELETE_PROPERTY_SET'
-  | 'CREATE_QUANTITY'
-  | 'UPDATE_QUANTITY'
-  | 'DELETE_QUANTITY'
-  /** A whole quantity set removed, the twin of `DELETE_PROPERTY_SET`. Distinct
-   *  from `DELETE_QUANTITY`, which names one quantity inside a set: replaying a
-   *  set removal as a member removal drops the set's other members on the
-   *  floor, and both replay consumers key off `propName` being present. */
-  | 'DELETE_QUANTITY_SET'
-  | 'UPDATE_ATTRIBUTE'
-  | 'UPDATE_POSITIONAL_ATTRIBUTE'
-  | 'UPDATE_ENTITY_TYPE'
-  | 'CREATE_ENTITY'
-  | 'DELETE_ENTITY';
+export type { MutationType } from './mutation-type.js';
 
 /**
  * A single mutation operation
@@ -87,6 +65,9 @@ export interface Mutation {
   /** Entity EXPRESS ID */
   entityId: number;
 
+  /** Domain label for a SESSION_EDIT, e.g. a retained native Room layout. */
+  sessionKind?: string;
+
   // Property/Quantity specific fields
   /** Property set or quantity set name */
   psetName?: string;
@@ -100,8 +81,14 @@ export interface Mutation {
   valueType?: PropertyValueType;
   /** Quantity type (Length, Area, Volume, etc.) — for CREATE/UPDATE_QUANTITY */
   quantityType?: number;
+  /** Previous quantity class; absent only in older history entries. */
+  oldQuantityType?: number;
+  /** Previous unit; null records an explicitly absent unit. */
+  oldUnit?: string | null;
   /** Unit (for quantities) */
   unit?: string;
+  /** Explicitly removed unit in a quantity edit; absent in older histories. */
+  unitRemoved?: boolean;
 
   // Attribute specific fields
   /** Attribute name (IFC entity attributes like Name, Description, ObjectType, Tag, etc.) */
@@ -116,7 +103,43 @@ export interface Mutation {
    * USERDEFINED + ObjectType (mirrors IfcOpenShell's reassign_class).
    */
   predefinedType?: string | null;
+
+  /**
+   * The touched set's overlay state right before and right after a whole-set
+   * edit (`CREATE_PROPERTY_SET`, `DELETE_PROPERTY_SET`, whole-set
+   * `CREATE_QUANTITY`, `DELETE_QUANTITY_SET`, `DELETE_QUANTITY`). These edits
+   * rewrite several overlay rows at once and carry no per-row old value, so
+   * undo restores `before` and redo restores `after` via
+   * `MutablePropertyView.restoreSetOverlay` (#5965).
+   */
+  setOverlay?: { before: SetOverlaySnapshot; after: SetOverlaySnapshot };
 }
+
+/**
+ * Every overlay row one property or quantity set owns on one entity, captured
+ * verbatim. Base (file) data is immutable and not part of it.
+ */
+export type SetOverlaySnapshot = {
+  entityId: number;
+  setName: string;
+  /** Whether a base set of this name is masked by a whole-set deletion. */
+  masked: boolean;
+} & (
+  | {
+    kind: 'property';
+    /** Per-property overlay rows under this set, keyed by `propertyKey`. */
+    entries: Array<[key: string, mutation: PropertyMutation]>;
+    /** The in-session set of this name, if one exists. */
+    created: PropertySet | null;
+  }
+  | {
+    kind: 'quantity';
+    /** Per-quantity overlay rows under this set, keyed by `quantityKey`. */
+    entries: Array<[key: string, mutation: QuantityMutation]>;
+    /** The in-session set of this name, if one exists. */
+    created: QuantitySet | null;
+  }
+);
 
 /**
  * A collection of related mutations
@@ -169,8 +192,10 @@ export interface QuantityMutation {
   value?: number;
   /** Quantity type (Length, Area, Volume, etc.) */
   quantityType?: number;
-  /** Unit (optional) */
+  /** Unit (optional). */
   unit?: string;
+  /** Explicitly clear an inherited source unit rather than retaining it. */
+  unitRemoved?: boolean;
 }
 
 /**

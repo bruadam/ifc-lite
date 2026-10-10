@@ -619,6 +619,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1283,6 +1289,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "gltf"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3ce1918195723ce6ac74e80542c5a96a40c2b26162c1957a5cd70799b8cacf7"
+dependencies = [
+ "byteorder",
+ "gltf-json",
+ "lazy_static",
+ "serde_json",
+]
+
+[[package]]
+name = "gltf-derive"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14070e711538afba5d6c807edb74bcb84e5dbb9211a3bf5dea0dfab5b24f4c51"
+dependencies = [
+ "inflections",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "gltf-json"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6176f9d60a7eab0a877e8e96548605dedbde9190a7ae1e80bbcc1c9af03ab14"
+dependencies = [
+ "gltf-derive",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1490,11 +1532,21 @@ checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
 name = "ifc-lite-clash"
-version = "19.0.1"
+version = "20.3.0"
+
+[[package]]
+name = "ifc-lite-cloud-import"
+version = "20.3.0"
+dependencies = [
+ "gltf",
+ "nalgebra",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "ifc-lite-core"
-version = "19.0.1"
+version = "20.3.0"
 dependencies = [
  "fast-float2",
  "futures-core",
@@ -1506,19 +1558,20 @@ dependencies = [
  "rustc-hash",
  "serde_json",
  "smallvec",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
 [[package]]
 name = "ifc-lite-export"
-version = "19.0.1"
+version = "20.3.0"
 dependencies = [
  "arrow",
  "bytemuck",
  "ifc-lite-core",
  "ifc-lite-geometry",
  "ifc-lite-processing",
+ "nalgebra",
  "parquet",
  "rustc-hash",
  "serde",
@@ -1529,7 +1582,7 @@ dependencies = [
 
 [[package]]
 name = "ifc-lite-ffi"
-version = "19.0.1"
+version = "20.3.0"
 dependencies = [
  "ifc-lite-processing",
  "mimalloc",
@@ -1539,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "ifc-lite-geometry"
-version = "19.0.1"
+version = "20.3.0"
 dependencies = [
  "approx",
  "bnum",
@@ -1563,13 +1616,13 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
 [[package]]
 name = "ifc-lite-landxml"
-version = "19.0.1"
+version = "20.3.0"
 dependencies = [
  "geometry-predicates",
  "ifc-lite-geometry",
@@ -1580,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "ifc-lite-processing"
-version = "19.0.1"
+version = "20.3.0"
 dependencies = [
  "ifc-lite-core",
  "ifc-lite-geometry",
@@ -1597,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "ifc-lite-server"
-version = "19.0.1"
+version = "20.3.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1621,7 +1674,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
  "tower",
@@ -1633,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "ifc-lite-wasm"
-version = "19.0.1"
+version = "20.3.0"
 dependencies = [
  "console_error_panic_hook",
  "futures-util",
@@ -1651,7 +1704,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -1671,6 +1724,12 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "inflections"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
 
 [[package]]
 name = "insta"
@@ -2755,9 +2814,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
+checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
 name = "snap"
@@ -2850,11 +2909,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl 2.0.20",
+ "thiserror-impl 2.0.21",
 ]
 
 [[package]]
@@ -2870,9 +2929,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3605,9 +3664,9 @@ dependencies = [
 
 [[package]]
 name = "xxhash-rust"
-version = "0.8.15"
+version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "zerocopy"

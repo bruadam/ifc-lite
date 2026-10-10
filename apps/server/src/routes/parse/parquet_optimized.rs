@@ -20,7 +20,9 @@ use crate::services::{
     baked_basis_zup, extract_data_model, serialize_data_model_to_parquet,
     serialize_to_parquet_optimized_with_stats, VERTEX_MULTIPLIER,
 };
+use crate::types::finish_meshes;
 use crate::AppState;
+use ifc_lite_processing::style::ModelFinishes;
 use axum::{
     extract::{Multipart, Query, State},
     response::Response,
@@ -89,7 +91,10 @@ pub async fn parse_parquet_optimized(
     // Cache first, before any processing (issue #3889). The optimized route is
     // the SMALL payload and the one a viewer opens repeatedly, so re-parsing it
     // on every request was the worst of both shapes.
-    if let Some(response) = try_cached_optimized_parquet(&state, &cache_key).await? {
+    let data_model_entities = query.data_model_entities;
+    if let Some(response) =
+        try_cached_optimized_parquet(&state, &cache_key, data_model_entities).await?
+    {
         return Ok(response);
     }
 
@@ -115,16 +120,23 @@ pub async fn parse_parquet_optimized(
             // First: geometry and the data model in parallel, mirroring
             // `parse_parquet` -- independent extractions over the same bytes,
             // each on its own rayon thread.
-            let (mut result, data_model) = rayon::join(
+            // #5984: the finish index is a third independent read of the bytes.
+            let (mut result, (mut data_model, mut finishes)) = rayon::join(
                 || process_geometry_filtered_with_quality(&content, opening_filter, tessellation_quality),
-                || extract_data_model(&content),
+                || rayon::join(|| extract_data_model(&content), || ModelFinishes::from_content(&content)),
             );
+            let meshes = finish_meshes(&mut finishes, std::mem::take(&mut result.meshes));
+            drop(finishes);
             let dm_stats = DataModelStats {
                 entity_count: data_model.entities.len(),
                 property_set_count: data_model.property_sets.len(),
                 relationship_count: data_model.relationships.len(),
                 spatial_node_count: data_model.spatial_hierarchy.nodes.len(),
             };
+            // After the stats (#6034): they describe the MODEL, so the header
+            // they go into is the same for both entities variants, and the
+            // one metadata entry both share can never disagree with either.
+            data_model_entities.apply(&mut data_model);
             // Don't include normals by default - client can compute them
             // The frame `result`'s vertices were baked in (#4118): the
             // collator's emitted `rel` is consumed directly by this route, so
@@ -147,7 +159,7 @@ pub async fn parse_parquet_optimized(
                 || extract_symbolic_data_with_provenance_in_frame(&content, result.frame),
                 || {
                     rayon::join(
-                        || serialize_to_parquet_optimized_with_stats(&result.meshes, false, Some(&basis)),
+                        || serialize_to_parquet_optimized_with_stats(&meshes, false, Some(&basis)),
                         || serialize_data_model_to_parquet(&data_model),
                     )
                 },
@@ -157,7 +169,7 @@ pub async fn parse_parquet_optimized(
             let dm_parquet = dm_parquet?;
             // Nothing after this reads the meshes; free them here rather than
             // hold the model across the cache writes below.
-            drop(std::mem::take(&mut result.meshes));
+            drop(meshes);
             tracing::info!(
                 cache_key = %cache_key_for_log,
                 input_meshes = opt_stats.input_meshes,
@@ -184,7 +196,7 @@ pub async fn parse_parquet_optimized(
     // same ordering `parse_parquet` uses and the same #3869 reasoning: written
     // synchronously, before the response, not in a background task, because a
     // background write races the client's very next request.
-    cache_data_model(&state, &cache_key, &dm_parquet).await;
+    cache_data_model(&state, &cache_key, data_model_entities, &dm_parquet).await;
 
     // Cache the symbolic stream so the client can fetch it via
     // `GET /api/v1/parse/symbolic/{cache_key}`.

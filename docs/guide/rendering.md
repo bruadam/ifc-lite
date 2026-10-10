@@ -42,6 +42,20 @@ flowchart TB
 
 Key rendering features include section planes for model slicing, snap detection for precision interaction, GPU picking for object selection, and measurement tools for calculating distances and angles between geometry points. For generating 2D plans and elevations from 3D models, see the [2D Drawing Guide](drawing-2d.md).
 
+## Inspecting swept-disk source geometry
+
+Select a product containing `IfcSweptDiskSolid` geometry, then open **Properties → Quantities → Derived source geometry** or **Measure → Source**. Each solid shows its source solid and directrix IDs, mapped path, effective radius, optional inner radius, complete or unsupported status, and whether a CSG operation modified the source. Complete records show analytic total and per-segment centreline lengths, plus each arc's bend magnitude and signed sweep. Click an unmodified segment row to isolate it in the centreline overlay; click it again to clear the highlight.
+
+These lengths come from the authored directrix in metres, with the viewer's display-unit preference applied. They are separate from authored IFC attributes and `IfcElementQuantity` values. A source modified by CSG may differ from the visible mesh, and an unsupported description cannot provide a derived length. The readout does not infer fabrication quantities or a bar count.
+
+## Inspecting authored extrusion profiles
+
+Select a product containing `IfcExtrudedAreaSolid` geometry and open **Properties → Quantities → Authored extrusion sources**. Each occurrence identifies its solid, mapped path, depth, extrusion direction, profile type and profile ID. Expand a profile loop to inspect its exact line and arc segments, perimeter and signed area. Expand **Source placement** to inspect the profile, solid and world transform translations and axes. Lengths and areas are converted from IFC file units to SI for display; world translation is absolute IFC Z-up metres, before the viewer's render-origin shift. A CSG-modified occurrence is marked because its authored profile can differ from the visible result. Unsupported profiles are reported without reconstructing a profile from the mesh. The section stays hidden for products with no extrusion source.
+
+With the centreline overlay enabled, the Measure tool can snap to its authored line and signed arc segments. The snap point is evaluated on the source curve in the displayed model frame, including federation alignment and model placement; the drawn line approximation does not determine it. Segment snapping stops when the overlay is off, the product is hidden or isolated away, or a CSG-modified source cannot describe the visible solid. `SnapTarget.metadata.sourceCurve` identifies the source model, product, solid, directrix, mapped path, occurrence and segment, and carries the exact source length and normalized parameter. Mesh and scan snaps remain available at the same cursor.
+
+For renderer integrations, `Renderer.setSourceSnapCurves(curves)` replaces the opt-in list used by magnetic picking. Each `SourceSnapCurve` supplies a global picking ID, authored source identity, kind (`line` or `arc`), exact length, and `pointAt(t)` evaluator in displayed Y-up world metres; signed arcs also supply `sweepAngle`. Set `affineDisplayFrame: false` when the evaluator includes a nonlinear cross-CRS reprojection, so clip handling checks the evaluated point instead of assuming linear or circular clip roots. An extremely narrow clipped span after nonlinear reprojection may have no candidate; the picker never returns a clipped point. Pass `[]` when the source overlay is hidden or its selection changes.
+
 ## Basic Setup
 
 ```typescript
@@ -640,20 +654,20 @@ The viewer app provides a **basket** — an incremental isolation set that lets 
 
 | Operation | Keyboard | Toolbar | Context Menu | Description |
 |-----------|----------|---------|--------------|-------------|
-| **Set** | `I` | `=` button | Set as Basket (=) | Replace basket with current selection |
-| **Add** | `+` | `+` button | Add to Basket (+) | Add current selection to basket |
+| **Isolate** | `I` | Isolate button | Isolate selection | Replace basket with current selection and isolate it |
+| **Set** | — | Set button | Set as Basket | Replace basket with current selection |
+| **Add** | `=` or `+` | `+` button | Add to Basket | Add current selection to basket |
 | **Remove** | `-` | `-` button | Remove from Basket (-) | Remove current selection from basket |
-| **Clear** | `Esc` | — | — | Clear basket and all filters |
-| **Show All** | `A` | Eye icon | Show All | Clear hidden/isolated state |
+| **Show All** | `A` | Eye icon | Show All | Clear every filter; see below |
 
 **Workflow example:**
 
 1. Click a wall, press `I` — basket now contains just that wall (everything else hidden)
-2. Cmd+Click two doors to multi-select them, press `+` — doors are added to the basket
-3. Click a window, press `+` — window added too
+2. Cmd+Click two doors to multi-select them, press `=` or `+` — doors are added to the basket
+3. Click a window, press `=` or `+` — window added too
 4. Click the wall, press `-` — wall removed from basket, only doors and window remain
 
-The toolbar `=` button shows a badge with the current basket count when active. Multi-select (Cmd/Ctrl+Click) works with all basket operations — select multiple entities first, then press `+` or `-` to add/remove them all at once.
+The toolbar Set button shows a badge with the current basket count when active. Multi-select (Cmd/Ctrl+Click) works with all basket operations — select multiple entities first, then press `=` / `+` or `-` to add/remove them all at once.
 
 **Additional visibility shortcuts:**
 
@@ -661,8 +675,29 @@ The toolbar `=` button shows a badge with the current basket count when active. 
 |----------|--------|
 | `Del` / `Backspace` | Hide selected entity |
 | `Space` | Hide selected entity (viewport-focused only) |
-| `A` | Show all (reset hidden + isolation) |
-| `Esc` | Reset all (clear selection, basket, isolation, tools) |
+| `A` | Show all (see below for what it clears and what it keeps) |
+| `Esc` | One step per press: cancel the gesture in progress, else leave the tool, else clear the selection. Never changes visibility |
+
+**What Show All clears.** Show All, the `A` key and the context menu's Show all use one visibility-reason table (`apps/viewer/src/lib/visibility/visibility-reasons.ts`). Home changes the camera pose and fit while leaving visibility intact. At 1 model and at N models alike, Show All clears:
+
+- manual hides outside the active lens's hide set;
+- isolation (and leaves the basket view);
+- X-ray ghosting;
+- the Class filter;
+- the storey filter and Solo mode;
+- Exploded mode (levels return to Stacked);
+- hidden federated models.
+
+It deliberately **keeps** four settings that are preferences rather than filters on this view:
+
+- the active lens, with its colours and its hides;
+- the class-type toggles (Spaces, Openings, Site, …), which are remembered between sessions;
+- the Model/Types view mode;
+- classes an embedding page hid.
+
+If you manually hid an element before the active lens also hid it, the element
+stays manually hidden when you turn the lens off. Show All keeps that overlap
+with the lens without transferring ownership of your hide to the lens.
 
 ## Render Options
 
@@ -964,7 +999,12 @@ non-framing grid bubble otherwise.
 
 The equivalent for 3D line overlays is keyed by channel rather than per item:
 `setLineOverlay('annotation', …)` grows the bounds and `setLineOverlay('grid', …)`
-does not.
+does not. The `centreline` channel is also non-framing: it is intended for a
+selected element's analytic directrix, and clearing it with
+`setLineOverlay('centreline', null)` leaves the other line channels alone.
+The centreline drawing remains visible as x-ray context through section and
+crop cuts. Magnetic snapping to its exact source curve still follows the active
+pick clipping, so a clipped-out part of that drawing is not a snap target.
 
 ## Complete Example
 

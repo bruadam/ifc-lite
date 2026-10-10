@@ -60,6 +60,14 @@ export interface SpatialAnchor {
   guidRandom?: RandomSource;
 }
 
+function finiteRoundedLength(value: number): number {
+  if (!Number.isFinite(value)) throw new Error('Length conversion overflow: derived length must be finite');
+  // Above this bound decimal rounding itself would overflow. The number's
+  // representable precision already exceeds nine decimal places.
+  return Math.abs(value) <= Number.MAX_VALUE / 1e9 ? Math.round(value * 1e9) / 1e9 : value;
+}
+
+
 /**
  * Convert a metre value to the anchor's native length unit for STEP emit.
  * Rounded to 9 decimals to absorb the float noise the division introduces
@@ -72,8 +80,9 @@ export interface SpatialAnchor {
  */
 export function toNativeLength(anchor: Pick<SpatialAnchor, 'lengthUnitScale'>, metres: number): number {
   const scale = anchor.lengthUnitScale;
+  if (!Number.isFinite(metres)) throw new Error('Length must be finite');
   if (!scale || !Number.isFinite(scale) || scale <= 0 || scale === 1) return metres;
-  return Math.round((metres / scale) * 1e9) / 1e9;
+  return finiteRoundedLength(metres / scale);
 }
 
 /**
@@ -87,8 +96,9 @@ export function toNativeLength(anchor: Pick<SpatialAnchor, 'lengthUnitScale'>, m
  */
 export function fromNativeLength(anchor: Pick<SpatialAnchor, 'lengthUnitScale'>, native: number): number {
   const scale = anchor.lengthUnitScale;
+  if (!Number.isFinite(native)) throw new Error('Native length must be finite');
   if (!scale || !Number.isFinite(scale) || scale <= 0 || scale === 1) return native;
-  return Math.round(native * scale * 1e9) / 1e9;
+  return finiteRoundedLength(native * scale);
 }
 
 /** 2D point variant of {@link toNativeLength}. */
@@ -99,4 +109,32 @@ export function toNativePoint2(anchor: SpatialAnchor, p: readonly [number, numbe
 /** 3D point variant of {@link toNativeLength}. */
 export function toNativePoint3(anchor: SpatialAnchor, p: readonly [number, number, number]): [number, number, number] {
   return [toNativeLength(anchor, p[0]), toNativeLength(anchor, p[1]), toNativeLength(anchor, p[2])];
+}
+
+/** The host an opening voids: which placement frame it is cut in, and how. */
+export type HostKind = 'wall' | 'slab';
+
+/**
+ * Axis-aligned bounds of a host's Body geometry, expressed in the host's own
+ * `ObjectPlacement` frame and the file's native length unit. For a wall that
+ * frame is the usual `X` along the axis, `Y` across the thickness, `Z` up; for
+ * a slab `Z` spans the thickness.
+ */
+export interface HostBounds {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+/**
+ * A `SpatialAnchor` for an element that is cut into (or fills an opening in)
+ * an existing host. The storey fields are the HOST's containing storey, so a
+ * filling lands in the same storey as the element it is hosted by.
+ */
+export interface HostAnchor extends SpatialAnchor {
+  hostId: number;
+  hostKind: HostKind;
+  /** The host's own IfcLocalPlacement; openings are placed relative to it. */
+  hostPlacementId: number;
+  /** `null` when the host's Body is not a shape the resolver can bound. */
+  hostBounds: HostBounds | null;
 }

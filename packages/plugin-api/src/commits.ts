@@ -16,7 +16,7 @@
 // layering claim — read them as one contract.
 // ============================================================================
 
-import type { SourceIdentity } from './auth.js';
+import type { SourceIdentity } from './source-auth.js';
 import type { DownloadOptions, ListOptions } from './types.js';
 
 // ---------------------------------------------------------------------------

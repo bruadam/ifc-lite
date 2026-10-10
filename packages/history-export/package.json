@@ -1,0 +1,43 @@
+{
+  "name": "@ifc-lite/history-export",
+  "version": "0.1.0",
+  "description": "IFC history properties, change sets and verified offline history packages",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "pnpm exec tsc",
+    "typecheck": "node ../../scripts/typecheck-tests.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ifc-lite/export": "workspace:^",
+    "@ifc-lite/mutations": "workspace:^",
+    "@ifc-lite/parser": "workspace:^",
+    "@ifc-lite/data": "workspace:^",
+    "@ifc-lite/diff": "workspace:^",
+    "@ifc-lite/bcf": "workspace:^",
+    "@ifc-lite/plugin-api": "workspace:^",
+    "jszip": "^3.10.1",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.2"
+  },
+  "license": "MPL-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}

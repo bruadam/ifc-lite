@@ -96,7 +96,7 @@ export function asDaluxHttpClient(client: BrowserDaluxApiClient): DaluxHttpClien
     // surface response headers; guessing one from the URL's extension would
     // be a fabricated header, not a missing one.
     binary: async (url: string, config: DaluxRequestConfig = {}): Promise<DaluxBinaryResponse> => ({
-      bytes: await client.getBinary(url, config.signal),
+      bytes: await client.getBinary(url, { signal: config.signal }),
     }),
   };
 }

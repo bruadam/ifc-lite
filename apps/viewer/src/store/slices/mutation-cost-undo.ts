@@ -22,6 +22,7 @@ import type { MeshData } from '@ifc-lite/geometry';
 import { getAttributeNamesAcrossSchemas } from '@ifc-lite/parser';
 import type { ViewerState } from '../index.js';
 import { normalizeMutationModelId } from '../../sdk/adapters/mutation-view.js';
+import { clearModelHistory, recordHistory } from './mutation-history-record.js';
 
 type SetState = (partial: Partial<ViewerState> | ((state: ViewerState) => Partial<ViewerState>)) => void;
 const costEntityRoomKeys = new WeakMap<NewEntity, string>();
@@ -35,17 +36,27 @@ export function mirrorCreateEntityRedo(
   state: ViewerState,
   modelId: string,
   entity: NewEntity,
-  mesh: MeshData | null = null,
+  meshes: readonly MeshData[] = [],
 ): void {
   const names = getAttributeNamesAcrossSchemas(entity.type);
   const guid = names[0] === 'GlobalId' && typeof entity.attributes[0] === 'string'
     ? entity.attributes[0]
     : costEntityRoomKeys.get(entity) ?? null;
-  state.mirrorEntityCreate(modelId, entity.expressId, entity.type, guid, mesh);
+  state.mirrorEntityCreate(modelId, entity.expressId, entity.type, guid, null);
+  mirrorRestoredMeshes(state, modelId, entity.expressId, meshes);
   entity.attributes.forEach((value, index) => {
     const name = names[index];
     if (name) state.mirrorAttributeEdit(modelId, entity.expressId, name, value);
   });
+}
+
+/**
+ * Every stashed mesh goes back to the room, not just the first: a re-meshed
+ * element carries one per material layer or style (#6232). Replaces, so a
+ * re-mesh of the same redo landing first or second leaves one copy.
+ */
+function mirrorRestoredMeshes(state: ViewerState, modelId: string, entityId: number, meshes: readonly MeshData[]): void {
+  if (meshes.length > 0) state.mirrorEntityGeometry(modelId, entityId, meshes);
 }
 
 /** Re-publish a restored source record after its room tombstone is undone. */
@@ -53,7 +64,7 @@ export function mirrorSourceEntityRestore(
   state: ViewerState,
   modelId: string,
   entityId: number,
-  mesh: MeshData | null,
+  meshes: readonly MeshData[],
 ): void {
   const store = state.models.get(modelId)?.ifcDataStore ?? state.ifcDataStore;
   if (!store) return;
@@ -62,7 +73,8 @@ export function mirrorSourceEntityRestore(
   const names = getAttributeNamesAcrossSchemas(entity.type);
   const guid = store.entities.getGlobalId(entityId)
     ?? (names[0] === 'GlobalId' && typeof entity.attributes[0] === 'string' ? entity.attributes[0] : null);
-  state.mirrorEntityCreate(modelId, entityId, entity.type, guid, mesh);
+  state.mirrorEntityCreate(modelId, entityId, entity.type, guid, null);
+  mirrorRestoredMeshes(state, modelId, entityId, meshes);
   entity.attributes.forEach((value, index) => {
     const name = names[index];
     if (name) state.mirrorAttributeEdit(modelId, entityId, name, value);
@@ -85,8 +97,6 @@ export function pushCreateEntityUndo(
 ): void {
   set((s) => {
     const normalizedModelId = normalizeMutationModelId(s, modelId);
-    const newUndoStacks = new Map(s.undoStacks);
-    const stack = newUndoStacks.get(normalizedModelId) || [];
     const mutation: Mutation = {
       id: `mut_${ifcType.toLowerCase()}_${entityId}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       type: 'CREATE_ENTITY',
@@ -95,20 +105,7 @@ export function pushCreateEntityUndo(
       entityId,
       attributeName: ifcType,
     };
-    newUndoStacks.set(normalizedModelId, [...stack, mutation]);
-
-    const newRedoStacks = new Map(s.redoStacks);
-    newRedoStacks.set(normalizedModelId, []);
-
-    const newDirty = new Set(s.dirtyModels);
-    newDirty.add(normalizedModelId);
-
-    return {
-      undoStacks: newUndoStacks,
-      redoStacks: newRedoStacks,
-      dirtyModels: newDirty,
-      mutationVersion: s.mutationVersion + 1,
-    };
+    return recordHistory(s, normalizedModelId, [mutation]);
   });
 }
 
@@ -134,16 +131,9 @@ export function pushCreateEntityUndo(
 export function markCostRelationshipMutation(set: SetState, modelId: string): void {
   set((s) => {
     const normalizedModelId = normalizeMutationModelId(s, modelId);
-    const newUndoStacks = new Map(s.undoStacks);
-    newUndoStacks.set(normalizedModelId, []);
-    const newRedoStacks = new Map(s.redoStacks);
-    newRedoStacks.set(normalizedModelId, []);
-    const newDirty = new Set(s.dirtyModels);
-    newDirty.add(normalizedModelId);
     return {
-      undoStacks: newUndoStacks,
-      redoStacks: newRedoStacks,
-      dirtyModels: newDirty,
+      ...clearModelHistory(s, normalizedModelId),
+      dirtyModels: new Set(s.dirtyModels).add(normalizedModelId),
       mutationVersion: s.mutationVersion + 1,
     };
   });

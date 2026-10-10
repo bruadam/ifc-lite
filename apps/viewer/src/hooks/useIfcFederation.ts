@@ -10,6 +10,8 @@
  * Extracted from useIfc.ts for better separation of concerns
  */
 
+import { assertWorkflowOwner } from '@/lib/flow/run-session';
+import type { ModelLoadOptions, FederationAddModelOptions } from './modelLoadOptions.js';
 import { commitRealignmentFrame } from '@/lib/model-placement/realignment-frame';
 import { useCallback, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -28,6 +30,7 @@ import { convergeFederationRtcFrame } from './ingest/federationRtcRebase.js';
 import { toast } from '../components/ui/toast.js';
 import { acquireFederationLoadSlot, releaseFederationLoadSlot } from './federationLoadGate.js';
 import { realignFederatedPointClouds } from './ingest/pointCloudFederationLifecycle.js';
+import { showLoadError } from '@/lib/analytics';
 
 /**
  * Extended data store type for IFCX (IFC5) files.
@@ -56,7 +59,7 @@ export function useIfcFederation(
   loadFile: (
     file: File,
     target?: import('./useIfcLoader.js').LoadTarget,
-    options?: { sourceHandle?: FileSystemFileHandle },
+    options?: ModelLoadOptions,
   ) => Promise<void>,
 ) {
   const {
@@ -96,6 +99,9 @@ export function useIfcFederation(
   // Mirrors the same pattern in useIfcLoader.ts.
   const loadSessionRef = useRef(0), realignSessionRef = useRef(0);
 
+  const reportError = (message: string, code: string, retry: (() => void) | null) => // #5851: retry required
+    showLoadError(setError, useViewerStore.getState().setLastLoadRetry, message, code, retry);
+
   /**
    * Add a model to the federation (multi-model support)
    * Uses FederationRegistry to assign unique ID offsets - BULLETPROOF against ID collisions
@@ -103,16 +109,9 @@ export function useIfcFederation(
    */
   const addModel = useCallback(async (
     file: File,
-    options?: {
-      name?: string;
-      modelId?: string;
-      loadedAt?: number;
-      visible?: boolean;
-      collapsed?: boolean;
-      /** Live FS Access handle so this federated model stays refreshable. */
-      sourceHandle?: FileSystemFileHandle;
-    }
+    options?: FederationAddModelOptions
   ): Promise<string | null> => {
+    assertWorkflowOwner(options?.workflowOwner);
     const modelId = options?.modelId ?? crypto.randomUUID();
     // Request order, not completion order, decides the RTC anchor of overlapping loads (#4897).
     const loadedAt = options?.loadedAt ?? Date.now();
@@ -155,7 +154,7 @@ export function useIfcFederation(
         collapsed: options?.collapsed,
         loadedAt,
         sharedRtcOffset,
-      }, { sourceHandle: options?.sourceHandle });
+      }, { sourceHandle: options?.sourceHandle, workflowOwner: options?.workflowOwner });
 
       // Before the session check: a superseded load still settled a model (#4897, `federationRtcRebase.ts`).
       if (useViewerStore.getState().models.has(modelId)) convergeFederationRtcFrame();
@@ -186,7 +185,8 @@ export function useIfcFederation(
       }
       console.error('[useIfc] addModel failed:', err);
       if (isCurrent) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        reportError(err instanceof Error ? err.message : 'Unknown error', 'federated_add_failed',
+          () => { void addModel(file, options); });
         setLoading(false);
       }
       return null;
@@ -431,7 +431,7 @@ export function useIfcFederation(
         try {
           if (!window.localStorage.getItem(INTRO_KEY)) {
             window.localStorage.setItem(INTRO_KEY, '1');
-            useViewerStore.getState().openWorkspacePanel('layers');
+            useViewerStore.getState().openWorkspacePanel('layers', 'programmatic');
             toast.info(
               `Composed ${layers.length} layers - inspect, diff, publish, and merge them in the Layers panel.`,
             );
@@ -519,14 +519,15 @@ export function useIfcFederation(
     } catch (err: unknown) {
       console.error('[useIfc] Federated IFCX loading failed:', err);
       const message = err instanceof Error ? err.message : String(err);
-      setError(`Federated IFCX loading failed: ${message}`);
+      reportError(`Federated IFCX loading failed: ${message}`, 'ifcx_federated_load_failed',
+        () => { void loadFederatedIfcxFromBuffers(buffers); }); // retry re-composes the same buffers
       setLoading(false);
     }
-  }, [setLoading, setError, setProgress, setGeometryResult, setIfcDataStore, storeAddModel, clearAllModels]);
+  }, [setLoading, setProgress, setGeometryResult, setIfcDataStore, storeAddModel, clearAllModels]);
 
   const loadFederatedIfcx = useCallback(async (files: File[]): Promise<void> => {
     if (files.length === 0) {
-      setError('No files provided for federated loading');
+      reportError('No files provided for federated loading', 'ifcx_federated_no_files', null); // no retry: empty list
       return;
     }
 
@@ -541,14 +542,14 @@ export function useIfcFederation(
       const buffer = await file.arrayBuffer();
       const format = detectFormat(buffer);
       if (format !== 'ifcx') {
-        setError(`File "${file.name}" is not an IFCX file. Federated loading only supports IFCX files.`);
+        reportError(`File "${file.name}" is not an IFCX file. Federated loading only supports IFCX files.`, 'ifcx_federated_not_ifcx', null); // no retry: still not IFCX
         return;
       }
       buffers.push({ buffer, name: file.name });
     }
 
     await loadFederatedIfcxFromBuffers(buffers);
-  }, [setError, loadFederatedIfcxFromBuffers]);
+  }, [loadFederatedIfcxFromBuffers]);
 
   /**
    * Add IFCX overlay files to existing federated model
@@ -584,7 +585,8 @@ export function useIfcFederation(
 
       existingBuffers = [{ buffer: sourceBuffer, name: modelName }];
     } else {
-      setError('Cannot add overlays: no IFCX model loaded');
+      reportError('Cannot add overlays: no IFCX model loaded', 'ifcx_overlay_no_base',
+        () => { void addIfcxOverlays(files); }); // a base model may load before a retry
       return;
     }
 
@@ -599,7 +601,7 @@ export function useIfcFederation(
       const buffer = await file.arrayBuffer();
       const format = detectFormat(buffer);
       if (format !== 'ifcx') {
-        setError(`File "${file.name}" is not an IFCX file.`);
+        reportError(`File "${file.name}" is not an IFCX file.`, 'ifcx_overlay_not_ifcx', null); // no retry: still not IFCX
         return;
       }
       newBuffers.push({ buffer, name: file.name });
@@ -617,7 +619,7 @@ export function useIfcFederation(
     // not stable across recomposition, so stale selection/hidden ids
     // could point at the wrong entity afterwards.
     await loadFederatedIfcxFromBuffers(allBuffers);
-  }, [setError, loadFederatedIfcxFromBuffers]);
+  }, [loadFederatedIfcxFromBuffers]);
 
   // Both resolvers below go through the store's canonical
   // `resolveGlobalIdFromModels` first, falling back to the `federationRegistry`

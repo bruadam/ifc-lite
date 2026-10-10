@@ -4,8 +4,10 @@
 
 /**
  * `SheetSetupPanel`'s own chrome reads the i18n catalogue (#4918 sheets/PDF
- * slice, `sheets-pdf.en.ts`, `sheetsPdf.sheetSetup.*`): the header, the
- * disabled-sheet empty state, every section heading and toggle label, the
+ * slice, `sheets-pdf.en.ts`, `sheetsPdf.sheetSetup.*`): the enable toggle
+ * (its own title-free header since #5495 — the Drawing inspector's Sheet tab
+ * carries the title now), the disabled-sheet empty state, every section
+ * heading and toggle label, the
  * frame-style/title-block-layout option lists (moved to a `labelKey` data
  * table the same way `sectionConstants.ts`'s `AXIS_INFO` is), the templated
  * dimension/margin/fields-configured readouts, and the saved-templates list
@@ -16,7 +18,7 @@ import '@/test/setup-dom.js';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
-import { cleanup, click, render } from '@/test/render.js';
+import { cleanup, click, render, type } from '@/test/render.js';
 import { registerLocale, setLocale, type Catalogue } from '@/i18n';
 import { resolve } from '@/i18n/registry';
 import { en } from '@/i18n/en';
@@ -109,14 +111,33 @@ afterEach(() => {
 });
 
 describe('SheetSetupPanel localization (#4918)', () => {
+  it('#6343 names the icon-only Save action and saves the entered template', () => {
+    useViewerStore.setState({ activeSheet: createDefaultSheet(), sheetEnabled: true, savedSheetTemplates: [] });
+    const container = render(<SheetSetupPanel />);
+    const templatesTrigger = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes(resolve('sheetsPdf.sheetSetup.savedTemplatesHeading' as never)),
+    );
+    assert.ok(templatesTrigger);
+    click(templatesTrigger);
+    const save = container.querySelector<HTMLButtonElement>('button[aria-label="Save sheet template"]');
+    assert.ok(save, 'the icon-only Save control has a specific accessible name');
+    assert.equal(save.disabled, true, 'Save remains disabled until a name is entered');
+    const name = container.querySelector<HTMLInputElement>('input[placeholder="Template name..."]');
+    assert.ok(name);
+    type(name, 'My template');
+    assert.equal(save.disabled, false);
+    click(save);
+    assert.equal(useViewerStore.getState().savedSheetTemplates[0]?.name, 'My template');
+  });
+
   it('translates the header and the disabled-sheet empty state', () => {
     useViewerStore.setState({ activeSheet: null, sheetEnabled: false });
-    const container = render(<SheetSetupPanel onClose={() => {}} />);
+    const container = render(<SheetSetupPanel />);
     const englishDom = readableStrings(container);
     const afterDom = domAfterPseudo(container);
     assertAllTranslate(
       [
-        { key: 'sheetsPdf.sheetSetup.header' },
+        { key: 'sheetsPdf.sheetSetup.enabledToggleLabel' },
         { key: 'sheetsPdf.sheetSetup.enablePrompt' },
         { key: 'sheetsPdf.sheetSetup.enableButton' },
       ],
@@ -127,13 +148,16 @@ describe('SheetSetupPanel localization (#4918)', () => {
 
   it('translates every section heading, option label, and templated readout with an active sheet', () => {
     useViewerStore.setState({ activeSheet: createDefaultSheet(), sheetEnabled: true, savedSheetTemplates: [] });
-    const container = render(<SheetSetupPanel onClose={() => {}} />);
+    const container = render(<SheetSetupPanel />);
     // "Saved Templates" starts collapsed; open it so its empty-state text renders.
     const templatesTrigger = [...container.querySelectorAll('button')].find((b) =>
       b.textContent?.includes(resolve('sheetsPdf.sheetSetup.savedTemplatesHeading' as never)),
     );
     assert.ok(templatesTrigger, 'Saved Templates trigger not found');
     click(templatesTrigger!);
+    const templateNameInput = container.querySelector('input[placeholder="Template name..."]');
+    assert.ok(templateNameInput, 'template-name field renders');
+    assert.equal(templateNameInput.getAttribute('aria-label'), 'Template name...', '#6342: placeholder-only field has a persistent name');
     const englishDom = readableStrings(container);
     const afterDom = domAfterPseudo(container);
     const sheet = useViewerStore.getState().activeSheet!;
@@ -191,7 +215,7 @@ describe('SheetSetupPanel localization (#4918)', () => {
       sheetEnabled: true,
       savedSheetTemplates: [{ ...createDefaultSheet(), id: 'tmpl-1', name: 'My Template' }],
     });
-    const container = render(<SheetSetupPanel onClose={() => {}} />);
+    const container = render(<SheetSetupPanel />);
     const templatesTrigger = [...container.querySelectorAll('button')].find((b) =>
       b.textContent?.includes(resolve('sheetsPdf.sheetSetup.savedTemplatesHeading' as never)),
     );
@@ -200,10 +224,16 @@ describe('SheetSetupPanel localization (#4918)', () => {
     const englishDom = readableStrings(container);
     const afterDom = domAfterPseudo(container);
     assertAllTranslate(
-      [{ key: 'sheetsPdf.sheetSetup.templateNamePlaceholder' }],
+      [
+        { key: 'sheetsPdf.sheetSetup.templateNamePlaceholder' },
+        { key: 'sheetsPdf.sheetSetup.loadTemplate', params: { name: 'My Template' } },
+        { key: 'sheetsPdf.sheetSetup.deleteTemplate', params: { name: 'My Template' } },
+      ],
       englishDom,
       afterDom,
     );
+    assert.ok(container.querySelector('button[aria-label="Load template My Template"]'));
+    assert.ok(container.querySelector('button[aria-label="Delete template My Template"]'));
     // The saved template's own NAME is user data, not a catalogue key.
     assert.ok(englishDom.has('My Template'), 'the template name must render as-is');
     assert.ok(afterDom.has('My Template'), 'the template name must not be marked by the pseudo-locale');

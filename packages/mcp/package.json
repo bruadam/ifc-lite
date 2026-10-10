@@ -1,7 +1,7 @@
 {
   "name": "@ifc-lite/mcp",
-  "version": "0.20.1",
-  "description": "Model Context Protocol server for ifc-lite — agent-native BIM via MCP (stdio + Streamable HTTP)",
+  "version": "0.23.0",
+  "description": "Model Context Protocol server for ifc-lite \u2014 agent-native BIM via MCP (stdio + Streamable HTTP)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -39,6 +39,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ifc-lite/ai": "workspace:^",
     "@ifc-lite/bcf": "workspace:^",
     "@ifc-lite/cache": "workspace:^",
     "@ifc-lite/clash": "workspace:^",
@@ -46,6 +47,7 @@
     "@ifc-lite/create": "workspace:^",
     "@ifc-lite/data": "workspace:^",
     "@ifc-lite/diff": "workspace:^",
+    "@ifc-lite/encoding": "workspace:^",
     "@ifc-lite/export": "workspace:^",
     "@ifc-lite/extensions": "workspace:^",
     "@ifc-lite/flow": "workspace:^",
@@ -60,12 +62,13 @@
     "@ifc-lite/rules": "workspace:^",
     "@ifc-lite/sdk": "workspace:^",
     "@ifc-lite/viewer-core": "workspace:^",
-    "yjs": "^13.6.32"
+    "@ifc-lite/wasm": "workspace:^",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
-    "@types/node": "^26.6.1",
+    "@types/node": "^26.6.2",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.2"
   },
   "engines": {
     "node": ">=18.0.0"

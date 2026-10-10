@@ -6,7 +6,8 @@
  * Scene graph and mesh management
  */
 
-import type { InstancedTemplateGPU, InstancedOccurrence, InstancedTemplateCpu } from './scene-instance-types.js';
+import { destroyInstancedTemplateGpu, type InstancedTemplateGPU, type InstancedOccurrence, type InstancedTemplateCpu } from './scene-instance-types.js';
+import { createInstancedRteDeltaStream, invalidateInstancedRteDeltas, type InstancedRteDeltaStream } from './instanced-rte.js';
 import { materializeInstances } from './scene-instance-materialization.js';
 import { InstanceSuppression } from './scene-instance-suppression.js';
 import { createSceneBatch } from './scene-batch-upload.js';
@@ -17,7 +18,7 @@ import { AuthoredPreparationRegistry, prepareSceneAuthoredOwner } from './scene-
 import { interleaveTexturedVertices } from './textured-vertices.js';
 import { RgbaTexturePool } from './rgba-texture-pool.js';
 import { splitMeshForStreaming } from './scene-stream-split.js';
-import type { Mesh, BatchedMesh, Vec3, PickClipState } from './types.js';
+import type { Mesh, BatchedMesh, Vec3, PickClipState, Material, MeshFinish } from './types.js';
 import type { MeshData } from '@ifc-lite/geometry';
 import { hostsOtherEntities } from './mesh-entity-hosting.js';
 import type { RenderPipeline } from './pipeline.js';
@@ -35,8 +36,9 @@ import { splitMeshDataForBufferLimit, cachedWorldAabb, worldAabbFromPieces, dest
 import { resolvePrecisionBucket } from './scene-bucket-routing.js';
 import { sumResidentGpuBytes, type ResidentGpuBytes } from './render-stats.js';
 import { composeInstancedOverrideColor, writeOriginalInstancedColors } from './instanced-override-color.js';
-import { bucketBaseKeyFor, type SpatialChunkingConfig } from './chunk-grid.js';
-import { inheritedQuantization, groupOverridePieces, cloneOverrides, overlaysInvalidatedBy, type BatchQuantization } from './scene-derived-batches.js';
+import { bucketBaseKeyFor, colorKey, type MaterialKeySource, type SpatialChunkingConfig } from './chunk-grid.js';
+import { cloneOverrides, inheritedQuantization, type BatchQuantization } from './scene-derived-batches.js';
+import { EntityColorTable, entityIdPageKey } from './entity-color-table.js';
 import { VisibilityEpochTracker } from './visibility-epoch.js';
 import { isEntityVisible } from './entity-visibility.js';
 import { planInstancedGhosting } from './instanced-ghost-plan.js';
@@ -46,8 +48,9 @@ import { translateSceneModel, rotateSceneModelInstances, releaseInstanceVertices
 import { ModelTranslations, type ModelYaw } from './model-translation.js';
 import { unionInstancedWorldAabb as unionInstanceBounds } from './scene-instance-bounds.js';
 import { DerivedMeshProvenance } from './scene-derived-mesh-provenance.js';
-import { rebuildSceneBatches } from './scene-batch-rebuild.js';
+import { forgetEmptyModelFrames, rebuildSceneBatches } from './scene-batch-rebuild.js';
 import { regroupStreamedBuckets, type FinalizeRegroup } from './scene-finalize-regroup.js';
+import { perfCount, perfCounters, perfTally, type LoadTrace } from '@ifc-lite/load-trace';
 import {
   dropAllPartialCaches as dropAllPartialCachesIn,
   dropPartialCacheForBatch as dropPartialCacheForBatchIn,
@@ -63,6 +66,7 @@ import {
   INSTANCE_FLAGS_OFFSET,
   INSTANCE_FLAG_SELECTED,
   INSTANCE_FLAG_HIDDEN,
+  INSTANCE_FINISH_FLAGS_MASK,
 } from './instanced-render.js';
 import { translateInstanceRecord } from './scene-instance-translation.js';
 import { discardSceneGpuResourcesForRecovery, prepareSceneDeviceRecovery, repartitionHydratedRecoveryBucket, restoreSceneGpuResourcesAfterRecovery, type SceneDeviceRecoveryPreparation, type SceneRecoveryHost } from './scene-device-recovery.js';
@@ -105,6 +109,11 @@ export interface TexturedMesh {
   bindGroup: GPUBindGroup;
   /** Authored tint (multiplies the sampled texel); white = texture passthrough. */
   color: [number, number, number, number];
+  /** A caller-supplied finish, mirroring {@link Mesh.material}. */
+  material?: Material;
+  /** IFC-authored finish (#5582), copied from `MeshData.material` at upload
+   *  (#5984); like {@link Mesh.finish}, `packMeshMaterial` prefers it. */
+  finish?: MeshFinish;
   /**
    * The mesh's per-element local frame (`MeshData.origin`, already Y-up) — the
    * renderer must reconstruct `world = origin + position`.
@@ -388,11 +397,9 @@ export class Scene {
     versions: this.partialBatchCacheVersions,
   };
 
-  // Color overlay system for lens coloring — NEVER modifies original batches.
-  // Overlay batches render on top using depthCompare 'equal', so they only
-  // paint where original geometry already wrote depth. Clearing is instant.
-  private overrideBatches: BatchedMesh[] = [];
-  private overlaySources = new Map<MeshData, string>(); // overridden piece -> bucket key its overlay inherited from (#4832)
+  // Colour overrides shade in the base pass from this per-entity table (#6076,
+  // entity-color-table.ts): no geometry copies, nothing to rebuild on stream.
+  private readonly entityColorTable = new EntityColorTable();
   // Defensively-typed: the renderer is the sole writer (via setColorOverrides),
   // external readers go through getColorOverrides() and get a ReadonlyMap.
   private colorOverrides: ReadonlyMap<number, readonly [number, number, number, number]> | null = null;
@@ -480,7 +487,7 @@ export class Scene {
 
   // ─── GPU residency (issue #1682 phase 3a) ──────────────────────────────
   // The budget applies to bucket-owned colour/chunk batches (the evictable
-  // set). Streaming fragments, partial sub-batches, overlay batches,
+  // set). Streaming fragments, partial sub-batches,
   // textured meshes and instanced templates are never evicted: fragments are
   // transient, the rest are small or lack a rebuild source. Enforcement
   // no-ops while geometry is released or in ephemeral streaming mode (no CPU
@@ -922,10 +929,17 @@ export class Scene {
    * partial-batch piece filter) must go through this so a mesh always
    * resolves to the same bucket. `color` overrides the mesh's own colour for
    * recolour routing.
+   *
+   * Ids past 2^24 also key by their 2^24 page (#6076): a batch then never
+   * spans 2^24 ids, which the entity colour table needs to rebuild a full id
+   * from the 24-bit vertex lane (`entityIdAnchor`, entity-color-table.ts).
    */
   private bucketBaseKey(meshData: MeshData, color?: [number, number, number, number]): string {
     const source = this.modelTranslations.sourceMesh(meshData);
-    const key = bucketBaseKeyFor(source, this.colorKey(color ?? meshData.color), this.spatialChunking);
+    // #5582: material is the mesh's OWN authored finish regardless of a
+    // colour override — a recolour changes what a piece looks like, not
+    // what it is physically made of.
+    const key = entityIdPageKey(source.expressId, bucketBaseKeyFor(source, this.colorKey(color ?? meshData.color, meshData.material), this.spatialChunking));
     return source.modelIndex ? `model${source.modelIndex}~${key}` : key;
   }
 
@@ -1111,6 +1125,23 @@ export class Scene {
   }
 
   /**
+   * Whether more than `limit` entities with mesh data pass the hide/isolate
+   * filter. Stops at `limit + 1` and allocates nothing, so a per-pick budget
+   * check stays cheap on a large model (#6392).
+   */
+  visibleMeshDataEntitiesExceed(
+    limit: number,
+    hiddenIds?: ReadonlySet<number> | null,
+    isolatedIds?: ReadonlySet<number> | null,
+  ): boolean {
+    let count = 0;
+    for (const expressId of this.meshDataMap.keys()) {
+      if (isEntityVisible(expressId, hiddenIds, isolatedIds) && ++count > limit) return true;
+    }
+    return false;
+  }
+
+  /**
    * Get all MeshData pieces for an expressId (without merging).
    * Optionally filter by modelIndex for multi-model safety.
    */
@@ -1174,18 +1205,12 @@ export class Scene {
   }
 
   /**
-   * Generate color key for grouping meshes.
-   * Quantizes RGBA to 10-bit per channel and packs into a compact string.
-   * Avoids floating-point template literal overhead of the old approach.
+   * Colour key for grouping meshes: `chunk-grid.ts`'s `colorKey` (RGBA
+   * quantized to 1/1000), with the authored finish folded in (#5582) so one
+   * batch never mixes finishes.
    */
-  private colorKey(color: readonly [number, number, number, number]): string {
-    // Quantize to 1000 levels (same precision as before, but integer math only)
-    const r = Math.round(color[0] * 1000);
-    const g = Math.round(color[1] * 1000);
-    const b = Math.round(color[2] * 1000);
-    const a = Math.round(color[3] * 1000);
-    // Pack into single string with fixed-width separator for uniqueness
-    return `${r}|${g}|${b}|${a}`;
+  private colorKey(color: readonly [number, number, number, number], material?: MaterialKeySource): string {
+    return colorKey(color, material);
   }
 
   /**
@@ -1282,16 +1307,14 @@ export class Scene {
   /** Rebuild pending buckets after streaming or a geometry mutation. */
   rebuildPendingBatches(device: GPUDevice, pipeline: RenderPipeline): void {
     if (this.pendingBatchKeys.size === 0) return;
-    const rebuilt = rebuildSceneBatches({ pendingKeys: this.pendingBatchKeys, buckets: this.buckets,
+    rebuildSceneBatches({ pendingKeys: this.pendingBatchKeys, buckets: this.buckets,
       create: (meshes, color, target, renderPipeline, key) => this.createBatchedMesh(meshes, color, target, renderPipeline, key),
       dropPartial: batch => this.dropPartialCacheForBatch(batch),
     }, device, pipeline);
 
     this.batchedMeshes = [...this.buckets.values()].flatMap(bucket => bucket.batchedMesh ? [bucket.batchedMesh] : []);
     this.pendingBatchKeys.clear();
-    // Overlays follow their depth writers only when one actually changed under
-    // them (flip / bucket move, #4832); finalize re-applies once itself.
-    if (!this.finalizeInProgress && overlaysInvalidatedBy(rebuilt, this.overlaySources)) this.reapplyColorOverrides(device, pipeline);
+    forgetEmptyModelFrames(this.buckets, this.sharedFrameOrigins);
   }
 
   /**
@@ -1623,16 +1646,13 @@ export class Scene {
       const cpu = this.instancedTemplateCpu[occ.templateIndex];
       if (!cpu) continue;
       const b = occ.byteOffset;
-      const translated = translateInstanceRecord(cpu, b, [dx, dy, dz]);
-      // Push only the 12 translation bytes to the GPU buffer (in place). Guarded
-      // on the cached device so CPU-only tests still exercise the matrix math.
-      if (device) {
-        const gpu = this.instancedTemplates[occ.templateIndex]?.instanceBuffer;
-        if (gpu) {
-          device.queue.writeBuffer(gpu, b + 48, translated.translation);
-          if (translated.legacyAnchors) device.queue.writeBuffer(gpu, b + 88, translated.legacyAnchors);
-        }
-      }
+      const translation = translateInstanceRecord(cpu, b, [dx, dy, dz]);
+      // Push only the 12 translation bytes to the GPU buffer (in place), and
+      // repack the moved anchors' delta stream on the next upload. Guarded on
+      // the cached device so CPU-only tests still exercise the matrix math.
+      const gpu = this.instancedTemplates[occ.templateIndex];
+      if (gpu) invalidateInstancedRteDeltas(gpu.rteDeltas);
+      if (device && gpu) device.queue.writeBuffer(gpu.instanceBuffer, b + 48, translation);
       moved = true;
     }
     if (!moved) return false;
@@ -1659,7 +1679,7 @@ export class Scene {
       if (!cpu) continue;
       const dv = new DataView(cpu.instanceData);
       const w = this.unionInstancedWorldAabb(
-        expressId, dv, occ.byteOffset,
+        expressId, dv, occ.byteOffset, cpu.canonicalAnchors,
         cpu.localMin[0], cpu.localMin[1], cpu.localMin[2],
         cpu.localMax[0], cpu.localMax[1], cpu.localMax[2],
       );
@@ -1696,12 +1716,12 @@ export class Scene {
     const batches = this.finalizeInProgress ? [...new Set([...this.batchedMeshes,
       ...[...this.buckets.values()].flatMap((bucket) => bucket.batchedMesh ? [bucket.batchedMesh] : [])])] : this.batchedMeshes;
     return { translations: this.modelTranslations, pieces: this.meshDataMap,
-      bounds: this.boundingBoxes, batches, meshes: this.meshes, overrides: this.overrideBatches, textured: this.texturedMeshes,
+      bounds: this.boundingBoxes, batches, meshes: this.meshes, textured: this.texturedMeshes,
       templates: this.instancedTemplates, cpu: this.instancedTemplateCpu, occurrences: this.instancedEntityMap,
       device: this.instancedDevice, evictHighlight: (id: number) => this.evictHighlightMeshes(id, true),
       clearPartial: () => this.dropAllPartialCaches(),
-      unionBounds: (id: number, view: DataView, offset: number, min: [number, number, number], max: [number, number, number]) =>
-        this.unionInstancedWorldAabb(id, view, offset, ...min, ...max) };
+      unionBounds: (id: number, view: DataView, offset: number, anchors: Float64Array, min: [number, number, number], max: [number, number, number]) =>
+        this.unionInstancedWorldAabb(id, view, offset, anchors, ...min, ...max) };
   }
 
   private dropOrphanedSuppressedBounds(): void {
@@ -1883,9 +1903,14 @@ export class Scene {
    * Processes queued meshes through appendToBatches in streaming mode
    * (creates lightweight fragment batches for immediate rendering).
    *
+   * @param budgetMs Time slice per call. The 12 ms default keeps the main
+   *   thread returning to the worker-message pump while geometry streams; a
+   *   host with nothing else to serve may drain faster (#6436).
+   * @param trace The streaming load's trace (#6979): a call that uploaded
+   *   anything records one `scene.flushPending` span.
    * @returns true if any meshes were processed (caller should render)
    */
-  flushPending(device: GPUDevice, pipeline: RenderPipeline): boolean {
+  flushPending(device: GPUDevice, pipeline: RenderPipeline, budgetMs = 12, trace?: LoadTrace): boolean {
     if (!this.hasQueuedMeshes()) return false;
 
     // Drain the queue in chunks bounded by BOTH mesh count AND triangle volume,
@@ -1898,14 +1923,13 @@ export class Scene {
     const MAX_MESHES_PER_FLUSH = 4096;
     const MESHES_PER_APPEND = 512;
     const MAX_INDICES_PER_APPEND = Scene.STREAMING_FRAGMENT_MAX_INDICES;
-    const FLUSH_BUDGET_MS = 12;
     const start = performance.now();
     let processed = 0;
 
     while (this.meshQueueReadIndex < this.meshQueue.length && processed < MAX_MESHES_PER_FLUSH) {
       // Yield once the budget is spent (after at least one append) so the main
       // thread returns to the worker-message pump and the watchdog never trips.
-      if (processed > 0 && performance.now() - start >= FLUSH_BUDGET_MS) {
+      if (processed > 0 && performance.now() - start >= budgetMs) {
         break;
       }
 
@@ -1954,6 +1978,7 @@ export class Scene {
       this.meshQueueReadIndex = 0;
     }
 
+    if (processed > 0 && trace?.enabled) trace.record('scene.flushPending', start, performance.now(), { meshes: processed, queued: this.meshQueue.length - this.meshQueueReadIndex });
     return processed > 0;
   }
 
@@ -2049,6 +2074,7 @@ export class Scene {
     // Save references to old fragments/batches — keep them rendering
     // until the new proper batches are fully built (no visual gap).
     const oldFragments = this.streamingFragments;
+    perfTally('render.finalize', oldFragments.length, 'fragments'); // #6957 fragment rebuilds
     const oldBatches = this.batchedMeshes;
     const fragmentSet = new Set(oldFragments);
     const oldBatchSet = new Set(oldBatches);
@@ -2086,7 +2112,8 @@ export class Scene {
     // already retired by rebuildPendingBatches.
     this.retireFinalizedBatches(oldFragments);
     this.retireFinalizedBatches(regroup?.retired ?? []);
-    this.reapplyColorOverrides(device, pipeline);
+    // #6957: same batch tally as the time-sliced path (only reached when the rebuild succeeded).
+    if (perfCounters.enabled) perfCount('render.finalize.batches', this.batchedMeshes.filter((b) => !oldBatchSet.has(b)).length);
   }
 
   /**
@@ -2098,18 +2125,23 @@ export class Scene {
    * @param device  GPU device
    * @param pipeline  Render pipeline
    * @param budgetMs  Max milliseconds per chunk (default 8 — half a 60fps frame)
+   * @param trace  The load's trace (#6979): `scene.finalize` from this call
+   *   until the promise settles, with `scene.finalize.regroup` under it
    * @returns Promise that resolves when all batches are rebuilt
    */
   finalizeStreamingAsync(
     device: GPUDevice,
     pipeline: RenderPipeline,
     budgetMs: number = 8,
+    trace?: LoadTrace,
   ): Promise<void> {
+    const span = trace?.enabled ? trace.begin('scene.finalize', { fragments: this.streamingFragments.length, ephemeral: this.ephemeralStreamingMode }) : -1;
     if (this.ephemeralStreamingMode) {
       this.finishEphemeralStreaming();
+      trace?.end(span);
       return Promise.resolve();
     }
-    if (this.streamingFragments.length === 0) return Promise.resolve();
+    if (this.streamingFragments.length === 0) { trace?.end(span); return Promise.resolve(); }
     // Mark the rebuild as in-flight: the preamble empties streamingFragments
     // synchronously, so settle-sensitive consumers need this flag until the
     // time-sliced rebuild swaps the new batch array in.
@@ -2119,6 +2151,7 @@ export class Scene {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const scene = this;
     const oldFragments = this.streamingFragments;
+    perfTally('render.finalize', oldFragments.length, 'fragments'); // #6957 fragment rebuilds
     const oldBatches = this.batchedMeshes;
     const fragmentSet = new Set(oldFragments);
     const oldBatchSet = new Set(oldBatches);
@@ -2149,6 +2182,7 @@ export class Scene {
       let regroup: FinalizeRegroup | null = null;
       let pendingKeys: string[] = [];
       let keyIdx = 0;
+      let chunks = 0;
 
       function rollback(): void {
         for (const { bucket, previous, previousFrameOrigin, batch } of createdOwned) {
@@ -2172,6 +2206,7 @@ export class Scene {
       function processChunk(): void {
         try {
           const chunkStart = performance.now();
+          chunks++;
           while (keyIdx < pendingKeys.length) {
             const key = pendingKeys[keyIdx++];
             const bucket = scene.buckets.get(key);
@@ -2210,11 +2245,13 @@ export class Scene {
             ...scene.streamingFragments,
           ];
           scene.retireFinalizedBatches(retired);
+          perfCount('render.finalize.batches', createdOwned.length);
           scene.finalizeInProgress = false;
-          scene.reapplyColorOverrides(device, pipeline); // never throws: the swap above is committed
+          trace?.end(span, { batches: createdOwned.length, chunks });
           resolve();
         } catch (err) {
           rollback();
+          trace?.end(span, { error: true });
           reject(err);
         }
       }
@@ -2222,11 +2259,14 @@ export class Scene {
       try {
         // --- Synchronous preamble: re-group the streamed meshes only ---
         scene.streamingFragments = [];
+        const regroupStart = performance.now();
         regroup = scene.regroupStreamed();
+        if (trace?.enabled) trace.record('scene.finalize.regroup', regroupStart, performance.now(), undefined, span);
         pendingKeys = Array.from(scene.pendingBatchKeys);
         scene.pendingBatchKeys.clear();
       } catch (err) {
         rollback();
+        trace?.end(span, { error: true });
         reject(err);
         return;
       }
@@ -2281,7 +2321,8 @@ export class Scene {
    *  - Bounding boxes are precomputed and cached for all entities
    *  - meshDataMap and bucket meshData arrays are cleared (typed arrays become GC-eligible)
    *  - Color updates (updateMeshColors) are no longer available
-   *  - Partial batch creation and color overlays are no longer available
+   *  - Partial batch creation is no longer available; color overrides still
+   *    work through the GPU-resident per-entity table
    *  - CPU raycasting falls back to bounding-box-only (no triangle intersection)
    *  - Selection highlighting must use GPU picking instead of CPU mesh reconstruction
    *
@@ -2490,7 +2531,9 @@ export class Scene {
     );
     if (!origin) throw new Error('Unable to resolve a topology-safe GPU frame for mesh geometry.');
     const result = createSceneBatch(meshes, color, device, pipeline, {
-      id: this.nextBatchId, colorKey: bucketKey ?? this.colorKey(color),
+      // A derived batch (no bucketKey) is a subset of ONE material-uniform
+      // bucket, so its first piece's finish labels it like bucketBaseKey does (#5582).
+      id: this.nextBatchId, colorKey: bucketKey ?? this.colorKey(color, meshes[0]?.material),
       origin,
       quantized: quantization, lod: this.lodBuildsEnabled,
     }, bucketKey);
@@ -2690,81 +2733,49 @@ export class Scene {
     return partialBatch;
   }
 
-  // ─── Color overlay system ────────────────────────────────────────────
-  // Builds overlay batches for lens coloring without modifying original batches.
-  // Overlay batches reuse the same geometry (re-merged from MeshData) but with
-  // override colors.  They are rendered on top of existing depth via the overlay
-  // pipeline (depthCompare 'equal'), so hidden entities never leak through.
+  // ─── Colour overrides (#6076) ────────────────────────────────────────
+  // Overrides live in a per-entity colour table the base pass reads
+  // (entity-color-table.ts). Batches are never modified or copied, and a mesh
+  // streamed in later is painted by the ids it already carries.
 
   /**
-   * Set color overrides for lens / chart / IDS / compare / 4D coloring. Overlay
-   * batches are grouped by SOURCE bucket + override color and inherit the
-   * source batch's quantization (#4832, `scene-derived-batches.ts`). Original
-   * batches are NEVER modified — clearing is instant.
+   * Set colour overrides for lens / chart / IDS / compare / 4D colouring:
+   * rewrites the entity colour table (one `writeBuffer`) and the instanced
+   * occurrence records. No batch is built, rebuilt or destroyed. `pipeline`
+   * stays in the signature because `SceneContents` publishes it.
    */
   setColorOverrides(
     overrides: Map<number, [number, number, number, number]>,
     device: GPUDevice,
-    pipeline: RenderPipeline
+    _pipeline: RenderPipeline
   ): void {
-    // Destroy previous overlay batches
-    this.destroyOverrideBatches();
     // The override set is changing — invalidate the partial-batch cache epoch so
     // the render loop rebuilds any promotion-split sub-batches (see render loop).
     this.colorOverrideGeneration++;
 
-    if (this.geometryReleased) {
-      console.warn('[Scene] setColorOverrides called after geometry data was released — skipping.');
-      this.colorOverrides = null;
-      this.setInstancedColorOverrides(null);
-      return;
-    }
-
     if (overrides.size === 0) {
-      this.colorOverrides = null;
-      this.setInstancedColorOverrides(null);
+      this.clearColorOverrideState();
       return;
     }
 
-    // Defensive copy: callers may mutate/reuse `overrides`; the tuples are treated as immutable by every consumer.
-    this.colorOverrides = new Map(overrides);
+    // A caller can mutate a clash-tint tuple after this call (#5490). Keep the
+    // retained map and the uploaded table in sync by copying its values.
+    this.colorOverrides = cloneOverrides(overrides);
+    this.entityColorTable.write(device, this.colorOverrides);
 
-    // Instanced occurrences carry the override colour in their records (no overlay pass); no-op without instanced data.
+    // Instanced occurrences carry the override colour in their records; no-op without instanced data.
     this.setInstancedColorOverrides(overrides);
-
-    // Bucket keys carry cell + colour + model: an overlay batch is a subset of ONE base batch, in one model.
-    const colorGroups = groupOverridePieces(
-      overrides,
-      (id) => this.meshDataMap.get(id),
-      (piece) => this.meshDataBucket.get(piece),
-      (piece) => this.bucketBaseKey(piece),
-      (c) => this.colorKey(c),
-    );
-
-    const maxBufferSize = this.getMaxBufferSize(device);
-    for (const { color, meshData, sourceBatch, sourceKey } of colorGroups.values()) {
-      if (sourceKey !== null) for (const piece of meshData) this.overlaySources.set(piece, sourceKey);
-      const quantization = inheritedQuantization(this.quantizedBatchesEnabled, sourceBatch);
-      for (const chunk of this.splitMeshDataForBufferLimit(meshData, maxBufferSize)) {
-        this.overrideBatches.push(this.createBatchedMesh(chunk, color, device, pipeline, undefined, quantization, sourceBatch?.origin));
-      }
-    }
-  }
-
-  /** Rebuild the installed overlays against the batches that write depth NOW
-   *  (#4832). Best-effort — a committed finalize/rebuild must not be undone by
-   *  an overlay allocation failure, so that is reported, not thrown. */
-  private reapplyColorOverrides(device: GPUDevice, pipeline: RenderPipeline): void {
-    if (!this.colorOverrides) return;
-    try { this.setColorOverrides(cloneOverrides(this.colorOverrides), device, pipeline); }
-    catch (err) { console.warn('[Scene] overlay rebuild after finalize failed — colours may be missing until the next repaint', err); }
   }
 
   /** Clear all color overrides — instant, no batch rebuild needed. */
   clearColorOverrides(): void {
-    this.destroyOverrideBatches();
     this.colorOverrideGeneration++;
+    this.clearColorOverrideState();
+  }
+
+  private clearColorOverrideState(): void {
     this.colorOverrides = null;
+    this.entityColorTable.clear();
     this.setInstancedColorOverrides(null);
   }
 
@@ -2775,39 +2786,30 @@ export class Scene {
     return this.colorOverrideGeneration;
   }
 
-  /** Get overlay batches for rendering */
-  getOverrideBatches(): BatchedMesh[] {
-    return this.overrideBatches;
-  }
-
-  /** Check if color overrides are active */
-  hasColorOverrides(): boolean {
-    return this.overrideBatches.length > 0;
+  /** The per-entity colour table the renderer binds at group(1) (#6076). */
+  getEntityColorTable(): EntityColorTable {
+    return this.entityColorTable;
   }
 
   /**
    * Get the active expressId → RGBA override map, or null if none.
    *
    * Used by the renderer to promote overridden meshes/batches to the opaque
-   * pipeline so the overlay paint pass (depthCompare 'equal') finds matching
-   * depth. Without this, an override on an entity that defaults to the
-   * transparent pipeline (IfcSpace, IfcOpeningElement, glass, …) silently
-   * fails to paint — the transparent pipeline doesn't write depth, so the
-   * equality test rejects every fragment.
+   * pipeline (overlay-routing.ts): the table paints only depth-writing opaque
+   * draws, so an override on an entity that defaults to the transparent
+   * pipeline (IfcSpace, IfcOpeningElement, glass, …) is promoted to be seen.
    *
    * Returns a `ReadonlyMap` view: the renderer holds the only writeable
    * reference (via `setColorOverrides`) so routing decisions stay in sync
-   * with the overlay batches we built from the same data.
+   * with the colour table written from the same data.
    */
   getColorOverrides(): ReadonlyMap<number, readonly [number, number, number, number]> | null {
     return this.colorOverrides;
   }
 
-  /** Destroy GPU resources for overlay batches */
-  private destroyOverrideBatches(): void {
-    for (const batch of this.overrideBatches) destroyGpuResources(batch);
-    this.overrideBatches = [];
-    this.overlaySources.clear();
+  /** Drop the colour table's GPU buffer (device-loss recovery host); `setColorOverrides` re-uploads it. */
+  releaseColorOverrideGpu(): void {
+    this.entityColorTable.releaseGpu();
   }
 
   /**
@@ -2906,9 +2908,7 @@ export class Scene {
     for (let i = 0; i < this.instancedTemplates.length; i++) {
       const t = this.instancedTemplates[i];
       if (!t || t.modelIndex !== modelIndex) continue;
-      t.vertexBuffer.destroy();
-      t.indexBuffer.destroy();
-      t.instanceBuffer.destroy();
+      destroyInstancedTemplateGpu(t);
       this.instancedTemplates[i] = undefined;
       this.instancedTemplateCpu[i] = undefined;
       freed.add(i);
@@ -3058,6 +3058,14 @@ export class Scene {
         new Uint8Array(t.instanceBuffer, 0, instSize),
         GPUBufferUsage.VERTEX,
       );
+      let rteDeltas: InstancedRteDeltaStream;
+      try {
+        rteDeltas = createInstancedRteDeltaStream(device, t.instanceCount);
+      } catch (error) {
+        // Nothing references this template's buffers yet; free them rather than leak them.
+        vertexBuffer.destroy(); indexBuffer.destroy(); instanceBuffer.destroy();
+        throw error;
+      }
 
       // Always append: slots are stable identities, never recycled.
       const templateIndex = this.instancedTemplates.length;
@@ -3069,6 +3077,7 @@ export class Scene {
         instanceBuffer,
         instanceCount: t.instanceCount,
         canonicalAnchors: t.canonicalAnchors,
+        rteDeltas,
         bounds: null,
         maxOccRadius: 0,
         selectedCount: 0,
@@ -3123,7 +3132,7 @@ export class Scene {
           this.instancedEntityMap.set(eid, arr);
         }
         // #2985; no id column or the 0 sentinel ⇒ none. ASSIGNED, never conditionally spread: ONE object shape for records that outlive the shard.
-        arr.push({ templateIndex, byteOffset, originalColor, itemId: t.itemIds?.[i] || undefined });
+        arr.push({ templateIndex, byteOffset, originalColor, itemId: t.itemIds?.[i] || undefined, finishBits: (cdv.getUint32(byteOffset + INSTANCE_FLAGS_OFFSET, true) & INSTANCE_FINISH_FLAGS_MASK) >>> 0 });
 
         // A shard can stream in AFTER a selection was recorded (its ids may
         // exist in earlier shards or the flat path). setInstancedSelection
@@ -3137,7 +3146,7 @@ export class Scene {
         if (this.instancedOverrideColors?.has(eid)) lateOverriddenEids.add(eid);
 
         if (haveBox) {
-          const w = this.unionInstancedWorldAabb(eid, cdv, byteOffset, lmnx, lmny, lmnz, lmxx, lmxy, lmxz);
+          const w = this.unionInstancedWorldAabb(eid, cdv, byteOffset, t.canonicalAnchors, lmnx, lmny, lmnz, lmxx, lmxy, lmxz);
           // Fold the occurrence's world box into the template's cull metadata
           // (union bounds + largest occurrence bounding-sphere radius) for the
           // per-frame instanced frustum/contribution culls. Non-finite boxes
@@ -3166,8 +3175,14 @@ export class Scene {
     this.instancedVisibilityDirty = true;
     this.instancedGhostDirty = true;
   }
-  private unionInstancedWorldAabb(eid: number, dv: DataView, matOffset: number, lmnx: number, lmny: number, lmnz: number, lmxx: number, lmxy: number, lmxz: number): { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } {
-    return unionInstanceBounds(this.boundingBoxes, eid, dv, matOffset, lmnx, lmny, lmnz, lmxx, lmxy, lmxz);
+  private unionInstancedWorldAabb(eid: number, dv: DataView, matOffset: number, anchors: Float64Array, lmnx: number, lmny: number, lmnz: number, lmxx: number, lmxy: number, lmxz: number): { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } {
+    return unionInstanceBounds(this.boundingBoxes, eid, dv, matOffset, anchors, lmnx, lmny, lmnz, lmxx, lmxy, lmxz);
+  }
+  /** Drawn templates holding an occurrence of `expressId` (in `modelIndex` if given), for the hover outline (#5745). */
+  getInstancedTemplatesOf(expressId: number, modelIndex?: number): InstancedTemplateGPU[] {
+    if (!this.instancedVisible) return [];
+    const slots = new Set((this.instancedEntityMap.get(expressId) ?? []).map((o) => o.templateIndex));
+    return [...slots].flatMap((s) => { const t = this.instancedTemplates[s]; return t && (modelIndex === undefined || t.modelIndex === modelIndex) ? [t] : []; });
   }
   /** True when `expressId` has a GPU-instanced occurrence. */
   isInstancedEntity(expressId: number): boolean {
@@ -3461,7 +3476,7 @@ export class Scene {
         ? (loc.itemId === this.instancedSelectedItemId ? INSTANCE_FLAG_SELECTED : 0)
         : (eidSelected ? INSTANCE_FLAG_SELECTED : 0);
       const buf = this.instancedTemplates[loc.templateIndex]?.instanceBuffer;
-      if (buf) device.queue.writeBuffer(buf, loc.byteOffset + INSTANCE_FLAGS_OFFSET, new Uint32Array([(selectedBit | hiddenBit) >>> 0]));
+      if (buf) device.queue.writeBuffer(buf, loc.byteOffset + INSTANCE_FLAGS_OFFSET, new Uint32Array([(selectedBit | hiddenBit | (loc.finishBits ?? 0)) >>> 0]));
     }
   }
 
@@ -3597,6 +3612,7 @@ export class Scene {
         sampler,
         bindGroup,
         color: meshData.color,
+        ...(meshData.material ? { finish: meshData.material } : {}), // IFC-authored (#5984)
         // `world = origin + position` (#1973). Absent on the orphan
         // type-geometry path, whose positions are already absolute.
         origin: meshData.origin
@@ -3639,10 +3655,7 @@ export class Scene {
    */
   private destroyAllInstancedTemplates(): void {
     for (const it of this.instancedTemplates) {
-      if (!it) continue;
-      it.vertexBuffer.destroy();
-      it.indexBuffer.destroy();
-      it.instanceBuffer.destroy();
+      if (it) destroyInstancedTemplateGpu(it);
     }
     this.instancedTemplates = [];
     this.liveInstancedTemplates = [];
@@ -3723,8 +3736,9 @@ export class Scene {
     this.colorOverrideGeneration++;
     // Destroy streaming fragments (already included in batchedMeshes, but tracked separately)
     this.streamingFragments = [];
-    this.destroyOverrideBatches();
     this.colorOverrides = null;
+    this.entityColorTable.clear();
+    this.entityColorTable.releaseGpu();
     // Reset the shared frame origin so the next model picks its own. Retained
     // instanced templates are unaffected — their per-occurrence transforms are
     // already baked to absolute world coordinates at upload time, not relative

@@ -5,18 +5,26 @@
 import type { TranslationValue } from '../types';
 
 /**
- * The Measure tool (#2199 et al.) — the panel (`MeasurePanel.tsx`), its
- * three expandable sections (`MeasureQuantities.tsx`,
- * `MeasurePointReadout.tsx`), the on-canvas overlay labels
- * (`MeasurementVisuals.tsx`), and the shared georeferenced E/N/H readout
- * (`measure-modes/geo-readout.tsx`). Measurement unit symbols (`m`, `m²`,
+ * The Measure tool (#2199 et al.) — its HUD bar (`MeasureToolbar.tsx`), the
+ * hint and geo readout (`MeasureHudReadouts.tsx`), the Measurements side
+ * panel (`MeasurementsPanel.tsx`) with its three tabs (`MeasurementList.tsx`,
+ * `MeasureQuantities.tsx`, `MeasurePointReadout.tsx`), the on-canvas overlay
+ * labels (`MeasurementVisuals.tsx`), and the shared georeferenced E/N/H
+ * readout (`measure-modes/geo-readout.tsx`). Measurement unit symbols (`m`, `m²`,
  * `mm`, `°`) are not catalogued — those stay literal by the sweep's own
  * rule (#4918).
  */
 export const measureEn = {
-  'measure.dragToMove': 'Drag to move',
   'measure.panelTitle': 'Measure',
+  'measure.bar.modeAria': 'Measure mode',
+  'measure.bar.angleKindAria': 'Angle kind',
+  // MeasurementsPanel.tsx — the docked side panel (#5502).
+  'measure.panel.title': 'Measurements',
+  'measure.panel.toggleTitle': 'Show or hide the Measurements panel',
+  'measure.panel.close': 'Close panel',
+  'measure.panel.startMeasuring': 'Start measuring',
   'measure.clearAll': 'Clear all',
+  'measure.clearAllConfirm': 'Clear every measurement? This cannot be undone.',
   'measure.close': 'Close',
 
   // Angle-mode click hints (`angleHint`), one key per kind/pick-count
@@ -42,29 +50,28 @@ export const measureEn = {
   'measure.angleKind.faces.label': 'Faces',
   'measure.angleKind.faces.hint': 'Angle between two planes: click one face, then the other',
 
-  // SECTIONS — the List / Point / Qty section buttons.
+  // TABS — the List / Point / Qty tabs of the Measurements panel (the bar's
+  // panel button reuses the List label).
   'measure.section.list.label': 'List',
   'measure.section.list.title': 'Measurements taken',
   'measure.section.point.label': 'Point',
   'measure.section.point.title': 'Coordinates of the picked point',
   'measure.section.quantities.label': 'Qty',
   'measure.section.quantities.title': 'Quantities of the selected elements',
+  'measure.section.centreline.label': 'Source',
+  'measure.section.centreline.title': 'Exact source centreline measurements',
 
-  'measure.modeToggle.title':
-    'Cycle measure mode - Distance (drag), Polyline (click to accumulate; double-click or Enter to finish, click the start to close), Angle (three clicks: apex first, then the two directions; Esc cancels), Radius (three or more clicks on a circular edge; double-click or Enter to finish; Esc cancels)',
   'measure.mode.distance': 'Distance',
   'measure.mode.polyline': 'Polyline',
   'measure.mode.angle': 'Angle',
   'measure.mode.radius': 'Radius',
 
   'measure.snapToggle.title': 'Toggle snap (S key)',
-  'measure.snap.on': 'Snap On',
-  'measure.snap.off': 'Snap Off',
+  'measure.snap.label': 'Snap',
 
   'measure.geoToggle.enabledTitle': 'Toggle real-world XYZ (Eastings / Northings / Height)',
   'measure.geoToggle.disabledTitle': 'Requires map georeferencing (IfcMapConversion) in the model',
-  'measure.geo.on': 'Geo XYZ On',
-  'measure.geo.off': 'Geo XYZ Off',
+  'measure.geo.label': 'Geo XYZ',
   'measure.geo.easting': 'E',
   'measure.geo.northing': 'N',
   'measure.geo.height': 'H',
@@ -75,6 +82,10 @@ export const measureEn = {
 
   'measure.list.empty': 'No measurements',
   'measure.list.totalCurrent': 'Total (current)',
+  'measure.list.deleteDistance': 'Delete distance measurement {index}',
+  'measure.list.deletePolyline': 'Delete polyline measurement {index}',
+  'measure.list.deleteAngle': 'Delete angle measurement {index}',
+  'measure.list.deleteRadius': 'Delete radius measurement {index}',
   'measure.polyline.inProgress': {
     one: 'Polyline in progress — {count} pt',
     other: 'Polyline in progress — {count} pts',
@@ -138,12 +149,14 @@ export const measureEn = {
     'Mass ESTIMATED as the meshed geometry volume (after opening cuts) x a density from the project density library. The file does not declare this density. A mass, not a force.',
   'measure.quantities.selectPrompt': 'Select elements to read their quantities',
   'measure.quantities.header': 'Quantities',
+  'measure.quantities.authoredHeading': 'Authored IFC Qto',
+  'measure.quantities.computedHeading': 'Computed from mesh',
   'measure.quantities.elementsCount': {
     one: '{count} element',
     other: '{count} elements',
   },
   'measure.quantities.nothingFound':
-    'The selection declares no quantities, no enclosed volume could be proved from its geometry, and no triangulated mesh area could be measured either.',
+    'No authored Qto, proved enclosed mesh volume, or triangulated mesh area is available for this selection.',
   'measure.quantities.volumeMeshLabel': 'Volume mesh',
   'measure.quantities.volumeMeshTitle':
     'Enclosed volume computed from the meshed geometry, after opening cuts. Not an IFC GrossVolume.',
@@ -193,6 +206,33 @@ export const measureEn = {
     other: '{count} selected elements could not be resolved to a loaded model.',
   },
 
+  // Nominal source measurements shown beneath the independent Qto/mesh rows.
+  'measure.source.heading': 'Nominal IFC source geometry',
+  'measure.source.product': '{modelId} · #{productId}',
+  'measure.source.sweptDiskSolid': '{modelId} · #{productId} · IfcSweptDiskSolid #{solidId}',
+  'measure.source.extrusionSolid': '{modelId} · #{productId} · IfcExtrudedAreaSolid #{solidId}',
+  'measure.source.limitation':
+    'Each row describes one IFC source solid, not an authored Qto or final product total. Extrusion estimates exclude occurrence transforms; swept-disk centreline lengths include them. Voids, CSG and overlaps may change the product.',
+  'measure.source.loading': 'Reading IFC source solids…',
+  'measure.source.centrelineLength': 'Centreline length',
+  'measure.source.profileArea': 'Profile area',
+  'measure.source.projectedHeight': 'Projected height',
+  'measure.source.nominalVolume': 'Nominal source volume',
+  'measure.source.unavailable': 'unavailable from this source',
+  'measure.source.mapped': 'mapped occurrence',
+  'measure.source.modified': 'CSG operand: final geometry differs from this source.',
+  'measure.source.unplaced': 'Source values use file units converted to display units; occurrence transforms are excluded.',
+
   // MeasurementVisuals.tsx — in-progress polyline overlay label.
   'measure.visuals.polylineSoFar': '{basis} so far - {count} pts',
+
+  // MeasurementsVisibilityChip.tsx — the HUD chip while the Measure tool is
+  // closed and something is still measured (#5893).
+  'measure.chip.label': '{count} measured',
+  'measure.chip.hideAria': 'Hide measurements',
+  'measure.chip.hideTitle': 'Hide measurements without deleting them',
+  'measure.chip.showAria': 'Show measurements',
+  'measure.chip.showTitle': 'Show measurements again',
+  'measure.chip.clearAria': 'Clear all measurements',
+  'measure.chip.clearTitle': 'Delete every measurement',
 } as const satisfies Record<string, TranslationValue>;

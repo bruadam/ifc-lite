@@ -3,7 +3,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import posthogClient from 'posthog-js';
+import { isAnalyticsOptedOut, persistAnalyticsOptOut } from './analytics-consent.js';
 import { scrubEvent } from './analytics-scrub.js';
+import { scrubUiEvent, type UiEventName, type UiEventProperties } from './analytics-ui-events.js';
+import { scrubExportEvent, type ExportCompletedProperties } from './analytics-export-events.js';
 import { shouldSuppressWasmSkewNoise } from './wasm-version-skew.js';
 import { shouldSuppressChunkSkewNoise } from './chunk-version-skew.js';
 import { shouldSuppressForeignScriptNoise } from './foreign-script-noise.js';
@@ -39,13 +42,15 @@ import { shouldSuppressForeignScriptNoise } from './foreign-script-noise.js';
 export const beforeSend = <
   T extends { event?: string; properties?: Record<string, unknown> } | null,
 >(event: T): T | null => {
+  if (isAnalyticsOptedOut()) return null;
   if (shouldSuppressWasmSkewNoise(event)) return null;
   if (shouldSuppressChunkSkewNoise(event)) return null;
   // A third sibling gate, on attribution rather than on a message or a reload:
   // an injected extension / user script throwing on our `window` is not ours to
   // fix (#4939). Lives in its own module for the same reason as the other two.
   if (shouldSuppressForeignScriptNoise(event)) return null;
-  return scrubEvent(event);
+  // UI interaction events (#5618) keep only their declared id properties.
+  return scrubEvent(scrubExportEvent(scrubUiEvent(event)));
 };
 
 // PostHog's own `DOMExceptionCoercer` (posthog-js -> @posthog/core) does
@@ -115,14 +120,60 @@ const enabled = Boolean(key && host) && typeof posthogClient?.init === 'function
 // narrow type is what keeps keyless/Node environments crash-free.
 type AnalyticsClient = Pick<typeof posthogClient, 'capture' | 'captureException'>;
 
+/** Mark consenting SDK sessions, including visits with no model load. */
+export function createViewerSessionStartRecorder(
+  capture: () => void,
+  getSessionId: () => string,
+  isOptedOut: () => boolean,
+): { onSessionId: (sessionId: string) => void; startNow: () => void } {
+  let lastRecordedSessionId: string | null = null;
+  let starting = false;
+  const onSessionId = (sessionId: string): void => {
+    if (!sessionId || isOptedOut() || sessionId === lastRecordedSessionId) return;
+    // capture() itself can create/rotate the SDK session and call us again.
+    if (starting) {
+      lastRecordedSessionId = sessionId;
+      return;
+    }
+    const previous = lastRecordedSessionId;
+    lastRecordedSessionId = sessionId;
+    try {
+      capture();
+    } catch (error) {
+      lastRecordedSessionId = previous;
+      console.warn('[analytics] session-start capture failed', error);
+    }
+  };
+  const startNow = (): void => {
+    if (isOptedOut()) return;
+    const previous = lastRecordedSessionId;
+    starting = true;
+    try {
+      // Also creates the initial SDK session when pageviews/autocapture are off.
+      capture();
+      lastRecordedSessionId = getSessionId() || lastRecordedSessionId;
+    } catch (error) {
+      lastRecordedSessionId = previous;
+      console.warn('[analytics] session-start capture failed', error);
+    } finally {
+      starting = false;
+    }
+  };
+  return { onSessionId, startNow };
+}
+
+const recordViewerSessionStart = createViewerSessionStartRecorder(
+  () => posthogClient.capture('viewer_session_started'),
+  () => posthogClient.get_session_id(),
+  isAnalyticsOptedOut,
+);
+
 let client: AnalyticsClient | null = null;
 if (enabled) {
   try {
     posthogClient.init(key as string, {
       api_host: host,
-      // No consent UI exists, so never build person profiles for anonymous
-      // visitors — events stay anonymous unless an explicit identify() opts
-      // a user in.
+      // Events stay anonymous unless an explicit identify() opts a user in.
       person_profiles: 'identified_only',
       capture_pageview: false,
       capture_pageleave: true,
@@ -133,6 +184,7 @@ if (enabled) {
       // in ./analytics-scrub.ts.
       before_send: beforeSend,
     });
+    if (isAnalyticsOptedOut()) posthogClient.opt_out_capturing();
     // Register build attribution as super-properties so every event (incl.
     // ifc_model_loaded) carries the deploy it was served from — this is what
     // lets field perf regressions be pinned to a specific release. Guarded with
@@ -149,6 +201,10 @@ if (enabled) {
       captureException: (err, additionalProperties) =>
         posthogClient.captureException(ensureCapturableStack(err), additionalProperties),
     };
+    // An explicit capture creates the initial session even on a visit with no
+    // interaction; the callback catches later idle-tab session rotations.
+    recordViewerSessionStart.startNow();
+    posthogClient.onSessionId(recordViewerSessionStart.onSessionId);
   } catch (err) {
     console.warn('[analytics] PostHog init failed; analytics disabled', err);
   }
@@ -159,4 +215,99 @@ const noopAnalytics: AnalyticsClient = {
   captureException: () => undefined,
 };
 
-export const posthog: AnalyticsClient = client ?? noopAnalytics;
+/** All explicit capture sites use this facade, so the setting takes effect immediately. */
+export function consentAwareAnalyticsClient(target: AnalyticsClient): AnalyticsClient {
+  return {
+    capture: (event, properties, options) =>
+      isAnalyticsOptedOut() ? undefined : target.capture(event, properties, options),
+    captureException: (error, additionalProperties) =>
+      isAnalyticsOptedOut() ? undefined : target.captureException(error, additionalProperties),
+  };
+}
+
+export const posthog: AnalyticsClient = consentAwareAnalyticsClient(client ?? noopAnalytics);
+
+/**
+ * A PostHog feature flag's value for a perf-flag ramp (#6962), or `undefined`
+ * when PostHog is not initialised, the user opted out, or flags have not
+ * loaded yet. Synchronous and never awaited: a ramp falls back to its default
+ * rather than blocking startup on the flags request.
+ */
+export function readAnalyticsFeatureFlag(key: string): boolean | string | undefined {
+  if (!enabled || !client || isAnalyticsOptedOut()) return undefined;
+  try {
+    return posthogClient.getFeatureFlag(key) ?? undefined;
+  } catch (error) {
+    console.warn('[analytics] feature flag read failed; using default', error);
+    return undefined;
+  }
+}
+
+/** Persist the preference and update PostHog's automatic capture policy. */
+export function setAnalyticsOptOut(value: boolean): void {
+  persistAnalyticsOptOut(value);
+  if (!enabled || !client) return;
+  try {
+    if (value) posthogClient.opt_out_capturing();
+    else {
+      posthogClient.opt_in_capturing({ captureEventName: false });
+      // The callback may have fired while opted out. Capture now, allowing the
+      // SDK to rotate an expired session ID before attaching it to the event.
+      recordViewerSessionStart.startNow();
+    }
+  } catch (error) {
+    console.warn('[analytics] could not update PostHog consent', error);
+  }
+}
+
+/**
+ * The one entry point for UI interaction events (#5618). The event name and
+ * its property keys are checked against `UiEventProperties` at compile time,
+ * so a typo'd name or an undeclared property fails typecheck; `scrubUiEvent`
+ * enforces the same contract again before the event leaves the browser.
+ */
+export function trackUiEvent<E extends UiEventName>(event: E, properties: UiEventProperties[E]): void {
+  posthog.capture(event, properties);
+}
+
+/**
+ * The one path for surfacing a load failure to the user (#5618, #5851).
+ * `message` goes on the store, where the in-viewport load-error card reads
+ * it; `code` is a fixed id (never the message itself), so `error_shown`
+ * stays a closed, scrubber-safe vocabulary. Every load path — `useIfcLoader`,
+ * every federated IFCX path in `useIfcFederation`, and the `?model=`
+ * autoload — calls this one function, so there is never a second error path.
+ *
+ * `setError`/`setLastLoadRetry` are passed in rather than read from
+ * `@/store` here: every store slice this module could reach transitively
+ * (e.g. `uiSlice` → `store/uiTelemetry.ts` → this file's own `trackUiEvent`)
+ * would make `@/store` importing back into this file a real circular
+ * import, not just a theoretical one — it broke store initialization
+ * (`Cannot access 'createChartSlice' before initialization`) the one time
+ * it was tried. Every caller already has both setters from its own
+ * `useViewerStore` binding.
+ *
+ * `retry` is REQUIRED, not optional, on purpose (#5851 review): the card's
+ * Retry button is exactly `store.lastLoadRetry`, and a call site that could
+ * set an error without saying what Retry does would leave a STALE retry
+ * from whatever the previous error was — this is the bug the required
+ * parameter exists to make impossible. Pass a thunk that re-runs the same
+ * attempt (same File, URL, or buffers), or `null` when nothing can usefully
+ * be retried (the card then renders without a Retry button).
+ */
+export function showLoadError(
+  setError: (message: string) => void,
+  setLastLoadRetry: (retry: (() => void) | null) => void,
+  message: string,
+  code: string,
+  retry: (() => void) | null,
+): void {
+  setError(message);
+  setLastLoadRetry(retry);
+  trackUiEvent('error_shown', { code, surface: 'load_error' });
+}
+
+/** The sole capture path for completed exports (#5844). */
+export function trackExportCompleted(properties: ExportCompletedProperties): void {
+  posthog.capture('export_completed', properties);
+}

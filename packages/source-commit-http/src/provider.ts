@@ -56,7 +56,10 @@ function capabilityDrift(declared: CommitCapabilities, live: CommitCapabilities)
   return drift;
 }
 
-export interface CommitHttpProviderOptions extends CommitHttpManifestOptions {}
+export interface CommitHttpProviderOptions extends CommitHttpManifestOptions {
+  /** Host-managed bearer token for headless clients. Omit for interactive OIDC. */
+  readonly getAccessToken?: () => Promise<string>;
+}
 
 /**
  * Reads `GET /capabilities` without a provider, so a deployment can discover
@@ -93,6 +96,11 @@ export function createCommitHttpProvider(options: CommitHttpProviderOptions): Fi
   const manifest: PluginManifest = buildCommitHttpManifest(options);
 
   async function client(ctx: PluginContext): Promise<{ http: CommitHttpClient; baseUrl: string }> {
+    if (options.getAccessToken) {
+      const baseUrl = (await ctx.getPreference('baseUrl'))?.trim();
+      if (!baseUrl) throw new CommitHttpError('invalid', 'Set the baseUrl preference', 0);
+      return { baseUrl, http: new CommitHttpClient(baseUrl, ctx, options.getAccessToken) };
+    }
     const config = await resolveConfig(ctx);
     return {
       baseUrl: config.baseUrl,

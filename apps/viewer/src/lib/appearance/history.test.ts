@@ -14,6 +14,7 @@ import { createMutationSlice } from '@/store/slices/mutationSlice.js';
 // The real `canEditModel` gate every writer now checks (commit-history spec 02).
 import { createHistorySlice } from '@/store/slices/historySlice.js';
 import type { ViewerState } from '@/store/index.js';
+import { fixtureModel } from '@/test/store-fixture.js';
 import { applyAppearanceEntities, replayAppearanceEntities } from './apply-plan.js';
 import { prepareAppearanceHistory, registerAppearanceHistory } from './history.js';
 
@@ -37,7 +38,8 @@ END-ISO-10303-21;`);
   const editor = new StoreEditor(data, view);
   const store = createStore<ViewerState>((...args) => ({
     ...createMutationSlice(...args), ...createHistorySlice(...args), canCollabEdit: () => true,
-    models: new Map(), storeEditors: new Map([[modelId, editor]]),
+    editEnabled: true, models: new Map([[modelId, { ...fixtureModel(modelId), ifcDataStore: data }]]),
+    storeEditors: new Map([[modelId, editor]]),
   } as ViewerState));
   store.getState().registerMutationView(modelId, view);
   const apply = () => {

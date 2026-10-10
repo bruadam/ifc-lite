@@ -31,6 +31,7 @@
  */
 
 import '@/test/setup-dom.js';
+import '@/test/content-fixture.js';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
@@ -39,7 +40,10 @@ import { IfcParser, type IfcDataStore } from '@ifc-lite/parser';
 import { parseIDS } from '@ifc-lite/ids';
 import type { GeometryResult } from '@ifc-lite/geometry';
 import { useViewerStore, type FederatedModel } from '@/store';
+import { useActivityJournal, activityCanceller, cancelActivity } from '@/lib/activity/activity-journal';
 import { useIDS } from './useIDS.js';
+import { SaveValidationReportButton } from '@/components/viewer/validation/SaveValidationReportButton';
+import { loadValidationReports } from '@/lib/validation/reports/persistence';
 
 function ifc4(body: string): string {
   return [
@@ -98,7 +102,7 @@ const IDS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 const SLOW_COUNT = 6000;
 
-function model(id: string, store: IfcDataStore): FederatedModel {
+function model(id: string, store: IfcDataStore, idOffset = 0): FederatedModel {
   return {
     id,
     name: `${id}.ifc`,
@@ -109,7 +113,7 @@ function model(id: string, store: IfcDataStore): FederatedModel {
     schemaVersion: 'IFC4',
     loadedAt: 0,
     fileSize: 0,
-    idOffset: 0,
+    idOffset,
     maxExpressId: SLOW_COUNT,
   };
 }
@@ -117,22 +121,25 @@ function model(id: string, store: IfcDataStore): FederatedModel {
 type IdsApi = ReturnType<typeof useIDS>;
 let api: IdsApi | null = null;
 
-function Probe(): null {
+function Probe() {
   api = useIDS();
-  return null;
+  return api.report ? <SaveValidationReportButton report={api.report} /> : null;
 }
 
 let root: Root | null = null;
 
-async function seed(): Promise<void> {
+async function seed(modelCount: 1 | 2 = 1): Promise<void> {
   const slowStore = await parse(wallsBody(SLOW_COUNT, 'sA'));
   const models = new Map<string, FederatedModel>([['Slow', model('Slow', slowStore)]]);
+  if (modelCount === 2) models.set('Other', model('Other', slowStore, 1_000_000));
   const idsDoc = parseIDS(IDS_XML);
   useViewerStore.setState({
     models,
     activeModelId: 'Slow',
     idsDocument: idsDoc,
     idsValidationReport: null,
+    currentValidationReport: null,
+    savedValidationReports: [],
     idsError: null,
     idsLoading: false,
     idsProgress: null,
@@ -148,6 +155,9 @@ async function seed(): Promise<void> {
 
 beforeEach(() => {
   api = null;
+  useActivityJournal.setState({ jobs: [] });
+  sessionStorage.clear();
+  localStorage.clear();
 });
 
 afterEach(async () => {
@@ -156,7 +166,57 @@ afterEach(async () => {
   if (current) await act(async () => current.unmount());
 });
 
+describe('#6952 native IDS activity', () => {
+  it('records failures before the first progress update', async () => {
+    await seed();
+    // Fault injection tests the lifecycle invariant: even an exception while
+    // preparing initial progress must settle the real hook's journal entry.
+    Object.defineProperty(useViewerStore.getState().idsDocument!, 'specifications', {
+      get() { throw new Error('IDS specifications unavailable'); }, configurable: true,
+    });
+    await act(async () => { assert.equal(await api!.runValidation('Slow'), null); });
+    const jobs = useActivityJournal.getState().jobs;
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].subject, 'useIDS clear-during-run fixture');
+    assert.equal(jobs[0].outcome, 'failed');
+    assert.equal(jobs[0].detail, 'IDS specifications unavailable');
+    assert.equal(jobs[0].progress, undefined);
+  });
+
+  it('records a completed check only after its native report is published', async () => {
+    await seed();
+    await act(async () => { assert.ok(await api!.runValidation('Slow')); });
+    assert.ok(useViewerStore.getState().idsValidationReport);
+    assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['completed']);
+  });
+});
+
 describe('useIDS — clearing during an in-flight runValidation (PR #2837 review)', () => {
+  for (const modelCount of [1, 2] as const) {
+    it(`cancelValidation() discards an in-flight report with ${modelCount} model(s) (#5831)`, async () => {
+      await seed(modelCount);
+      const target = modelCount === 1 ? 'Slow' : 'Other';
+      let pending: Promise<unknown> | undefined;
+      await act(async () => { pending = api!.runValidation(target); });
+      assert.equal(useViewerStore.getState().idsLoading, true);
+
+      await act(async () => { api!.cancelValidation(); });
+      assert.equal(useViewerStore.getState().idsLoading, false);
+      assert.equal(useViewerStore.getState().idsProgress, null);
+      assert.equal(useViewerStore.getState().idsValidationReport, null);
+
+      let resolved: unknown;
+      await act(async () => { resolved = await pending; });
+      assert.equal(resolved, null, 'a cancelled run must not return an unpublished report');
+      assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['cancelled'], '#6952 cancelled native checks remain distinguishable');
+      assert.equal(useViewerStore.getState().idsValidationReport, null, 'late completion must not publish');
+      // #6568: a cancelled check supplies neither saved nor saveable evidence.
+      assert.equal(useViewerStore.getState().currentValidationReport, null);
+      assert.equal((await loadValidationReports()).length, 0);
+      assert.equal([...document.querySelectorAll('button')].some((button) => button.textContent === 'Save report'), false);
+    });
+  }
+
   it('clearIDS() does not leave idsLoading stuck once the superseded run lands', async () => {
     await seed();
 
@@ -220,4 +280,41 @@ describe('useIDS — clearing during an in-flight runValidation (PR #2837 review
         'not the report it computed but discarded',
     );
   });
+});
+
+
+it('#7110 tray cancellation of native IDS releases its callback and preserves a newer request', async () => {
+  await seed();
+  let pending: Promise<unknown> | undefined;
+  await act(async () => { pending = api!.runValidation('Slow'); });
+  const first = useActivityJournal.getState().jobs.at(-1)!;
+  const oldCancel = activityCanceller(first.id);
+  assert.ok(oldCancel);
+  act(() => cancelActivity(first.id));
+  await act(async () => { assert.equal(await pending, null); });
+  assert.equal(useActivityJournal.getState().jobs.at(-1)?.outcome, 'cancelled');
+  assert.equal(activityCanceller(first.id), null);
+  await act(async () => { pending = api!.runValidation('Slow'); });
+  act(() => oldCancel());
+  assert.equal(useViewerStore.getState().idsLoading, true, 'an old captured callback must not reset the new native run');
+  await act(async () => { assert.ok(await pending); });
+  assert.equal(useViewerStore.getState().idsValidationReport?.summary.totalEntitiesFailed, SLOW_COUNT);
+  assert.deepEqual(useActivityJournal.getState().jobs.map(job => job.outcome), ['cancelled', 'completed']);
+  assert.equal(activityCanceller(useActivityJournal.getState().jobs.at(-1)!.id), null);
+});
+
+it('#7110 closing the IDS owner preserves a native background run and its tray cancellation', async () => {
+  await seed();
+  let pending: Promise<unknown> | undefined;
+  await act(async () => { pending = api!.runValidation('Slow'); });
+  const job = useActivityJournal.getState().jobs.at(-1)!;
+  const current = root!;
+  root = null;
+  act(() => current.unmount());
+  assert.ok(activityCanceller(job.id));
+  act(() => cancelActivity(job.id));
+  await act(async () => { assert.equal(await pending, null); });
+  assert.equal(useViewerStore.getState().idsValidationReport, null);
+  assert.equal(useActivityJournal.getState().jobs.at(-1)?.outcome, 'cancelled');
+  assert.equal(activityCanceller(job.id), null);
 });

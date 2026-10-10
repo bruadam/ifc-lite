@@ -10,20 +10,26 @@
  * the resolved page through the seams and downloads it.
  */
 import '@/test/setup-dom.js';
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import '@/test/content-fixture.js';
+import { documentPreviewReady } from '@/test/document-preview';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
 import { IfcParser, type IfcDataStore } from '@ifc-lite/parser';
+import { MutablePropertyView } from '@ifc-lite/mutations';
 import { DEFAULT_THEME, elementFieldColumnId, renderChartSvg, type ChartSpec } from '@ifc-lite/charts';
 import { useViewerStore } from '@/store/index.js';
 import type { FederatedModel } from '@/store/types.js';
 import { fixtureModel } from '@/test/store-fixture.js';
-import { render, click, cleanup } from '@/test/render.js';
+import { render, click, cleanup, waitFor } from '@/test/render.js';
 import { EVENT_FILE_DOWNLOADED } from '@/lib/tours/events.js';
 import type { DocumentPdfSeams } from '@/lib/document/generate-document-pdf.js';
 import { Toaster } from '@/components/ui/toast';
 import { DOCUMENT_VERSION, type DocumentSpec } from '@/lib/document/types.js';
 import { LIST_PRESETS } from '@/lib/lists';
+import { createDocumentSlice } from '@/store/slices/documentSlice';
+import { blankDocument } from '@/lib/document/presets';
+import { loadDocuments } from '@/lib/document/persistence';
 import { DocumentPanel, ensureActiveDocument } from './DocumentPanel.js';
 import { useDocumentData } from './useDocumentData.js';
 
@@ -66,6 +72,7 @@ async function parsedModel(ifc = MINI_IFC): Promise<FederatedModel> {
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+  await documentPreviewReady();
 }
 
 const change = async (el: HTMLSelectElement | HTMLTextAreaElement | HTMLInputElement, value: string): Promise<void> => {
@@ -88,9 +95,45 @@ describe('DocumentPanel over a parsed model (#4594)', () => {
       dashboards: [],
       bcfProject: null,
       selectedEntityIds: new Set(),
+      mutationViews: new Map(),
+      mutationVersion: 0,
     });
   });
   afterEach(() => cleanup());
+
+  it('keeps an editable blank page on unavailable storage and retries without dropping unread neighbours (#6694)', async () => {
+    const neighbour = { ...blankDocument(), name: 'Unread saved neighbour' };
+    assert.equal(await useViewerStore.getState().upsertDocument(neighbour), true);
+    useViewerStore.setState(createDocumentSlice(useViewerStore.setState, useViewerStore.getState, useViewerStore));
+    const nativeTransaction = IDBDatabase.prototype.transaction;
+    const refused = mock.method(IDBDatabase.prototype, 'transaction', function (this: IDBDatabase,
+      stores: string | string[], mode?: IDBTransactionMode, options?: IDBTransactionOptions) {
+      if (mode === 'readonly' && (stores === 'items' || Array.isArray(stores) && stores.includes('items'))) {
+        throw new DOMException('Storage read refused', 'SecurityError');
+      }
+      return nativeTransaction.call(this, stores, mode, options);
+    });
+    let draftId = '';
+    try {
+      const ui = render(<DocumentPanel />);
+      await waitFor(() => useViewerStore.getState().documentsStorage.phase === 'unavailable'
+        && useViewerStore.getState().documents.length === 1, 'refused hydration must leave a usable document');
+      draftId = useViewerStore.getState().documents[0].id;
+      assert.equal(useViewerStore.getState().activeDocumentId, draftId);
+      const textarea = ui.querySelector<HTMLTextAreaElement>('textarea');
+      assert.ok(textarea, 'the memory-only document still has an editable text block');
+      await change(textarea, 'Draft while storage is unavailable');
+      await waitFor(() => useViewerStore.getState().documentsStorage.items[draftId] === 'unavailable', 'the refused edit must report its save state');
+      assert.ok(ui.querySelector('[data-document-preview]')?.textContent?.includes('Draft while storage is unavailable'));
+    } finally { refused.mock.restore(); }
+    await act(async () => { assert.equal(await useViewerStore.getState().retryDocumentsSave(), true); });
+    const saved = await loadDocuments();
+    assert.equal(saved.length, 2, 'retry keeps both the previously unread document and the session draft');
+    assert.equal(saved.find(entry => entry.id === neighbour.id)?.name, neighbour.name);
+    const draft = saved.find(entry => entry.id === draftId);
+    assert.ok(draft?.blocks[0].kind === 'text');
+    assert.equal(draft.blocks[0].text, 'Draft while storage is unavailable');
+  });
 
   it('seeds a blank page whose title reads the project name, and the seed is idempotent', async () => {
     const ui = render(<DocumentPanel />);
@@ -121,6 +164,39 @@ describe('DocumentPanel over a parsed model (#4594)', () => {
     assert.equal(marked.getAttribute('title'), 'no IfcBuildingStorey "Roof"');
     // The template is what is saved — not the resolved text.
     assert.equal((useViewerStore.getState().documents[0].blocks[1] as { text: string }).text, 'Walls: {Count[IfcWall]} on {IfcBuildingStorey["Roof"].Name}');
+  });
+
+  it('offers and resolves edited and authored storeys in document fields (#5249)', async () => {
+    const model = [...useViewerStore.getState().models.values()][0];
+    const view = new MutablePropertyView(model.ifcDataStore!.properties, model.id);
+    view.setExpressIdWatermark(model.maxExpressId);
+    view.setAttribute(5, 'Name', 'Renamed level');
+    const created = view.createEntity('IfcBuildingStorey', [
+      '0NewLevel00000000000001', null, 'Authored level', null, null, null, null, null, '.ELEMENT.', 6,
+    ]);
+    view.createEntity('IfcRelAggregates', [
+      '0NewRel000000000000001', null, null, null, '#3', [`#${created.expressId}`],
+    ]);
+    const wall = view.createEntity('IfcWall', ['0NewWall000000000000001', null, 'Authored wall', null, null, '#24', '#28', null, null]);
+    view.createEntity('IfcRelContainedInSpatialStructure', [
+      '0NewRel000000000000002', null, null, null, [`#${wall.expressId}`], `#${created.expressId}`,
+    ]);
+    useViewerStore.setState({ mutationViews: new Map([[model.id, view]]), mutationVersion: 1 });
+
+    const ui = render(<DocumentPanel />);
+    await settle();
+    const picker = ui.querySelectorAll<HTMLElement>('[data-block-editor]')[1]!
+      .querySelector<HTMLSelectElement>('select[aria-label="Insert field"]')!;
+    const paths = [...picker.options].map((o) => o.value);
+    assert.ok(paths.includes('IfcBuildingStorey["Renamed level"].Elevation'));
+    assert.ok(paths.includes('IfcBuildingStorey["Authored level"].Elevation'));
+    assert.ok(!paths.includes('IfcBuildingStorey["Level 1"].Elevation'));
+
+    const textarea = ui.querySelectorAll<HTMLElement>('[data-block-editor]')[1]!.querySelector<HTMLTextAreaElement>('textarea')!;
+    await change(textarea, '{IfcBuildingStorey["Authored level"].Name}: {IfcBuildingStorey["Authored level"].Elevation}; {IfcBuildingStorey["Authored level"].Elements} wall');
+    await settle();
+    const preview = ui.querySelectorAll('[data-preview-block] [data-block-text]')[1]!;
+    assert.equal(preview.textContent, 'Authored level: 6.00 m; 1 wall');
   });
 
   it('blocks move and delete, a preset adds a document, and the page setup is saved on the document', async () => {
@@ -173,7 +249,8 @@ END-ISO-10303-21;`);
       return <output data-volume-total>{result?.total ?? 'missing'}</output>;
     }
     const ui = render(<Probe />);
-    await settle();
+    await waitFor(() => ui.querySelector('[data-volume-total]')?.textContent !== 'missing',
+      'actual document aggregation resolves without mounting a paper preview (#6731)');
     assert.equal(ui.querySelector('[data-volume-total]')?.textContent, '5');
   });
 
@@ -181,7 +258,7 @@ END-ISO-10303-21;`);
     const drawn: string[] = [];
     const seams = async (): Promise<DocumentPdfSeams> => ({
       createDoc: async () => ({
-        addPage: () => {}, setFont: () => {}, setFontSize: () => {}, setTextColor: () => {},
+        addPage: () => {}, setFont: () => {}, setFontSize: () => {}, setTextColor: () => {}, fillRect: () => {},
         text: (t) => { drawn.push(t); }, addImage: () => {}, svg: async () => {}, table: () => { drawn.push('<table>'); },
         pageCount: () => 1, output: () => new Blob(['pdf']),
       }),
@@ -218,7 +295,7 @@ END-ISO-10303-21;`);
       createDoc: async (format, orientation) => {
         created = [format, orientation];
         return {
-          addPage: () => {}, setFont: () => {}, setFontSize: () => {}, setTextColor: () => {},
+          addPage: () => {}, setFont: () => {}, setFontSize: () => {}, setTextColor: () => {}, fillRect: () => {},
           text: (t) => { drawn.push(`text:${t}`); },
           addImage: () => { drawn.push('image'); },
           svg: async (svg) => { drawn.push(`svg:${svg.length > 100 ? 'ok' : 'short'}`); },

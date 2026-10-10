@@ -31,6 +31,8 @@ import { buildCommitRows, orderCompareSlots } from '@/lib/history/commitGraph';
 import { commitModelDisplayName } from '@/lib/history/commitLabels';
 import { getLocale } from '@/i18n/registry';
 import { useViewerStore } from '@/store';
+import { LocalHistory } from './history/LocalHistory';
+import { HistoryActions } from './history/HistoryActions';
 import { CommitTimeline } from './history/CommitTimeline';
 import { HistoryCompareBar } from './history/HistoryCompareBar';
 import type { CommitRowAction } from './history/CommitRow';
@@ -182,7 +184,7 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
   if (!modelId || !model) {
     body = <Message>{t('history.state.noModel')}</Message>;
   } else if (history.kind === 'no-source') {
-    body = <Message>{t('history.state.noSource')}</Message>;
+    body = <LocalHistory modelId={modelId} />;
   } else if (history.kind === 'none') {
     // The model IS from a source; the source has no history to show. Dalux is
     // the reference case — its API can fetch a revision you already have an id
@@ -249,6 +251,7 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
               ))}
             </select>
           </div>
+          {modelId && <HistoryActions modelId={modelId} />}
           {history.model && (
             <div className="mt-0.5 truncate text-muted-foreground">
               {t('history.panel.sourceLabel')} · {history.model.name}

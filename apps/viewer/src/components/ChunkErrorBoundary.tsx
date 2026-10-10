@@ -25,7 +25,8 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { useTranslation, type TranslationKey } from '@/i18n';
 import { posthog } from '@/lib/analytics';
-import { isChunkLoadError } from '@/lib/chunk-version-skew';
+import { reloadKeepingOpenModels } from '@/lib/reload-resume';
+import { isStaleDeploymentError } from '@/lib/stale-deployment';
 
 /**
  * Which surface the fallback paints on.
@@ -43,10 +44,17 @@ type ChunkErrorTone = 'panel' | 'night';
 const NIGHT_TONE = { fg: '#ede4d3', dim: '#9c9486' } as const;
 
 const CHUNK_LABEL_KEYS = {
+  'Linked records panel': 'semantic.title',
   'Appearance panel': 'viewerShell.chunkLabel.appearancePanel',
   'Charts panel': 'viewerShell.chunkLabel.chartsPanel',
+  'Assistant panel': 'assistant.title',
+  'Point cloud panel': 'pointCloudPanel.title',
+  'Review panel': 'reviewWorkspace.title',
+  'Script panel': 'scriptPanel.header.defaultTitle',
   'Flow panel': 'viewerShell.chunkLabel.flowPanel',
+  'Drawing panel': 'viewerShell.chunkLabel.drawingPanel',
   'Document panel': 'viewerShell.chunkLabel.documentPanel',
+  'Presentation panel': 'viewerShell.chunkLabel.presentationPanel',
   'Layers panel': 'viewerShell.chunkLabel.layersPanel',
   'MCP page': 'viewerShell.chunkLabel.mcpPage',
   'MCP playground': 'viewerShell.chunkLabel.mcpPlayground',
@@ -82,7 +90,7 @@ export class ChunkErrorBoundary extends Component<
     // filing a component crash under the chunk-skew context would mis-group a
     // real bug with an auto-recovered one, and the render path below would tell
     // the user their tab was out of date when it was not.
-    const chunk = isChunkLoadError(error);
+    const chunk = isStaleDeploymentError(error);
     console.error(`[chunk-boundary] "${this.props.label}" failed`, error, info);
     // Reported explicitly so it lands as HANDLED rather than as an uncaught
     // error-level exception. When a skew reload is in flight the before_send
@@ -106,7 +114,7 @@ export class ChunkErrorBoundary extends Component<
       <ChunkErrorFallback
         label={this.props.label}
         tone={this.props.tone}
-        chunk={isChunkLoadError(error)}
+        chunk={isStaleDeploymentError(error)}
       />
     );
   }
@@ -145,7 +153,7 @@ function ChunkErrorFallback({
         {chunk ? t('viewerShell.chunkError.loadFailed', { label: translatedLabel }) : t('viewerShell.chunkError.crashed', { label: translatedLabel })}
       </span>
       <span
-        className={night ? 'max-w-[280px] text-[11px]' : 'max-w-[280px] text-[11px] text-muted-foreground'}
+        className={night ? 'max-w-[280px] text-2xs' : 'max-w-[280px] text-2xs text-muted-foreground'}
         style={night ? { color: NIGHT_TONE.dim } : undefined}
       >
         {chunk
@@ -154,11 +162,13 @@ function ChunkErrorFallback({
       </span>
       <button
         type="button"
-        onClick={() => window.location.reload()}
+        // A stale chunk keeps the open models across the reload; a crash does
+        // not, so reopening cannot replay whatever crashed.
+        onClick={() => (chunk ? reloadKeepingOpenModels('user') : window.location.reload())}
         className={
           night
-            ? 'mt-1 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] transition-opacity hover:opacity-80'
-            : 'mt-1 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] transition-colors hover:bg-accent'
+            ? 'mt-1 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-2xs transition-opacity hover:opacity-80'
+            : 'mt-1 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-2xs transition-colors hover:bg-accent'
         }
         style={night ? { borderColor: NIGHT_TONE.dim, color: NIGHT_TONE.fg } : undefined}
       >

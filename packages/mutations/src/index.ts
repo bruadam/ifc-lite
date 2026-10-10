@@ -20,6 +20,9 @@ export {
   type EntityTypeNormalizer,
 } from './store-editor.js';
 export { ChangeSetManager } from './change-set.js';
+export { recordCompoundMutation, undoRecordedMutationOperations } from './compound-recording.js';
+export { replayQuantityMutation } from './quantity-replay.js';
+export { recordSessionMutation } from './session-history.js';
 export { storeHasSourceEntity } from './source-entity-index.js';
 export {
   iterateEffectiveEntityIds,
@@ -34,9 +37,8 @@ export {
   type BulkQuery,
   type BulkQueryPreview,
   type BulkQueryResult,
-  type PropertyFilter,
-  type FilterOperator,
 } from './bulk-query-engine.js';
+export { BULK_WRITABLE_ATTRIBUTES } from './bulk-attribute-action.js';
 export {
   CsvConnector,
   type CsvRow,

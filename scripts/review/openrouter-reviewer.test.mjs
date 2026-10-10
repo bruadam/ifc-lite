@@ -115,8 +115,8 @@ test('resolveModelChain: plural wins, singular becomes a one-element chain, else
 });
 
 test('the default chains are the three/two verified models, sonnet and haiku first', () => {
-  assert.deepEqual(OPENROUTER_REVIEW_MODELS_DEFAULT, ['anthropic/claude-sonnet-5', 'openai/gpt-5.6-sol', 'openai/gpt-5.6-luna']);
-  assert.deepEqual(OPENROUTER_JUDGE_MODELS_DEFAULT, ['openai/gpt-5.4-nano', 'anthropic/claude-haiku-4.5']);
+  assert.deepEqual(OPENROUTER_REVIEW_MODELS_DEFAULT, ['anthropic/claude-sonnet-5', 'openai/gpt-6-sol', 'openai/gpt-6-luna']);
+  assert.deepEqual(OPENROUTER_JUDGE_MODELS_DEFAULT, ['openai/gpt-6-luna', 'anthropic/claude-haiku-4.5']);
   assert.equal(OPENROUTER_REVIEW_MODEL, OPENROUTER_REVIEW_MODELS_DEFAULT[0]);
 });
 
@@ -290,4 +290,17 @@ test('runOpenRouterFallback reports a killed child as a named timeout failure, n
     }),
     /killed by signal SIGTERM/,
   );
+});
+
+
+test('fallback telemetry includes billed empty attempts before a later model answers', async () => {
+  const calls = [];
+  const outcome = await requestOpenRouterReviewChain({ prompt: 'p', apiKey: 'k', models: ['first', 'second'],
+    fetchImpl: async (_url, init) => {
+      const first = JSON.parse(init.body).model === 'first';
+      return { ok: true, text: async () => JSON.stringify({ choices: [{ message: { content: first ? '' : 'review' }, finish_reason: first ? 'length' : 'stop' }], usage: { cost: first ? 0.01 : 0.02 } }) };
+    }, onTelemetry: (call) => calls.push(call),
+  });
+  assert.deepEqual(outcome, { text: 'review', model: 'second' });
+  assert.deepEqual(calls.map((c) => [c.model, c.answered, c.costUsd, c.finishReason]), [['first', false, 0.01, 'length'], ['second', true, 0.02, 'stop']]);
 });

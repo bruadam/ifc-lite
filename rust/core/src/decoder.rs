@@ -20,8 +20,13 @@ use std::sync::Arc;
 mod caches;
 #[path = "decoder/fast_buffers.rs"]
 mod fast_buffers;
+#[path = "decoder/precision.rs"]
+mod precision;
+#[path = "decoder/schema_layout.rs"]
+mod schema_layout;
 #[path = "decoder/styled_items.rs"]
 mod styled_items;
+pub use schema_layout::GridAxisIndex;
 pub(crate) type StyledItemIndexResult = std::result::Result<FxHashMap<u32, Vec<u32>>, String>;
 
 /// Pre-built entity index type
@@ -81,6 +86,9 @@ pub struct EntityDecoder<'a> {
     /// files, 0.001 for millimetre files, etc. Used to express absolute
     /// tolerances (e.g. curve-tessellation chord deviation) in file units.
     length_unit_scale_cache: Option<f64>,
+    /// Smallest and largest declared geometric-context Precision in file units.
+    /// Errors are cached too, so malformed input cannot trigger repeated scans.
+    geometric_precision_cache: Option<std::result::Result<Option<(f64, f64)>, String>>,
     /// Per-worker memo of resolved placement world transforms, keyed by the
     /// IfcObjectPlacement entity id and stored as an opaque column-major
     /// `[f64; 16]` (core must not depend on nalgebra; the geometry crate owns
@@ -95,6 +103,9 @@ pub struct EntityDecoder<'a> {
     /// [`Self::take_placement_transform_cache`].
     placement_transform_cache: FxHashMap<u32, [f64; 16]>,
     styled_item_index: std::sync::OnceLock<StyledItemIndexResult>,
+    /// Declared `FILE_SCHEMA`, resolved on first use (see `schema_layout`).
+    schema_version_cache: Option<Option<crate::generated::schema_registry::SchemaVersion>>,
+    grid_axis_index: Arc<GridAxisIndex>,
 }
 
 impl<'a> EntityDecoder<'a> {
@@ -113,8 +124,11 @@ impl<'a> EntityDecoder<'a> {
             point_cache_misses: 0,
             plane_angle_to_radians_cache: None,
             length_unit_scale_cache: None,
+            geometric_precision_cache: None,
             placement_transform_cache: FxHashMap::default(),
             styled_item_index: std::sync::OnceLock::new(),
+            schema_version_cache: None,
+            grid_axis_index: Arc::default(),
         }
     }
 
@@ -133,8 +147,11 @@ impl<'a> EntityDecoder<'a> {
             point_cache_misses: 0,
             plane_angle_to_radians_cache: None,
             length_unit_scale_cache: None,
+            geometric_precision_cache: None,
             placement_transform_cache: FxHashMap::default(),
             styled_item_index: std::sync::OnceLock::new(),
+            schema_version_cache: None,
+            grid_axis_index: Arc::default(),
         }
     }
 
@@ -153,8 +170,11 @@ impl<'a> EntityDecoder<'a> {
             point_cache_misses: 0,
             plane_angle_to_radians_cache: None,
             length_unit_scale_cache: None,
+            geometric_precision_cache: None,
             placement_transform_cache: FxHashMap::default(),
             styled_item_index: std::sync::OnceLock::new(),
+            schema_version_cache: None,
+            grid_axis_index: Arc::default(),
         }
     }
 

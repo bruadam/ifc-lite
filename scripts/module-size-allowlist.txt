@@ -54,95 +54,74 @@
 # removed. A hand-picked number fails; a shrink that landed in another PR
 # stays a note, and so does slack left on a row this change only lowered.
    524 apps/viewer-embed/src/bridge/handler.ts
-   473 apps/viewer/src/components/extensions/ExtensionsPanel.tsx
+   454 apps/viewer/src/components/extensions/ExtensionsPanel.tsx
    402 apps/viewer/src/components/extensions/FlavorDialog.tsx
    665 apps/viewer/src/components/mcp/data.ts
   1317 apps/viewer/src/components/mcp/McpLanding.tsx
    525 apps/viewer/src/components/mcp/McpPlayground.tsx
   2051 apps/viewer/src/components/mcp/playground-dispatcher.ts
   1187 apps/viewer/src/components/mcp/PlaygroundChat.tsx
-   758 apps/viewer/src/components/viewer/AddElementPanel.tsx
-   508 apps/viewer/src/components/viewer/BasketPresentationDock.tsx
-   428 apps/viewer/src/components/viewer/bcf/BCFTopicDetail.tsx
-   540 apps/viewer/src/components/viewer/BCFPanel.tsx
-  1028 apps/viewer/src/components/viewer/BulkPropertyEditor.tsx
-   486 apps/viewer/src/components/viewer/CesiumOverlay.tsx
-  1098 apps/viewer/src/components/viewer/CesiumPlacementEditor.tsx
-  1720 apps/viewer/src/components/viewer/ChatPanel.tsx
-  1303 apps/viewer/src/components/viewer/ClashPanel.tsx
-  1053 apps/viewer/src/components/viewer/DataConnector.tsx
-  1752 apps/viewer/src/components/viewer/Drawing2DCanvas.tsx
+   415 apps/viewer/src/components/viewer/bcf/BCFTopicDetail.tsx
+   529 apps/viewer/src/components/viewer/BCFPanel.tsx
+   604 apps/viewer/src/components/viewer/BulkPropertyEditor.tsx
+   485 apps/viewer/src/components/viewer/CesiumOverlay.tsx
+  1434 apps/viewer/src/components/viewer/ChatPanel.tsx
+  1243 apps/viewer/src/components/viewer/ClashPanel.tsx
+   966 apps/viewer/src/components/viewer/DataConnector.tsx
+  1698 apps/viewer/src/components/viewer/Drawing2DCanvas.tsx
    535 apps/viewer/src/components/viewer/DrawingSettingsPanel.tsx
-   423 apps/viewer/src/components/viewer/DxfUnderlayPanel.tsx
-   583 apps/viewer/src/components/viewer/EntityContextMenu.tsx
-   845 apps/viewer/src/components/viewer/ExportDialog.tsx
-   531 apps/viewer/src/components/viewer/GLBExportDialog.tsx
-  1381 apps/viewer/src/components/viewer/hierarchy/treeDataBuilder.ts
-   406 apps/viewer/src/components/viewer/hierarchy/useHierarchyTree.ts
-  1147 apps/viewer/src/components/viewer/HierarchyPanel.tsx
-   432 apps/viewer/src/components/viewer/IDSCorrectionDialog.tsx
-   568 apps/viewer/src/components/viewer/KeyboardShortcutsDialog.tsx
+   644 apps/viewer/src/components/viewer/ExportDialog.tsx
+   468 apps/viewer/src/components/viewer/GLBExportDialog.tsx
+  1357 apps/viewer/src/components/viewer/hierarchy/treeDataBuilder.ts
+   740 apps/viewer/src/components/viewer/HierarchyPanel.tsx
    533 apps/viewer/src/components/viewer/layers/LayerMergeSection.tsx
-  1692 apps/viewer/src/components/viewer/LensPanel.tsx
-  1411 apps/viewer/src/components/viewer/lists/ListBuilder.tsx
-   548 apps/viewer/src/components/viewer/lists/ListResultsTable.tsx
-  1139 apps/viewer/src/components/viewer/MainToolbar.tsx
-   715 apps/viewer/src/components/viewer/measureHandlers.ts
-   404 apps/viewer/src/components/viewer/PdfViewExportDialog.tsx
-   572 apps/viewer/src/components/viewer/properties/BsddCard.tsx
+  1012 apps/viewer/src/components/viewer/LensPanel.tsx
+   989 apps/viewer/src/components/viewer/lists/ListBuilder.tsx
+   467 apps/viewer/src/components/viewer/lists/ListResultsTable.tsx
+   594 apps/viewer/src/components/viewer/measureHandlers.ts
+   522 apps/viewer/src/components/viewer/properties/BsddCard.tsx
    418 apps/viewer/src/components/viewer/properties/EpsgLookupDialog.tsx
-   985 apps/viewer/src/components/viewer/properties/GeoreferencingPanel.tsx
-   886 apps/viewer/src/components/viewer/properties/LocationMap.tsx
+   652 apps/viewer/src/components/viewer/properties/GeoreferencingPanel.tsx
+   825 apps/viewer/src/components/viewer/properties/LocationMap.tsx
    417 apps/viewer/src/components/viewer/properties/MaterialTotalsPanel.tsx
    510 apps/viewer/src/components/viewer/properties/TaskEditCard.tsx
-  2170 apps/viewer/src/components/viewer/PropertiesPanel.tsx
-  1729 apps/viewer/src/components/viewer/PropertyEditor.tsx
-   539 apps/viewer/src/components/viewer/schedule/AnimationSettingsPopover.tsx
-   425 apps/viewer/src/components/viewer/schedule/GanttToolbar.tsx
+  1998 apps/viewer/src/components/viewer/PropertiesPanel.tsx
+   577 apps/viewer/src/components/viewer/PropertyEditor.tsx
+   535 apps/viewer/src/components/viewer/schedule/AnimationSettingsPopover.tsx
    648 apps/viewer/src/components/viewer/schedule/generate-schedule.ts
    427 apps/viewer/src/components/viewer/schedule/import/csv.ts
    488 apps/viewer/src/components/viewer/schedule/schedule-animator.ts
-   670 apps/viewer/src/components/viewer/ScriptPanel.tsx
-   734 apps/viewer/src/components/viewer/SearchInline.tsx
+   614 apps/viewer/src/components/viewer/ScriptPanel.tsx
+   578 apps/viewer/src/components/viewer/SearchInline.tsx
    508 apps/viewer/src/components/viewer/SearchModal.filter.editors.tsx
    835 apps/viewer/src/components/viewer/SearchModal.filter.tsx
-   404 apps/viewer/src/components/viewer/SearchModal.text.tsx
-  1241 apps/viewer/src/components/viewer/Section2DPanel.tsx
-  1134 apps/viewer/src/components/viewer/selectionHandlers.ts
    493 apps/viewer/src/components/viewer/SheetSetupPanel.tsx
    435 apps/viewer/src/components/viewer/TitleBlockEditor.tsx
-   581 apps/viewer/src/components/viewer/tools/AddElementOverlay.tsx
    501 apps/viewer/src/components/viewer/tools/measure-modes/radius.ts
-   867 apps/viewer/src/components/viewer/tools/MeasurementVisuals.tsx
-   752 apps/viewer/src/components/viewer/tools/MeasurePanel.tsx
+   818 apps/viewer/src/components/viewer/tools/MeasurementVisuals.tsx
    677 apps/viewer/src/components/viewer/tools/MeasureQuantities.tsx
-  1509 apps/viewer/src/components/viewer/tools/SpaceSketchOverlay.tsx
-   406 apps/viewer/src/components/viewer/useAnimationLoop.ts
-   970 apps/viewer/src/components/viewer/useGeometryStreaming.ts
-   916 apps/viewer/src/components/viewer/useMouseControls.ts
-   683 apps/viewer/src/components/viewer/ViewerLayout.tsx
-  1815 apps/viewer/src/components/viewer/Viewport.tsx
-  1190 apps/viewer/src/components/viewer/ViewportContainer.tsx
-   508 apps/viewer/src/components/viewer/ZonesPanel.tsx
+   918 apps/viewer/src/components/viewer/useGeometryStreaming.ts
+   893 apps/viewer/src/components/viewer/useMouseControls.ts
+   461 apps/viewer/src/components/viewer/ViewerLayout.tsx
+  1630 apps/viewer/src/components/viewer/Viewport.tsx
+   884 apps/viewer/src/components/viewer/ViewportContainer.tsx
+   500 apps/viewer/src/components/viewer/ZonesPanel.tsx
    847 apps/viewer/src/hooks/ids/idsExportService.ts
    598 apps/viewer/src/hooks/ingest/federationAlign.ts
    525 apps/viewer/src/hooks/ingest/pointCloudIngest.ts
    461 apps/viewer/src/hooks/useAnnotation2D.ts
    764 apps/viewer/src/hooks/useBCF.ts
-  1357 apps/viewer/src/hooks/useClash.ts
-   472 apps/viewer/src/hooks/useCompare.ts
-  1353 apps/viewer/src/hooks/useDrawingExport.ts
+  1334 apps/viewer/src/hooks/useClash.ts
+  1290 apps/viewer/src/hooks/useDrawingExport.ts
   1041 apps/viewer/src/hooks/useDrawingGeneration.ts
    586 apps/viewer/src/hooks/useIfcCache.ts
    667 apps/viewer/src/hooks/useIfcFederation.ts
   2234 apps/viewer/src/hooks/useIfcLoader.ts
    436 apps/viewer/src/hooks/useIfcServer.ts
-   445 apps/viewer/src/hooks/useKeyboardShortcuts.ts
-   467 apps/viewer/src/hooks/useSymbolicAnnotations.ts
-   453 apps/viewer/src/i18n/catalogues/properties.en.ts
+   457 apps/viewer/src/hooks/useSymbolicAnnotations.ts
    633 apps/viewer/src/lib/analytics-scrub.ts
    627 apps/viewer/src/lib/clash/persistence.ts
-   436 apps/viewer/src/lib/compare/worldPlacement.ts
+   431 apps/viewer/src/lib/compare/worldPlacement.ts
    501 apps/viewer/src/lib/geo/cesium-bridge.ts
    461 apps/viewer/src/lib/geo/custom-basemap.ts
    405 apps/viewer/src/lib/geo/map-webgl-support.ts
@@ -153,42 +132,33 @@
    445 apps/viewer/src/lib/llm/script-diagnostics.ts
    991 apps/viewer/src/lib/llm/script-edit-ops.ts
   1141 apps/viewer/src/lib/llm/script-preflight.ts
-   410 apps/viewer/src/lib/llm/stream-client.ts
-   809 apps/viewer/src/lib/llm/system-prompt.ts
-   491 apps/viewer/src/lib/scripts/templates/create-building.ts
+   747 apps/viewer/src/lib/llm/system-prompt.ts
    450 apps/viewer/src/lib/search/tier1-index.ts
-   452 apps/viewer/src/lib/slab-edit.ts
    412 apps/viewer/src/lib/sources/persistence.ts
    426 apps/viewer/src/lib/tours/controller.ts
    812 apps/viewer/src/sdk/adapters/export-adapter.ts
    638 apps/viewer/src/services/extensions/host.ts
    561 apps/viewer/src/services/ifc-cache.ts
-   581 apps/viewer/src/store/basketVisibleSet.ts
-   485 apps/viewer/src/store/constants.ts
-   574 apps/viewer/src/store/index.ts
-   404 apps/viewer/src/store/slices/addElementMeshes.ts
+   559 apps/viewer/src/store/basketVisibleSet.ts
+   444 apps/viewer/src/store/constants.ts
    452 apps/viewer/src/store/slices/chatSlice.ts
    992 apps/viewer/src/store/slices/clashSlice.ts
   1312 apps/viewer/src/store/slices/collabSlice.ts
    482 apps/viewer/src/store/slices/dataSlice.ts
-   874 apps/viewer/src/store/slices/drawing2DSlice.ts
-   489 apps/viewer/src/store/slices/idsSlice.ts
+   882 apps/viewer/src/store/slices/drawing2DSlice.ts
+   474 apps/viewer/src/store/slices/idsSlice.ts
    820 apps/viewer/src/store/slices/measurementSlice.ts
    630 apps/viewer/src/store/slices/modelSlice.ts
-  3224 apps/viewer/src/store/slices/mutationSlice.ts
+  2305 apps/viewer/src/store/slices/mutationSlice.ts
   1317 apps/viewer/src/store/slices/scheduleSlice.ts
    536 apps/viewer/src/store/slices/scriptSlice.ts
-   574 apps/viewer/src/store/slices/sectionSlice.ts
+   498 apps/viewer/src/store/slices/sectionSlice.ts
    571 apps/viewer/src/store/slices/sheetSlice.ts
-   412 apps/viewer/src/store/slices/uiSlice.ts
-   497 apps/viewer/src/store/slices/visibilitySlice.ts
    415 apps/viewer/src/store/teardown.ts
-   696 apps/viewer/src/store/types.ts
+   686 apps/viewer/src/store/types.ts
    422 apps/viewer/src/utils/spatialHierarchy.ts
    573 apps/viewer/src/utils/viewportUtils.ts
-   405 apps/viewer/vite.config.ts
    788 packages/bcf/src/ids-reporter.ts
-   495 packages/bcf/src/overlay-renderer.ts
    806 packages/bcf/src/reader.ts
    627 packages/bcf/src/viewpoint.ts
    753 packages/bcf/src/writer.ts
@@ -196,22 +166,21 @@
    433 packages/clash/src/duplicates.ts
    547 packages/cli/src/commands/ask.ts
    501 packages/cli/src/commands/create.ts
-   461 packages/cli/src/commands/extract-entities.ts
+   482 packages/cli/src/commands/extract-entities.ts
    501 packages/cli/src/commands/query.ts
    798 packages/cli/src/headless-backend.ts
    457 packages/codegen/src/express-parser.ts
    660 packages/codegen/src/rust-generator.ts
    640 packages/codegen/src/typescript-generator.ts
-   427 packages/collab-server/src/access-control.ts
    805 packages/collab-server/src/layer-registry-route.ts
    691 packages/collab-server/src/room-manager.ts
-   662 packages/collab-server/src/room-token.ts
-   677 packages/collab-server/src/server.ts
+   499 packages/collab-server/src/room-token.ts
+   618 packages/collab-server/src/server.ts
    653 packages/collab/src/doc/entity.ts
    591 packages/create-ifc-lite/src/templates/react.ts
    428 packages/create-ifc-lite/src/templates/server-native.ts
    639 packages/create-ifc-lite/src/templates/server.ts
-  2835 packages/create/src/ifc-creator.ts
+  2827 packages/create/src/ifc-creator.ts
    535 packages/create/src/in-store/auto-space-detect.ts
    878 packages/create/src/in-store/extract-walls.ts
    819 packages/create/src/types.ts
@@ -247,10 +216,10 @@
    526 packages/export/src/schema-converter.ts
    437 packages/extensions/src/testing/runner.ts
    638 packages/geometry/src/coordinate-handler.ts
-  1695 packages/geometry/src/geometry-parallel.ts
+  1547 packages/geometry/src/geometry-parallel.ts
   1780 packages/geometry/src/geometry.worker.ts
    918 packages/geometry/src/ifc-lite-bridge.ts
-  1543 packages/geometry/src/index.ts
+  1536 packages/geometry/src/index.ts
    730 packages/geometry/src/native-bridge.ts
    904 packages/ids/src/audit/ifc-schema/index.ts
    566 packages/ids/src/audit/structural/index.ts
@@ -262,28 +231,22 @@
    468 packages/ifcx/src/federated-composition.ts
    704 packages/ifcx/src/index.ts
    464 packages/lens/src/engine.ts
-   426 packages/lens/src/matching.ts
-   416 packages/lens/src/types.ts
    812 packages/lists/src/engine.ts
-   412 packages/lists/src/types.ts
    479 packages/mcp/src/backend-query.ts
    544 packages/mcp/src/server.ts
    470 packages/mcp/src/tools/layer-review.ts
-   451 packages/mcp/src/tools/mutate.ts
    648 packages/mcp/src/tools/query.ts
    694 packages/mcp/src/tools/viewer.ts
-   413 packages/mcp/src/transport/http.ts
    465 packages/merge/src/component-state.ts
    530 packages/merge/src/three-way.ts
-   493 packages/mutations/src/bulk-query-engine.ts
    558 packages/mutations/src/csv-connector.ts
-  1914 packages/mutations/src/mutable-property-view.ts
+  1879 packages/mutations/src/mutable-property-view.ts
    422 packages/oauth-pkce/src/token-manager.ts
    858 packages/parser/src/columnar-parser.ts
    467 packages/parser/src/compact-entity-index.ts
    530 packages/parser/src/data-store-transport.ts
    835 packages/parser/src/material-resolver.ts
-   790 packages/parser/src/on-demand-extractors.ts
+   787 packages/parser/src/on-demand-extractors.ts
    494 packages/parser/src/source-bytes.ts
    496 packages/plugin-api/src/types.ts
    678 packages/pointcloud/src/formats/e57-decode.ts
@@ -298,34 +261,33 @@
    529 packages/query/src/duckdb-integration.ts
    583 packages/renderer/src/camera-controls.ts
    684 packages/renderer/src/camera.ts
-  3730 packages/renderer/src/index.ts
-   756 packages/renderer/src/picker.ts
+  3699 packages/renderer/src/index.ts
+   741 packages/renderer/src/picker.ts
    952 packages/renderer/src/pipeline.ts
-   475 packages/renderer/src/pointcloud/point-cloud-renderer.ts
+   465 packages/renderer/src/pointcloud/point-cloud-renderer.ts
    758 packages/renderer/src/pointcloud/point-cloud-spatial-index.ts
    467 packages/renderer/src/raycast-engine.ts
    401 packages/renderer/src/render-section-plane.ts
    462 packages/renderer/src/scene-raycaster.ts
   4118 packages/renderer/src/scene.ts
    639 packages/renderer/src/section-2d-overlay.ts
-   639 packages/renderer/src/shaders/main.wgsl.ts
-   454 packages/renderer/src/shadow-pass.ts
+   564 packages/renderer/src/shaders/main.wgsl.ts
+   417 packages/renderer/src/shadow-pass.ts
    768 packages/renderer/src/snap-detector.ts
    765 packages/renderer/src/symbolic-overlay-pipelines.ts
-   583 packages/rules/src/filter/filter-evaluate.ts
+   572 packages/rules/src/filter/filter-evaluate.ts
    587 packages/sandbox/src/bridge-create.ts
    421 packages/sandbox/src/bridge-query.ts
    498 packages/sandbox/src/bridge-schema.ts
    673 packages/sandbox/src/sandbox.ts
    458 packages/sdk/src/namespaces/bsdd.ts
-   743 packages/sdk/src/types.ts
-  1011 packages/server-client/src/client.ts
+   734 packages/sdk/src/types.ts
+   995 packages/server-client/src/client.ts
    788 packages/server-client/src/data-model-decoder.ts
    444 packages/server-client/src/parquet-tables.ts
    595 packages/server-client/src/types.ts
    411 packages/source-dalux/src/http-client.ts
    406 packages/source-dalux/src/provider.ts
-   432 packages/source-dropbox/src/provider.ts
    415 packages/viewer/src/server.ts
   1486 packages/viewer/src/viewer-html.ts
    500 scripts/check-agents-md-size.mjs
@@ -362,5 +324,5 @@
    559 scripts/review/run-reviewer.mjs
    688 scripts/source-text-assertion-detect.mjs
    504 scripts/test-geometry-regression.mjs
-  2165 scripts/test-wasm-contract.mjs
+  2163 scripts/test-wasm-contract.mjs
    678 scripts/typecheck-tests.mjs

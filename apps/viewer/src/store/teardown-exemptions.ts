@@ -59,6 +59,12 @@ export const TEARDOWN_EXEMPTIONS: Readonly<Record<string, string>> = {
     'preference persisted to localStorage, mirroring dockSlice — deliberately outlives a ' +
     'file load. It names no modelId or expressId.',
 
+  drawingInspectorSlice:
+    'Drawing inspector layout (open tab id, column width) is a cross-file workspace ' +
+    'preference persisted to localStorage, mirroring dockSlice and sidebarSlice: deliberately ' +
+    "NOT cleared on a new file load (see the slice's module doc, #5495). It names no " +
+    'modelId or expressId.',
+
   solarSlice:
     'Solar-study intent (studied instant, display toggles) and the resolved sun readout are ' +
     'continuously recomputed from the live active model\'s georeference while the study is ' +
@@ -88,11 +94,16 @@ export const TEARDOWN_EXEMPTIONS: Readonly<Record<string, string>> = {
     'that decision first.',
 
   levelDisplaySlice:
-    '`appliedStoreyOffsets` (Map<modelId, Map<storeyExpressId, offset>>) is fully ' +
+    '`appliedStoreyOffsets` and `appliedEntityLevelOffsets` are fully ' +
     "recomputed and overwritten every time `useLevelDisplayEffect` runs, and that effect's " +
     'dependency array includes the store\'s `models` map, so it re-runs on every model add ' +
     'or remove and rebuilds the map from the CURRENT model set — a removed model\'s entry is ' +
     'dropped by the next render, not left to a teardown.',
+
+  storeyContextSlice:
+    'One user preference, the Model workspace storey context mode (hide / ghost / all), ' +
+    'persisted to sessionStorage. It names no modelId or expressId; the ids it applies to ' +
+    'are derived from the live session storey on every render, never stored.',
 
   unitDisplaySlice:
     'Display-unit overrides are keyed by unit-TYPE token (e.g. "LENGTHUNIT"), not by model ' +
@@ -132,4 +143,30 @@ export const TEARDOWN_EXEMPTIONS: Readonly<Record<string, string>> = {
     '`modelAppearanceAssets.remove(modelId)`, `clearAllModels` calls ' +
     '`modelAppearanceAssets.clear()`) — outside the scope of this guard, but confirmed so the ' +
     'exemption above is not silently relying on it.',
+
+  validationReportsSlice:
+    'Persistent frozen report evidence (#6500), retained when models change or unload. ' +
+    'Scope contains display names and source fingerprints, never runtime model/entity ids or live stores; ' +
+    'saved snapshots can only be previewed/copied into documents, never applied to the current 3D scene.',
+
+  savedComparisonsSlice:
+    'Saved comparisons (#6506) contain immutable canonical report rows and source-pair ' +
+    'provenance only. They never drive renderer selection or overlays, so runtime model ids ' +
+    'are historical metadata rather than live references. Browser-persisted history must ' +
+    'survive model removal, federation clearing and session reset, like document templates.',
+
+  savedClashReportsSlice:
+    'Saved clash reports (#6947) are frozen run evidence: durable element keys, model names and ' +
+    'source identities, and the review and group each clash had when saved. They hold no renderer ' +
+    'ids and never drive selection or overlays, so the per-load model ids inside a report are join ' +
+    'keys within it rather than live references. Browser-persisted history must survive model ' +
+    'removal, federation clearing and session reset, like saved comparisons.',
+
+  manualValidationSlice:
+    'Manual validation (#6507) holds a persisted library of independent templates, their active projections (no model references) and ' +
+    'answers keyed by a model\'s `sourceFingerprint`, the durable content identity, never a ' +
+    'runtime modelId or expressId. Both are persisted to localStorage on purpose so a verdict ' +
+    're-attaches when the same file is loaded again (the clash-review pattern, #1468); ' +
+    'removing a model or clearing the federation must NOT erase them, and nothing can go ' +
+    'stale because no key names per-load state.',
 };

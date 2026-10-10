@@ -9,6 +9,7 @@
  * of the file reads that revision's values.
  *
  * Grammar (exact IFC names, case-sensitive):
+ *   Model["architecture.ifc"].<path>          value from one named model (#6485)
  *   Today                                    ISO date of the day
  *   Model.Name | Model.Schema | Model.Elements | Model.Count
  *   IfcProject.Name | LongName | Description | GlobalId       (also IfcSite, IfcBuilding)
@@ -23,12 +24,17 @@
  */
 import type { IfcDataStore } from '@ifc-lite/parser';
 import { normalizeIfcTypeName } from '@ifc-lite/parser';
-import { EntityFlags, IfcTypeEnum, IfcTypeEnumFromString, IfcTypeEnumToString, type SpatialNode } from '@ifc-lite/data';
+import { EntityFlags, IfcTypeEnum, IfcTypeEnumFromString, type SpatialNode } from '@ifc-lite/data';
 import { iterateEffectiveEntityIds, type MutablePropertyView } from '@ifc-lite/mutations';
 import { createListDataProvider } from '../lists/adapter.js';
 import type { ListDataProvider } from '@ifc-lite/lists';
 import { iterateEffectiveChartRows } from '../charts/datasets/effective-elements.js';
 import { effectiveAttribute, effectiveProperty, effectivePropertyPaths, findEffectiveElementId } from './effective-binding-fields.js';
+import { effectiveSpatialMembers } from '../effective-spatial-members.js';
+import { effectiveStoreyId } from '../effective-storey.js';
+import { spatialBindingNodes } from './spatial-binding-nodes.js';
+import { parsePath, type Segment } from './binding-path.js';
+export { parsePath } from './binding-path.js';
 
 export interface BindingModel {
   id: string;
@@ -56,66 +62,39 @@ export interface ResolvedBinding {
 /** The `{path}` placeholders of a template, in order of appearance. */
 export function templatePaths(text: string): string[] {
   const paths: string[] = [];
-  for (const m of text.matchAll(/\{([^{}]+)\}/g)) paths.push(m[1].trim());
+  for (const m of text.matchAll(/\{\{|\}\}|\{([^{}]+)\}/g)) if (m[1] !== undefined) paths.push(m[1].trim());
   return paths;
 }
+
+/** Double braces represent literal braces, leaving ordinary authored fields live. */
+export function literalTemplateText(text: string): string {
+  return text.replace(/[{}]/g, (brace) => brace + brace);
+}
+
+export interface ResolvedBindingSpan extends ResolvedBinding { start: number; end: number }
 
 export interface RenderedTemplate {
   text: string;
   bindings: ResolvedBinding[];
+  /** Source ranges in rendered text, retained through canonical wrapping for preview annotations. */
+  spans?: ResolvedBindingSpan[];
 }
 
 /** Replace every `{path}` in `text`; an unresolved one prints as `[path: reason]`. */
 export function renderTemplate(text: string, ctx: BindingContext): RenderedTemplate {
   const bindings: ResolvedBinding[] = [];
-  const rendered = text.replace(/\{([^{}]+)\}/g, (_, raw: string) => {
+  const spans: ResolvedBindingSpan[] = [];
+  let delta = 0;
+  const rendered = text.replace(/\{\{|\}\}|\{([^{}]+)\}/g, (token: string, raw: string | undefined, offset: number) => {
+    if (raw === undefined) { delta -= 1; return token[0]; }
     const resolved = resolveBinding(raw.trim(), ctx);
     bindings.push(resolved);
-    return resolved.ok ? resolved.value : `[${resolved.path}: ${resolved.reason ?? 'unresolved'}]`;
+    const value = resolved.ok ? resolved.value : `[${resolved.path}: ${resolved.reason ?? 'unresolved'}]`;
+    spans.push({ ...resolved, start: offset + delta, end: offset + delta + value.length });
+    delta += value.length - token.length;
+    return value;
   });
-  return { text: rendered, bindings };
-}
-
-// ── Path parsing ────────────────────────────────────────────────────────
-
-interface Segment {
-  name: string;
-  /** `[…]` selector, unquoted. */
-  selector?: string;
-}
-
-/** `IfcBuildingStorey["Level 1"].Name` → [{name:'IfcBuildingStorey', selector:'Level 1'}, {name:'Name'}]. */
-export function parsePath(path: string): Segment[] | null {
-  const segments: Segment[] = [];
-  let i = 0;
-  while (i < path.length) {
-    const nameEnd = indexOfAny(path, ['.', '['], i);
-    const name = path.slice(i, nameEnd === -1 ? path.length : nameEnd);
-    if (name.length === 0) return null;
-    const segment: Segment = { name };
-    i = nameEnd === -1 ? path.length : nameEnd;
-    if (path[i] === '[') {
-      const close = path.indexOf(']', i);
-      if (close === -1) return null;
-      let selector = path.slice(i + 1, close).trim();
-      if ((selector.startsWith('"') && selector.endsWith('"')) || (selector.startsWith("'") && selector.endsWith("'"))) selector = selector.slice(1, -1);
-      segment.selector = selector;
-      i = close + 1;
-    }
-    segments.push(segment);
-    if (path[i] === '.') i += 1;
-    else if (i < path.length) return null;
-  }
-  return segments;
-}
-
-function indexOfAny(text: string, chars: string[], from: number): number {
-  let best = -1;
-  for (const c of chars) {
-    const at = text.indexOf(c, from);
-    if (at !== -1 && (best === -1 || at < best)) best = at;
-  }
-  return best;
+  return { text: rendered, bindings, spans };
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────
@@ -166,8 +145,20 @@ const fail = (path: string, reason: string): ResolvedBinding => ({ path, value: 
 const succeed = (path: string, value: string): ResolvedBinding => ({ path, value, ok: true });
 
 export function resolveBinding(path: string, ctx: BindingContext): ResolvedBinding {
-  const segments = parsePath(path);
+  let segments = parsePath(path);
   if (!segments || segments.length === 0) return fail(path, 'not a path');
+  if (segments[0].name === 'Model' && segments[0].selector !== undefined) {
+    const name = segments[0].selector;
+    const matches = ctx.models.filter((model) => model.name === name);
+    if (matches.length !== 1) return fail(path, matches.length === 0 ? `model "${name}" is not loaded` : `model name "${name}" is ambiguous`);
+    const model = matches[0];
+    ctx = { ...ctx, models: [model], activeModelId: model.id };
+    const tail = segments.slice(1);
+    if (tail.length === 0) return fail(path, 'a model selector needs a field');
+    // Model["file.ifc"].Name is the scoped form of Model.Name; other roots follow the selector.
+    segments = tail[0].selector === undefined && ['Name', 'Schema', 'Elements', 'Count'].includes(tail[0].name) ? [{ name: 'Model' }, ...tail] : tail;
+    if (segments[0].name === 'Model' && segments[0].selector !== undefined) return fail(path, 'nested model selectors are not supported');
+  }
   const [head, ...rest] = segments;
 
   if (head.name === 'Today') return succeed(path, localIsoDate(ctx.today));
@@ -220,7 +211,7 @@ export function resolveBinding(path: string, ctx: BindingContext): ResolvedBindi
     if (!active) return fail(path, 'no model loaded');
     const hierarchy = active.store.spatialHierarchy;
     if (!hierarchy) return fail(path, 'the model has no spatial structure');
-    const node = spatialNode(active, hierarchy.project, head);
+    const node = spatialNode(active, head);
     if (!node) return fail(path, head.selector ? `no ${head.name} "${head.selector}"` : `no ${head.name} in the model`);
     return spatialAttribute(path, active, node, rest[0]?.name, rest.length);
   }
@@ -228,16 +219,8 @@ export function resolveBinding(path: string, ctx: BindingContext): ResolvedBindi
   return fail(path, `unknown root "${head.name}"`);
 }
 
-function spatialNode(model: BindingModel, project: SpatialNode, head: Segment): SpatialNode | null {
-  if (head.name === 'IfcProject') return model.view?.isDeleted(project.expressId) ? null : project;
-  const matches: SpatialNode[] = [];
-  const walk = (node: SpatialNode): void => {
-    const edited = model.view?.getEntityTypeMutation(node.expressId)?.newType;
-    const type = edited ? normalizeIfcTypeName(edited) : IfcTypeEnumToString(node.type);
-    if (!model.view?.isDeleted(node.expressId) && type === head.name) matches.push(node);
-    for (const child of node.children) walk(child);
-  };
-  walk(project);
+function spatialNode(model: BindingModel, head: Segment): SpatialNode | null {
+  const matches = spatialBindingNodes(model, head.name);
   if (matches.length === 0) return null;
   if (head.selector === undefined) return matches[0];
   const index = /^\d+$/.test(head.selector) ? Number(head.selector) : NaN;
@@ -258,11 +241,13 @@ function spatialAttribute(path: string, model: BindingModel, node: SpatialNode, 
         return succeed(path, effectiveAttribute(model, node.expressId, attr));
       case 'Elevation': {
         const edited = model.view.getAttributeMutationsForEntity(node.expressId).find((mutation) => mutation.name === 'Elevation')?.value;
-        const source = model.store.spatialHierarchy?.storeyElevations.get(node.expressId) ?? node.elevation;
-        const elevation = edited === undefined ? source : Number(edited);
+        const source = model.store.spatialHierarchy?.storeyElevations.get(node.expressId)
+          ?? node.elevation ?? effectiveAttribute(model, node.expressId, 'Elevation');
+        const raw = edited ?? source;
+        const elevation = raw === undefined || raw === '' ? undefined : Number(raw);
         return elevation === undefined || !Number.isFinite(elevation) ? fail(path, 'no elevation') : succeed(path, `${elevation.toFixed(2)} m`);
       }
-      case 'Elements': return succeed(path, String(countElements(node, model.view)));
+      case 'Elements': return succeed(path, String(countElements(node, model)));
     }
   }
   switch (attr) {
@@ -275,14 +260,16 @@ function spatialAttribute(path: string, model: BindingModel, node: SpatialNode, 
       const elevation = model.store.spatialHierarchy?.storeyElevations.get(node.expressId) ?? node.elevation;
       return elevation === undefined ? fail(path, 'no elevation') : succeed(path, `${elevation.toFixed(2)} m`);
     }
-    case 'Elements': return succeed(path, String(countElements(node)));
+    case 'Elements': return succeed(path, String(countElements(node, model)));
     default: return fail(path, `unknown attribute "${attr ?? ''}"`);
   }
 }
 
-function countElements(node: SpatialNode, view?: MutablePropertyView): number {
-  let n = view ? node.elements.filter((id) => !view.isDeleted(id)).length : node.elements.length;
-  for (const child of node.children) n += countElements(child, view);
+function countElements(node: SpatialNode, model: BindingModel): number {
+  const view = model.view;
+  if (view?.isDeleted(node.expressId)) return 0;
+  let n = view ? effectiveSpatialMembers(model.store, view, node.expressId).length : node.elements.length;
+  for (const child of node.children) n += countElements(child, model);
   return n;
 }
 
@@ -303,8 +290,8 @@ function elementAttribute(path: string, model: BindingModel, expressId: number, 
       case 'Tag': return succeed(path, provider.getEntityTag(expressId));
       case 'GlobalId': return succeed(path, provider.getEntityGlobalId(expressId));
       case 'Storey': {
-        const storeyId = model.store.spatialHierarchy?.elementToStorey.get(expressId);
-        if (storeyId === undefined || model.view?.isDeleted(storeyId)) return fail(path, 'not contained in a storey');
+        const storeyId = effectiveStoreyId(model.store, model.view, expressId);
+        if (storeyId === undefined) return fail(path, 'not contained in a storey');
         return succeed(path, model.view ? effectiveAttribute(model, storeyId, 'Name') : model.store.entities.getName(storeyId));
       }
       default: break;

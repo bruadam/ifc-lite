@@ -5,8 +5,9 @@
 //! Streaming geometry processing with Server-Sent Events.
 //!
 //! Thin bridge over the canonical `ifc_lite_processing` pipeline: the
-//! blocking task runs `process_geometry_streaming_filtered_with_options`
-//! (the same code path as `POST /api/v1/parse` and the wasm
+//! blocking task runs `process_geometry_streaming_filtered_with_baked_basis`
+//! (`..._with_options` plus the frame published before the first batch,
+//! #5407; the same code path as `POST /api/v1/parse` and the wasm
 //! `processGeometryBatch` boundary) and forwards its batch callbacks through
 //! a bounded channel as [`StreamEvent`]s (see [`EVENT_BUFFER_EVENTS`]).
 //!
@@ -20,11 +21,12 @@
 //! pipeline never had.
 
 use crate::services::cache::DiskCache;
-use crate::types::StreamEvent;
+use crate::types::{finish_meshes, StreamEvent};
+use ifc_lite_processing::style::ModelFinishes;
 use async_stream::stream;
 use futures::Stream;
 use ifc_lite_processing::{
-    extract_symbolic_data_with_provenance_in_frame, process_geometry_streaming_filtered_with_options, OpeningFilterMode,
+    extract_symbolic_data_with_provenance_in_frame, process_geometry_streaming_filtered_with_baked_basis, OpeningFilterMode,
     StreamingOptions, TessellationQuality,
 };
 use std::pin::Pin;
@@ -127,8 +129,14 @@ pub fn process_streaming(
         let mut started = false;
         let mut batch_number = 0usize;
         let mut last_type = String::new();
+        // Filled by the pipeline once it has chosen the frame, before the
+        // first batch (#5407).
+        let baked_basis = std::sync::OnceLock::new();
+        // #5984: every batch's meshes carry their IFC-authored finish. One
+        // styled-item scan up front; a file that authors none joins nothing.
+        let mut finishes = ModelFinishes::from_content(&content);
 
-        let result = process_geometry_streaming_filtered_with_options(
+        let result = process_geometry_streaming_filtered_with_baked_basis(
             &content,
             opening_filter,
             StreamingOptions {
@@ -141,6 +149,7 @@ pub fn process_streaming(
                 cancel: Some(std::sync::Arc::clone(&cancel_for_task)),
                 ..StreamingOptions::default()
             },
+            &baked_basis,
             |meshes, processed, total| {
                 if tx.is_closed() {
                     cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -163,8 +172,9 @@ pub fn process_streaming(
                 if !meshes.is_empty() {
                     batch_number += 1;
                     let _ = tx.blocking_send(StreamEvent::Batch {
-                        meshes: meshes.to_vec(),
+                        meshes: finish_meshes(&mut finishes, meshes.to_vec()),
                         batch_number,
+                        baked_basis: baked_basis.get().copied(),
                     });
                 }
                 let _ = tx.blocking_send(StreamEvent::Progress {

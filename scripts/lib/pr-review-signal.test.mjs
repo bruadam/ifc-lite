@@ -106,7 +106,9 @@ test('the REAL test.yml derives the lane names the REAL rollup publishes', () =>
     'Provenance tests',
     'Rust tests',
     'Rust crate semver',
-    'Viewer E2E smoke',
+    // #6361: the smoke lane is two file shards, each a distinct check run.
+    'Viewer E2E smoke (1/2)',
+    'Viewer E2E smoke (2/2)',
     'Viewer tests (shard 0)',
     'Viewer tests (shard 3)',
     'Viewer tests (shard 7)',
@@ -118,10 +120,14 @@ test('the REAL test.yml derives the lane names the REAL rollup publishes', () =>
     'Build + WASM + Rust + Node',
     // #3878: the two CSG accept gates are feature builds nothing else compiles.
     'CSG accept gates (feature builds)',
+    // #6959: the perf-ratchet gate, judging the measurement `build` uploads.
+    'Perf ratchet ceilings',
+    // #6982: the callgrind measurement the perf-ratchet gate judges.
+    'Native instruction counts',
   ]) {
     assert.ok(names.includes(observed), `derived set is missing the observed lane "${observed}"`);
   }
-  assert.equal(names.length, 27);
+  assert.equal(names.length, 30);
 });
 
 test('FAIL CLOSED: an empty workflow file is NO_WORKFLOW_TEXT, not an empty lane set', () => {

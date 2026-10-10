@@ -9,13 +9,16 @@
 
 mod affinity_chunks;
 mod batch;
+mod partitioned_batch;
 mod batch_from_source;
 mod batch_partition;
 mod instancing;
 pub(crate) mod prepass;
 mod prepass_discovery;
+mod prepass_owned_columns;
 mod prepass_sharded;
 mod source_fingerprint;
+mod style_finishes;
 mod prepass_from_source;
 mod void_index;
 mod prepass_affinity;

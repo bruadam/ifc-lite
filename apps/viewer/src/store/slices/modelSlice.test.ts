@@ -27,8 +27,6 @@ interface ModelHarnessCrossState {
   ifcDataStore: IfcDataStore | null;
   geometryResult: GeometryResult | null;
   meshColorBackup: Map<number, [number, number, number, number]> | null;
-  addElementModelId: string | null;
-  addElementStoreyId: number | null;
   selectedEntityId: number | null;
   selectedEntityIds: Set<number>;
   selectedStoreys: Set<number>;
@@ -36,8 +34,6 @@ interface ModelHarnessCrossState {
   isolatedEntities: Set<number> | null;
   ghostExceptEntities: Set<number> | null;
   classFilter: { ids: Set<number>; label: string } | null;
-  hiddenEntitiesByModel: Map<string, Set<number>>;
-  isolatedEntitiesByModel: Map<string, Set<number>>;
   pinboardEntities: Set<string>;
   hierarchyBasketSelection: Set<string>;
 }
@@ -133,8 +129,6 @@ describe('ModelSlice', () => {
       ifcDataStore: null,
       geometryResult: null,
       meshColorBackup: null,
-      addElementModelId: null,
-      addElementStoreyId: null,
       selectedEntityId: null,
       selectedEntityIds: new Set(),
       selectedStoreys: new Set(),
@@ -142,8 +136,6 @@ describe('ModelSlice', () => {
       isolatedEntities: null,
       ghostExceptEntities: null,
       classFilter: null,
-      hiddenEntitiesByModel: new Map(),
-      isolatedEntitiesByModel: new Map(),
       pinboardEntities: new Set<string>(),
       hierarchyBasketSelection: new Set<string>(),
       ...getDefaultDrawing2DState(),
@@ -638,35 +630,6 @@ describe('ModelSlice', () => {
       });
     });
 
-    it('clears the AddElement panel pin when it names the removed model', () => {
-      // addElementSlice's `addElementModelId` / `addElementStoreyId` name a
-      // specific federated model the panel is pinned to (set via its Model
-      // dropdown). Nothing else clears it, so a stale pin survives removal
-      // and the panel keeps naming a model no longer in `models` — the same
-      // shape as the selection-purge tests above, on a different slice.
-      state.addModel(createMockModel('model-1', 'First'));
-      state.addModel(createMockModel('model-2', 'Second'));
-      Object.assign(state, { addElementModelId: 'model-1', addElementStoreyId: 42 });
-
-      state.removeModel('model-1');
-
-      const after = state as unknown as { addElementModelId: string | null; addElementStoreyId: number | null };
-      assert.strictEqual(after.addElementModelId, null);
-      assert.strictEqual(after.addElementStoreyId, null);
-    });
-
-    it('leaves the AddElement panel pin untouched when it names a surviving model', () => {
-      state.addModel(createMockModel('model-1', 'First'));
-      state.addModel(createMockModel('model-2', 'Second'));
-      Object.assign(state, { addElementModelId: 'model-2', addElementStoreyId: 7 });
-
-      state.removeModel('model-1');
-
-      const after = state as unknown as { addElementModelId: string | null; addElementStoreyId: number | null };
-      assert.strictEqual(after.addElementModelId, 'model-2');
-      assert.strictEqual(after.addElementStoreyId, 7);
-    });
-
     describe('global-id state (selection sets / hidden / isolated / ghost / class filter)', () => {
       // `syncSourceModel.ts`'s second model-removed purge already purges these
       // exact fields on the same-modelId resync path (comment above this
@@ -747,26 +710,6 @@ describe('ModelSlice', () => {
         assert.strictEqual(after.selectedEntityId, null, 'id 9 belonged only to the removed model');
         assert.deepStrictEqual(after.classFilter, { ids: new Set([1010]), label: 'Walls' });
       });
-
-      it('drops the removed model\'s key from hiddenEntitiesByModel / isolatedEntitiesByModel', () => {
-        state.addModel(federatedModel('model-1', 0));
-        state.addModel(federatedModel('model-2', 1000));
-        Object.assign(state, {
-          hiddenEntitiesByModel: new Map([['model-1', new Set([1])], ['model-2', new Set([2])]]),
-          isolatedEntitiesByModel: new Map([['model-1', new Set([3])], ['model-2', new Set([4])]]),
-        });
-
-        state.removeModel('model-1');
-
-        const after = state as unknown as {
-          hiddenEntitiesByModel: Map<string, Set<number>>;
-          isolatedEntitiesByModel: Map<string, Set<number>>;
-        };
-        assert.strictEqual(after.hiddenEntitiesByModel.has('model-1'), false);
-        assert.strictEqual(after.hiddenEntitiesByModel.has('model-2'), true);
-        assert.strictEqual(after.isolatedEntitiesByModel.has('model-1'), false);
-        assert.strictEqual(after.isolatedEntitiesByModel.has('model-2'), true);
-      });
     });
 
     it('purges the REMOVED model\'s refs from the pinboard basket and keeps every survivor', () => {
@@ -829,17 +772,6 @@ describe('ModelSlice', () => {
       assert.strictEqual(state.activeModelId, null);
     });
 
-    it('clears the AddElement panel pin along with every model', () => {
-      state.addModel(createMockModel('model-1', 'First'));
-      Object.assign(state, { addElementModelId: 'model-1', addElementStoreyId: 5 });
-
-      state.clearAllModels();
-
-      const after = state as unknown as { addElementModelId: string | null; addElementStoreyId: number | null };
-      assert.strictEqual(after.addElementModelId, null);
-      assert.strictEqual(after.addElementStoreyId, null);
-    });
-
     it('clears every global-id set (isolate/ghost/hidden/selection/class filter) unconditionally', () => {
       state.addModel(createMockModel('model-1', 'First'));
       Object.assign(state, {
@@ -850,8 +782,6 @@ describe('ModelSlice', () => {
         selectedStoreys: new Set([5]),
         selectedEntityId: 6,
         classFilter: { ids: new Set([7]), label: 'Doors' },
-        hiddenEntitiesByModel: new Map([['model-1', new Set([8])]]),
-        isolatedEntitiesByModel: new Map([['model-1', new Set([9])]]),
       });
 
       state.clearAllModels();
@@ -864,8 +794,6 @@ describe('ModelSlice', () => {
         selectedStoreys: Set<number>;
         selectedEntityId: number | null;
         classFilter: unknown;
-        hiddenEntitiesByModel: Map<string, Set<number>>;
-        isolatedEntitiesByModel: Map<string, Set<number>>;
       };
       assert.strictEqual(after.isolatedEntities, null);
       assert.strictEqual(after.ghostExceptEntities, null);
@@ -874,8 +802,6 @@ describe('ModelSlice', () => {
       assert.strictEqual(after.selectedStoreys.size, 0);
       assert.strictEqual(after.selectedEntityId, null);
       assert.strictEqual(after.classFilter, null);
-      assert.strictEqual(after.hiddenEntitiesByModel.size, 0);
-      assert.strictEqual(after.isolatedEntitiesByModel.size, 0);
     });
 
     it('clears the pinboard basket along with every model', () => {

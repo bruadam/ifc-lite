@@ -15,7 +15,8 @@
  */
 import { elementFieldColumnId, elementsDataset, type ChartDataset, type ChartScope, type ElementFieldBinding, type ElementsDatasetModel } from '@ifc-lite/charts';
 import { useViewerStore, type ViewerState } from '@/store';
-import { getVisibleBasketEntityRefsFromStore } from '@/store/basketVisibleSet';
+import { getVisibleBasketEntityRefsFromStore, visibilityFingerprint } from '@/store/basketVisibleSet';
+import { ownsCurrentIsolation } from '@/lib/visibility/ownership';
 import { toGlobalIdFromModels } from '@/store/globalId';
 import { stringToEntityRef, type EntityRef } from '@/store/types';
 import { createElementFieldReader } from '@/lib/charts/element-field-reader';
@@ -24,6 +25,8 @@ import { extractProjectUnits, type ProjectUnits } from '@ifc-lite/parser';
 import type { ColumnDefinition } from '@ifc-lite/lists';
 import { resolveListColumnUnits } from '@/lib/units/list-column-units';
 import { effectiveChartEntities } from './effective-elements';
+import { effectiveStoreyId } from '@/lib/effective-storey';
+import { effectiveAttribute } from '@/lib/document/effective-binding-fields';
 
 type ModelsState = Pick<ViewerState, 'models' | 'activeModelId' | 'pinboardEntities' | 'mutationViews' | 'mutationVersion' | 'unitDisplayOverrides'>;
 
@@ -31,10 +34,25 @@ function isFieldList(value: readonly ElementFieldBinding[] | ModelsState): value
   return Array.isArray(value);
 }
 
+/** A bucket click in Isolate focus writes `isolatedEntities` itself; counting that would collapse the chart to the bucket it just isolated (#6473). */
+const chartOwnsIsolation = (live: ViewerState): boolean => ownsCurrentIsolation(live, live.chartVisibilityOwned);
+
+/**
+ * What a scope's rows depend on besides the models and their edits: the
+ * visible set's fingerprint (the key its own cache uses), the basket, or
+ * nothing for `all`. Equal keys, equal include sets.
+ */
+export function chartScopeKey(scope: ChartScope, state: Pick<ViewerState, 'pinboardEntities'>): string | object | null {
+  if (scope.kind === 'basket') return state.pinboardEntities;
+  if (scope.kind !== 'visible') return null;
+  const live = useViewerStore.getState();
+  return visibilityFingerprint(chartOwnsIsolation(live) && live.isolatedEntities !== null ? { ...live, isolatedEntities: null } : live);
+}
+
 /** Per-model include sets for a scope, or `null` for "every element". */
 function includeSets(scope: ChartScope, state: ModelsState): Map<string, Set<number>> | null {
   let refs: EntityRef[];
-  if (scope.kind === 'visible') refs = getVisibleBasketEntityRefsFromStore();
+  if (scope.kind === 'visible') refs = getVisibleBasketEntityRefsFromStore(chartOwnsIsolation(useViewerStore.getState()));
   else if (scope.kind === 'basket') refs = [...state.pinboardEntities].map(stringToEntityRef);
   else return null; // 'all' — no include set; a per-chart source filter (#4946) narrows rows separately
   const sets = new Map<string, Set<number>>();
@@ -97,12 +115,19 @@ export function buildElementsDataset(
     const modelId = model.id;
     const reader = resolvedFields.length > 0 ? createElementFieldReader(store, state.mutationViews.get(modelId)) : undefined;
     const mutationView = state.mutationViews.get(modelId);
+    const bindingModel = { id: modelId, name: model.name ?? modelId, store, view: mutationView };
     models.push({
       store: mutationView?.hasChanges()
         ? { entities: effectiveChartEntities(store, mutationView), spatialHierarchy: store.spatialHierarchy }
         : store,
       toGlobalId: (expressId) => toGlobalIdFromModels(state.models, modelId, expressId),
       name: model.name ?? modelId,
+      ...(mutationView?.hasPendingChanges() ? {
+        storeyName: (expressId: number) => {
+          const storeyId = effectiveStoreyId(store, mutationView, expressId);
+          return storeyId ? effectiveAttribute(bindingModel, storeyId, 'Name') : '';
+        },
+      } : {}),
       include,
       valueRevision: `${model.sourceFingerprint ?? model.sourceContentHash ?? model.loadedAt}:${state.mutationVersion}:${JSON.stringify(state.unitDisplayOverrides)}`,
       ...(reader ? {

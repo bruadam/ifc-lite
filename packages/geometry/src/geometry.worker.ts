@@ -4,11 +4,16 @@
 
 import { attachCanonicalMeshMetadata } from './canonical-mesh-metadata.js';
 import { ownedWasmBuffer } from './wasm-owned-buffer.js';
+import { readSpecularMaterial } from './mesh-specular.js';
 import { publishPrepassFingerprint, runPrepassWithFingerprint } from './prepass-source-fingerprint.js';
-import { canReuseWorkerSource, type SourcePrepassApi, type FinalizeStyleArgs } from './worker-prepass-source.js';
+import { canReuseWorkerSource, type BytePrepassApi, type SourcePrepassApi, type FinalizeStyleArgs } from './worker-prepass-source.js';
+import { applyStyleFinishes } from './style-finishes.js';
 import init, { initSync, IfcAPI } from '@ifc-lite/wasm';
+import * as wasmBindings from '@ifc-lite/wasm';
+import { createInCallHeartbeat, installInCallHeartbeat, postWorkerHeartbeat } from './in-call-heartbeat.js';
 import { initWasmWithRetry } from './wasm-init-retry.js';
 import { largeFilePrepassError } from './huge-file-error.js';
+import { isWasmRuntimeTrap } from './wasm-runtime-trap.js';
 import { freeWasmInstanceQuietly } from './wasm-instance-free.js';
 import type { MeshData, TessellationQuality } from './types.js';
 import {
@@ -30,6 +35,7 @@ import {
   type BatchSizingConfig,
 } from './batch-sizing.js';
 import { takeWasmPanicStash } from './wasm-panic-forward.js';
+import { traceGeometryWorkerMessage, meterTypedArrayArgs, countCopy, postPrepassEvent } from './worker-trace.js'; // #6956 spans, #6957 counters
 import { isColumnLengthRefusal } from './wasm-column-refusal.js';
 
 export interface GeometryWorkerInitMessage {
@@ -111,6 +117,7 @@ export interface GeometryWorkerSetStylesMessage {
   voidValues: Uint32Array;
   styleIds: Uint32Array;
   styleColors: Uint8Array;
+  styleFinishes?: Float32Array; // #5582, absent from an older wasm's styles event
   /** #407/#913 §2.3 material colour lists (streamed `styles` event). */
   materialElementIds?: Uint32Array;
   materialColorCounts?: Uint32Array;
@@ -316,6 +323,7 @@ export interface GeometryWorkerStylesShardResultMessage {
   orphanColors: Float32Array;
   geomIds: Uint32Array;
   geomColors: Float32Array;
+  geomFinishes?: Float32Array; // #5582, absent from an older wasm
   /** Set when resolution threw; the host falls back / logs. */
   error?: string;
 }
@@ -353,6 +361,7 @@ export interface GeometryWorkerFinalizeStylesMessage {
   orphanColors: Float32Array;
   geomIds: Uint32Array;
   geomColors: Float32Array;
+  geomFinishes?: Float32Array; // #5582, stashed on the API before finalize
   /** Support spans ([id,start,len] triples) extracted from the shard classes. */
   colourMapSpans: Uint32Array;
   materialDefSpans: Uint32Array;
@@ -491,7 +500,16 @@ let cachedWasmUrl: string | undefined = undefined;
 async function ensureInit(): Promise<IfcAPI> {
   if (api) return api;
   await initWasmWithRetry(() => init(cachedWasmUrl), { label: 'geometry.worker' });
-  api = new IfcAPI();
+  return installFreshApi();
+}
+
+/** Build a fresh IfcAPI on the instantiated engine and replay every cached setting onto it. */
+function installFreshApi(): IfcAPI {
+  installInCallHeartbeat(wasmBindings, inCallHeartbeat);
+  // A prewarmed worker (#7036) is sent `init` again by the load that leases it:
+  // free the previous handle rather than leak it in the wasm heap.
+  freeWasmInstanceQuietly(api);
+  api = meterTypedArrayArgs(new IfcAPI(), 'wasm'); // #6957: bytes copied into wasm (identity unless traced)
   mergeLayersApplied = false;
   applyMergeLayersToApi();
   geometryHashApplied = false;
@@ -725,7 +743,7 @@ function viewSharedBytes(sharedBuffer: SharedArrayBuffer): Uint8Array {
 /** Fallback path: copy SAB into a fresh ArrayBuffer-backed Uint8Array. */
 function materialiseSharedBytes(sharedBuffer: SharedArrayBuffer): Uint8Array {
   const local = new Uint8Array(sharedBuffer.byteLength);
-  local.set(new Uint8Array(sharedBuffer));
+  local.set(countCopy('source.materialise', new Uint8Array(sharedBuffer)));
   return local;
 }
 
@@ -735,10 +753,11 @@ function materialiseSharedBytes(sharedBuffer: SharedArrayBuffer): Uint8Array {
  * materialises a *file-sized* copy in this worker. The shard entry points are
  * called once per slice, so the notice is latched — once per worker, not once
  * per shard. The streaming-prepass paths warn on their own (they run once per
- * load); this only covers the shard/finalise paths that were silent.
+ * load); shard/finalise retries first reject runtime traps, then warn once.
  */
 let sabViewFallbackWarned = false;
-function warnSabViewFallbackOnce(context: string, err: unknown): void {
+function prepareSabViewRetry(context: string, err: unknown): void {
+  if (isWasmRuntimeTrap(err)) throw err;
   if (sabViewFallbackWarned) return;
   sabViewFallbackWarned = true;
   console.warn(
@@ -766,6 +785,7 @@ interface ProcessingSession {
   voidValues: Uint32Array;
   styleIds: Uint32Array;
   styleColors: Uint8Array;
+  styleFinishes: Float32Array | undefined;
   planeAngleToRadians: number | undefined;
   materialElementIds: Uint32Array | undefined;
   materialColorCounts: Uint32Array | undefined;
@@ -805,12 +825,7 @@ let activeSession: ProcessingSession | null = null;
 let batchSizing: BatchSizingConfig = DEFAULT_BATCH_SIZING;
 let adaptiveBatchJobs = batchSizing.maxJobs;
 
-/** Liveness ping (no slice context) for recovery paths that recurse/re-init. */
-function postWorkerHeartbeat(): void {
-  (self as unknown as Worker).postMessage(
-    { type: 'progress', processedJobs: 0, totalJobs: 0 } as GeometryWorkerProgressMessage,
-  );
-}
+const inCallHeartbeat = createInCallHeartbeat(postWorkerHeartbeat);
 
 function startSession(input: {
   sharedBuffer: SharedArrayBuffer;
@@ -839,6 +854,7 @@ function startSession(input: {
     voidValues: input.voidValues,
     styleIds: input.styleIds,
     styleColors: input.styleColors,
+    styleFinishes: undefined,
     planeAngleToRadians: input.planeAngleToRadians,
     materialElementIds: input.materialElementIds,
     materialColorCounts: input.materialColorCounts,
@@ -972,9 +988,7 @@ function collectMeshes(
         // would copy a fresh Float32Array out of WASM per access.
         const color = mesh.color;
         // Optional SurfaceColour for the GLB exporter's "Shading" mode —
-        // parity with the single-thread converter in geometry-coordinate.ts
-        // (the worker path silently dropped it, degrading "Shading" export
-        // on the DEFAULT load path — alignment audit).
+        // parity with the single-thread converter in geometry-coordinate.ts.
         const shadingArray = mesh.shadingColor;
         const shadingColor: [number, number, number, number] | undefined =
           shadingArray && shadingArray.length === 4
@@ -989,8 +1003,7 @@ function collectMeshes(
           originArr && originArr.length === 3 && (originArr[0] || originArr[1] || originArr[2])
             ? [originArr[0], originArr[1], originArr[2]]
             : undefined;
-        // Local (pre-placement) AABB + placement transform (issue #1474);
-        // absent on older wasm bundles (no getter) or when not captured.
+        // Local (pre-placement) AABB + placement transform (#1474); absent w/o a getter or when not captured.
         const localBoundsArr = mesh.localBounds;
         const localBounds =
           localBoundsArr && localBoundsArr.length === 6
@@ -1002,6 +1015,7 @@ function collectMeshes(
         const localToWorldArr = mesh.localToWorld;
         const localToWorld =
           localToWorldArr && localToWorldArr.length === 16 ? Array.from(localToWorldArr) : undefined;
+        const specularMaterial = readSpecularMaterial(mesh); // #5582
         const meshData: MeshData = {
           expressId: mesh.expressId,
           ifcType: mesh.ifcType,
@@ -1014,6 +1028,7 @@ function collectMeshes(
           geometryClass: mesh.geometryClass ?? 0, // 0=occurrence 1=orphan type 2=instanced type; older wasm lacks all three getters here
           ...(mesh.geometryItemId !== undefined ? { geometryItemId: mesh.geometryItemId } : {}), // #3199: two DISJOINT ids, TWO
           ...(mesh.materialId !== undefined ? { materialId: mesh.materialId } : {}), // spreads as in convertMeshCollectionToBatch
+          ...(specularMaterial ? { material: specularMaterial } : {}), // #5582
         };
         session.pendingTransfers.push(ownedWasmBuffer(positions), ownedWasmBuffer(normals), ownedWasmBuffer(indices));
         session.cumulativeMeshBytes += positions.byteLength + normals.byteLength + indices.byteLength;
@@ -1155,6 +1170,7 @@ async function processBatch(session: ProcessingSession, jobs: Uint32Array): Prom
     // re-installs the copy from the materialised buffer.
     cachedSourceBytes = session.localBytes;
     applySourceBytesToApi();
+    applyStyleFinishes(ifcApi, session.styleIds, session.styleFinishes);
 
     // Instanced-only path: produce geometry ONCE via a partitioned batch, which
     // splits each batch into flat meshes (transparent + type-template + textured)
@@ -1222,7 +1238,7 @@ async function processBatch(session: ProcessingSession, jobs: Uint32Array): Prom
     // entities could therefore blow the silent-window budget invisibly
     // (#1097, secondary window). Ping liveness before we recurse / re-init.
     postWorkerHeartbeat();
-    if (!session.sabFallbackTaken && session.localBytes.buffer instanceof SharedArrayBuffer) {
+    if (!isWasmRuntimeTrap(err) && !session.sabFallbackTaken && session.localBytes.buffer instanceof SharedArrayBuffer) {
       session.sabFallbackTaken = true;
       console.warn(`[Worker] processGeometryBatch rejected SAB view (${msg}), falling back to copy`);
       session.localBytes = materialiseSharedBytes(session.sharedBuffer);
@@ -1278,7 +1294,7 @@ async function processSliceStreaming(session: ProcessingSession, jobsFlat: Uint3
       { type: 'progress', processedJobs: jobOffset, totalJobs, seq, callJobs: jobsThisBatch, diagnostics } as GeometryWorkerProgressMessage,
     );
     const callStart = performance.now();
-    await processBatch(session, jobsFlat.subarray(start, end));
+    await inCallHeartbeat.run(() => processBatch(session, jobsFlat.subarray(start, end)));
     flushPending(session);
     // Resize the next call from this one's measured throughput so the silent
     // window stays near TARGET_BATCH_MS regardless of CSG density (#1097).
@@ -1334,7 +1350,7 @@ function emitSessionEnd(session: ProcessingSession): void {
 let messageTail: Promise<void> = Promise.resolve();
 
 self.onmessage = (rawEvent: MessageEvent<GeometryWorkerRequest>) => {
-  messageTail = messageTail.then(() => handleMessage(rawEvent)).catch((err) => {
+  messageTail = messageTail.then(() => traceGeometryWorkerMessage(rawEvent.data, () => handleMessage(rawEvent))).catch((err) => {
     // #2527 follow-up: forward this realm's panic-location stash (if the
     // failure was a wasm trap) so the main thread can re-plant it on ITS
     // global for `attachWasmPanicLocation`. Read AFTER the throw, so a panic
@@ -1358,12 +1374,7 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
       const ifcApi = await ensureInit();
       const { sharedBuffer, sliceIndex, spans } = e.data;
       try {
-        const styleApi = (ifcApi as unknown as {
-          resolveStyledItemsShard: (data: Uint8Array, spans: Uint32Array) => {
-            orphanIds: Uint32Array; orphanColors: Float32Array;
-            geomIds: Uint32Array; geomColors: Float32Array;
-          };
-        });
+        const styleApi = ifcApi as unknown as BytePrepassApi;
         let res;
         try {
           const sourceApi = ifcApi as unknown as SourcePrepassApi;
@@ -1372,7 +1383,7 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
             : styleApi.resolveStyledItemsShard(viewSharedBytes(sharedBuffer), spans);
         } catch (err) {
           // SAB-view rejection fallback (see scan-shard above).
-          warnSabViewFallbackOnce('resolve-styles-shard', err);
+          prepareSabViewRetry('resolve-styles-shard', err);
           res = styleApi.resolveStyledItemsShard(materialiseSharedBytes(sharedBuffer), spans);
         }
         (self as unknown as Worker).postMessage(
@@ -1383,10 +1394,12 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
             orphanColors: res.orphanColors,
             geomIds: res.geomIds,
             geomColors: res.geomColors,
+            geomFinishes: res.geomFinishes,
           } as GeometryWorkerStylesShardResultMessage,
-          [res.orphanIds.buffer, res.orphanColors.buffer, res.geomIds.buffer, res.geomColors.buffer],
+          [res.orphanIds.buffer, res.orphanColors.buffer, res.geomIds.buffer, res.geomColors.buffer, ...(res.geomFinishes ? [res.geomFinishes.buffer] : [])],
         );
       } catch (err) {
+        if (isWasmRuntimeTrap(err)) throw err;
         (self as unknown as Worker).postMessage({
           type: 'styles-shard-result',
           sliceIndex,
@@ -1411,7 +1424,7 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
       const skipTypeGeometry = e.data.skipTypeGeometry === true;
       const onEvent = (event: unknown) => {
         publishPrepassFingerprint(sourceFingerprint, sharedBuffer.byteLength, event);
-        (self as unknown as Worker).postMessage({ type: 'prepass-stream', event });
+        postPrepassEvent(event);
       };
       const run = (
         bytes: Uint8Array,
@@ -1423,6 +1436,7 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
         run(viewSharedBytes(sharedBuffer), indexIds, indexStarts, indexLengths, indexClasses);
       } catch (err) {
         if (isColumnLengthRefusal(err)) throw err;
+        if (isWasmRuntimeTrap(err)) throw largeFilePrepassError(err, sharedBuffer.byteLength) ?? err;
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[Worker] Sharded streaming prepass with SAB view failed (${msg}), retrying with copy`);
         try {
@@ -1447,17 +1461,10 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
       // the payload into the normal styles-event path.
       const ifcApi = await ensureInit();
       const m = e.data;
-      const finalizeApi = (ifcApi as unknown as {
-        finalizePrepassStyles: (
-          data: Uint8Array,
-          orphanIds: Uint32Array, orphanColors: Float32Array,
-          geomIds: Uint32Array, geomColors: Float32Array,
-          colourMapSpans: Uint32Array, materialDefSpans: Uint32Array,
-          relMaterialSpans: Uint32Array, voidSpans: Uint32Array,
-          fillsSpans: Uint32Array, aggregateSpans: Uint32Array,
-          planeAngleToRadians: number,
-        ) => Record<string, unknown>;
-      });
+      const finalizeApi = ifcApi as unknown as BytePrepassApi;
+      // #5582: finalize has no finishes argument and consumes this stash, so
+      // it is installed before each attempt (the SAB retry below too).
+      const stashFinishes = () => m.geomFinishes && finalizeApi.setPrepassGeometryFinishes?.(m.geomIds, m.geomFinishes);
       const args: FinalizeStyleArgs = [
         m.orphanIds, m.orphanColors, m.geomIds, m.geomColors,
         m.colourMapSpans, m.materialDefSpans, m.relMaterialSpans,
@@ -1467,13 +1474,15 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
       const callFinalize = (bytes: Uint8Array) => sourceBytesApplied && canReuseWorkerSource(installedSourceSessionId, m.sourceSessionId) && sourceApi.finalizePrepassStylesFromSource
         ? sourceApi.finalizePrepassStylesFromSource(...args)
         : finalizeApi.finalizePrepassStyles(bytes, ...args);
+      stashFinishes();
       let payload;
       try {
         payload = callFinalize(viewSharedBytes(m.sharedBuffer));
       } catch (err) {
         if (isColumnLengthRefusal(err)) throw err;
         // SAB-view rejection fallback (see scan-shard above).
-        warnSabViewFallbackOnce('finalize-prepass-styles', err);
+        prepareSabViewRetry('finalize-prepass-styles', err);
+        stashFinishes();
         payload = finalizeApi.finalizePrepassStyles(materialiseSharedBytes(m.sharedBuffer), ...args);
       }
       (self as unknown as Worker).postMessage({ type: 'styles-final', payload });
@@ -1482,8 +1491,6 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
 
     if (e.data.type === 'prepass-streaming') {
       const ifcApi = await ensureInit();
-      // Heartbeat: lets the host watchdog know the worker is alive even
-      // before the first chunk lands.
       (self as unknown as Worker).postMessage({ type: 'prepass-progress', phase: 'parsing' });
       const sharedBuffer = e.data.sharedBuffer;
       const sourceFingerprint = e.data.sourceFingerprint;
@@ -1498,22 +1505,20 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
       // wasm-bindgen rejects the view.
       const onEvent = (event: unknown) => {
         publishPrepassFingerprint(sourceFingerprint, sharedBuffer.byteLength, event);
-        (self as unknown as Worker).postMessage({ type: 'prepass-stream', event });
+        postPrepassEvent(event);
       };
       const runPrepass = (bytes: Uint8Array) =>
         runPrepassWithFingerprint(ifcApi, [bytes, onEvent, chunkSize, disabledTypes, skipTypeGeometry], sourceFingerprint);
       try {
-        // Zero-copy SAB view first; wasm-bindgen copies it into linear memory.
         runPrepass(viewSharedBytes(sharedBuffer));
       } catch (err) {
+        if (isWasmRuntimeTrap(err)) throw largeFilePrepassError(err, sharedBuffer.byteLength) ?? err;
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[Worker] Streaming prepass with SAB view failed (${msg}), retrying with copy`);
         try {
           runPrepass(materialiseSharedBytes(sharedBuffer));
         } catch (retryErr) {
-          // Both paths trapped — on a very large model this is the wasm32 4GB
-          // limit; surface an actionable error instead of `unreachable executed`.
-          throw largeFilePrepassError(retryErr, sharedBuffer.byteLength) ?? retryErr;
+            throw largeFilePrepassError(retryErr, sharedBuffer.byteLength) ?? retryErr;
         }
       }
       return;
@@ -1552,7 +1557,7 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
       } catch (err) {
         // Some runtimes reject SAB-backed views at the wasm boundary (same
         // fallback the streaming pre-pass ships) — retry with a copy.
-        warnSabViewFallbackOnce('scan-entity-index-shard', err);
+        prepareSabViewRetry('scan-entity-index-shard', err);
         sourceBytesApplied = false;
         shard = scan(materialiseSharedBytes(sharedBuffer));
       }
@@ -1583,21 +1588,7 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
         // `undefined` and threw `new WebAssembly.Module(undefined)`, which is
         // why the shared-module path was never actually taken.
         initSync({ module: e.data.wasmModule });
-        api = new IfcAPI();
-        mergeLayersApplied = false;
-        applyMergeLayersToApi();
-        geometryHashApplied = false;
-        applyComputeGeometryHashesToApi();
-        tessellationQualityApplied = false;
-        applyTessellationQualityToApi();
-        skipSmallCutsApplied = false;
-        applySkipSmallCutsToApi();
-        entityIndexApplied = false;
-        applyEntityIndexToApi();
-        prepassColumnsApplied = false;
-        applyPrepassColumnsToApi();
-        sourceBytesApplied = false;
-        applySourceBytesToApi();
+        installFreshApi();
       } else {
         await ensureInit();
       }
@@ -1655,6 +1646,7 @@ async function handleMessage(e: MessageEvent<GeometryWorkerRequest>): Promise<vo
       if (!activeSession) return;
       activeSession.styleIds = e.data.styleIds;
       activeSession.styleColors = e.data.styleColors;
+      activeSession.styleFinishes = e.data.styleFinishes;
       activeSession.voidKeys = e.data.voidKeys;
       activeSession.voidCounts = e.data.voidCounts;
       activeSession.voidValues = e.data.voidValues;

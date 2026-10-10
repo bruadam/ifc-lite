@@ -85,10 +85,12 @@ impl IfcAPI {
 
         // Flat wire encodings from the shared resolver: styles (layered
         // precedence), voids, and the #407 material colour lists.
-        let (style_ids_vec, style_colors_vec) = ifc_lite_processing::prepass::flat_styles_rgba8(
-            &pre_pass.resolved,
-            &mut decoder,
-        );
+        let (style_ids_vec, style_colors_vec, style_finishes_vec) =
+            ifc_lite_processing::prepass::flat_styles_with_finishes(
+                &pre_pass.resolved,
+                &pre_pass.geometry_finishes,
+                &mut decoder,
+            );
         let (void_keys_vec, void_counts_vec, void_values_vec) = ifc_lite_processing::prepass::flat_voids(&pre_pass.resolved.void_index);
         let (mat_ids_vec, mat_counts_vec, mat_colors_vec) =
             ifc_lite_processing::prepass::flat_material_colors(
@@ -117,6 +119,8 @@ impl IfcAPI {
         crate::api::set_js_prop(&result, "voidValues", &void_values);
         crate::api::set_js_prop(&result, "styleIds", &style_ids);
         crate::api::set_js_prop(&result, "styleColors", &style_colors);
+        // #5582: `[metallic, roughness]` per style id, NaN when unauthored.
+        crate::api::set_js_prop(&result, "styleFinishes", &js_sys::Float32Array::from(style_finishes_vec.as_slice()));
         // #407/#913 §2.3: per-element material colour lists so the batch path
         // can run the transparent/opaque sub-mesh alternation.
         crate::api::set_js_prop(&result, "materialElementIds", &material_element_ids);
@@ -173,26 +177,24 @@ impl IfcAPI {
             skip_type_geometry,
             None,
             false,
-            None,
             false,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn pre_pass_streaming_impl(
+    pub(super) fn pre_pass_streaming_impl(
         &self,
         data: &[u8],
         on_event: &Function,
         chunk_size: u32,
         disabled_type_names: Option<Vec<String>>,
         skip_type_geometry: bool,
-        prebuilt: Option<ifc_lite_core::ColumnarEntityIndex>,
+        columns: Option<super::prepass_owned_columns::ShardedColumns<'_>>,
         external_styles: bool,
-        columns: Option<super::prepass_discovery::IndexColumns<'_>>,
         compute_source_fingerprint: bool,
     ) -> Result<JsValue, JsValue> {
-        let prebuilt_arc: Option<std::sync::Arc<ifc_lite_core::ColumnarEntityIndex>> =
-            prebuilt.map(std::sync::Arc::new);
+        let have_columns = columns.is_some();
+        let mut prebuilt_arc: Option<std::sync::Arc<ifc_lite_core::ColumnarEntityIndex>> = None;
         // Load START on the streaming pre-pass path (see build_pre_pass_once).
         self.reset_pipeline_diagnostics();
         use ifc_lite_core::{has_geometry_by_name, keyword_eq, EntityDecoder, EntityScanner, IfcType};
@@ -225,7 +227,7 @@ impl IfcAPI {
         const PREPASS_INDEX_RESERVE_CAP: usize = 40_000_000; // ~0.5GB reserved
         // #3985: a prebuilt index serves every lookup and is retained below;
         // its unused staging map must not reserve another source-sized table.
-        let estimated = if prebuilt_arc.is_some() {
+        let estimated = if have_columns {
             0
         } else {
             (content.len() / 50).min(PREPASS_INDEX_RESERVE_CAP)
@@ -326,10 +328,12 @@ impl IfcAPI {
         let mut prepass_spans = ifc_lite_processing::prepass::PrepassSpans::default();
 
         // STAGE 2: fill collectors from the class columns; no byte scan.
-        if let Some((cids, cstarts, clengths, cclasses)) = columns {
-            let d = super::prepass_discovery::discover_from_columns(
-                content, cids, cstarts, clengths, cclasses, &disabled_types,
-            );
+        if let Some(columns) = columns {
+            // Discovery must see the original file order and matching classes
+            // before the owned index can sort/deduplicate its columns (#6537).
+            let (index, d) = columns.discover_and_build(content, &disabled_types)
+                .map_err(|message| JsValue::from_str(&message))?;
+            prebuilt_arc = Some(std::sync::Arc::new(index));
             buffered_jobs = d.buffered_jobs;
             total_jobs = d.total_jobs;
             project_id = d.project_id;
@@ -547,7 +551,14 @@ impl IfcAPI {
                     defer_attached_styles: false,
                 },
             );
-            let styles_event = super::prepass_sharded::styles_payload(&resolved, &mut decoder);
+            // #5582: the finishes walk the same styled-item spans; this path
+            // never runs in defer mode, so no styled item is skipped.
+            let geometry_finishes = ifc_lite_processing::prepass::resolve_geometry_finishes(
+                &prepass_spans.styled_items,
+                &mut decoder,
+            );
+            let styles_event =
+                super::prepass_sharded::styles_payload(&resolved, &geometry_finishes, &mut decoder);
             crate::api::set_js_prop(&styles_event, "type", &"styles".into());
             on_event.call1(&JsValue::NULL, &styles_event.into())?;
         }

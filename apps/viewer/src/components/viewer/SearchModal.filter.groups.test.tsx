@@ -15,7 +15,7 @@ import '@/test/setup-dom.js';
 
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { render, cleanup, click } from '@/test/render.js';
+import { render, cleanup, click, mouseDown, press, advance, type } from '@/test/render.js';
 import { fixtureModel, fixtureModels } from '@/test/store-fixture.js';
 import { useViewerStore } from '@/store';
 import { emptyFilterState } from '@/store/slices/searchSlice';
@@ -42,6 +42,11 @@ describe('SearchModalFilterBuilder — groups (#4904)', () => {
 
   it('starts with one group and no "Add group" tabs row (nothing to switch between yet)', () => {
     const container = mount();
+    const limit = container.querySelector<HTMLInputElement>('input[aria-label="Limit"]');
+    assert.ok(limit, '#6342: the numeric limit is named by its visible label');
+    type(limit, '25');
+    assert.equal(limit.getAttribute('aria-label'), 'Limit');
+    assert.equal(useViewerStore.getState().searchFilter.limit, 25);
     assert.equal(useViewerStore.getState().searchFilter.groups.length, 1);
     assert.equal(container.querySelector('[role="tablist"]'), null);
   });
@@ -88,9 +93,31 @@ describe('SearchModalFilterBuilder — groups (#4904)', () => {
     const group1Tab = Array.from(container.querySelectorAll('button[role="tab"]'))
       .find((b) => b.textContent?.includes('Group 1'));
     assert.ok(group1Tab, 'no "Group 1" tab rendered');
-    click(group1Tab);
+    mouseDown(group1Tab);
 
     assert.equal(useViewerStore.getState().searchFilterActiveGroup, 0);
+  });
+
+  it('#5815 ArrowLeft selects the previous group and labels its rule panel', async () => {
+    const container = mount();
+    click(buttonNamed(container, 'Add group'));
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    assert.equal(tabs.length, 2);
+    tabs[1].focus();
+    press(tabs[1], 'ArrowLeft');
+    await advance(5);
+    assert.equal(useViewerStore.getState().searchFilterActiveGroup, 0);
+    assert.equal(document.activeElement, tabs[0]);
+    const panel = container.querySelector('[role="tabpanel"]');
+    assert.ok(panel);
+    assert.equal(panel.getAttribute('aria-labelledby'), tabs[0].id);
+    const tablist = container.querySelector('[role="tablist"]');
+    assert.ok(tablist);
+    assert.equal(tablist.querySelectorAll('button').length, 2, 'the tablist contains only tab controls');
+    const removeGroup = container.querySelector('button[aria-label="Remove group 2"]');
+    assert.ok(removeGroup);
+    assert.ok(panel.compareDocumentPosition(removeGroup) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the rule panel follows the active tab before removal controls in keyboard order');
   });
 
   it('removing a group clamps the active index and never drops the last group', () => {

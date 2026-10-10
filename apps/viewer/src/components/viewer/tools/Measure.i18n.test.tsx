@@ -4,12 +4,14 @@
 
 /**
  * The Measure tool reads the i18n catalogue (#4918, following #4785/#4883):
- * `MeasurePanel.tsx`, `MeasureQuantities.tsx`, `MeasurePointReadout.tsx`,
+ * `MeasureToolbar.tsx`, `MeasureHudReadouts.tsx`, `MeasurementsPanel.tsx`,
+ * `MeasurementList.tsx`, `MeasureQuantities.tsx`, `MeasurePointReadout.tsx`,
  * `MeasurementVisuals.tsx` and `measure-modes/geo-readout.tsx`.
  *
  * Same oracle as `MainToolbar.i18n.test.tsx`: a pseudo-locale maps every
- * `measure.*` key to a marked copy of its English text, the panel (via the
- * real `MeasureOverlay`) is driven into a handful of states that surface as
+ * `measure.*` key to a marked copy of its English text, the tool (the real
+ * `MeasureOverlay` on a real `ViewportHud`, plus the real `MeasurementsPanel`,
+ * #5502) is driven into a handful of states that surface as
  * much of the catalogue as feasible, the locale is switched live, and every
  * marked string that was visible in English must reappear marked. Plural and
  * `{param}` keys are exercised with `expectedMarked`, which replicates just
@@ -36,13 +38,33 @@ import '@/test/setup-dom.js';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
-import { cleanup, render } from '@/test/render.js';
+import { cleanup, click, render } from '@/test/render.js';
 import { registerLocale, setLocale, type Catalogue } from '@/i18n';
 import type { measureEn as MeasureEnType } from '@/i18n/catalogues/measure.en';
 import type { TranslationValue } from '@/i18n/types';
 import { useViewerStore } from '@/store';
 import type { MeasurePoint } from '@/store/types';
 import { MeasureOverlay } from './MeasurePanel.js';
+import { MeasurementsPanel } from '../MeasurementsPanel.js';
+import { ViewportHud } from '../../viewport-ui/hud/ViewportHud.js';
+import { SceneOverlayRoot } from '../../viewport-ui/scene/index.js';
+import { SourceQuantityContent } from './SourceQuantityInspection.js';
+import type { ExtrusionDefinitions, SweptDiskDescriptions } from '@ifc-lite/geometry';
+
+/** The shipped surfaces together: the HUD host (the bar and hint portal into
+ *  it), the scene root (the world labels portal into it), the tool's
+ *  overlay, and the docked Measurements panel. */
+function renderMeasure(): HTMLElement {
+  return render(
+    <>
+      <ViewportHud />
+      <SceneOverlayRoot>
+        <MeasureOverlay />
+      </SceneOverlayRoot>
+      <MeasurementsPanel onClose={() => {}} />
+    </>,
+  );
+}
 
 // Guarded dynamic import (#4918 revert-oracle): `check-test-revert-oracle.mjs`
 // reverting production hunks treats a brand-new module (this catalogue) as a
@@ -105,13 +127,13 @@ function chromeStrings(container: HTMLElement): Set<string> {
   return out;
 }
 
-/** Click the panel's section button whose ENGLISH label is `label`. Must run
- *  before the locale switch — after it the button text is the marked copy. */
+/** Click the Measurements panel's tab whose ENGLISH label is `label`. Must run
+ *  before the locale switch — after it the tab text is the marked copy. */
 function openSection(container: HTMLElement, label: string): void {
-  const button = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === label);
-  assert.ok(button, `no section button labelled "${label}" on the measure panel`);
+  const button = [...container.querySelectorAll('[role="tab"]')].find((b) => b.textContent?.trim() === label);
+  assert.ok(button, `no tab labelled "${label}" on the Measurements panel`);
   act(() => {
-    button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    button.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
   });
 }
 
@@ -201,6 +223,9 @@ afterEach(() => {
 /** Static-key keys this suite's render states cannot show, each for a stated
  *  reason. */
 const NOT_RENDERED_IN_THIS_STATE: MeasureKey[] = [
+  // The "Clear all" text appears only after opening the themed dialog;
+  // hooks/useKeyboardShortcuts.measure-clear.test.tsx asserts it.
+  'measure.clearAllConfirm',
   // No fixture in this file records a CLOSED polyline (`closed: true`) — the
   // completed-polyline fixtures used throughout are all open runs, so the
   // "closed" basis label never renders. `measure.polyline.basisLength`
@@ -209,7 +234,6 @@ const NOT_RENDERED_IN_THIS_STATE: MeasureKey[] = [
   // Georeferenced rows never render without a model whose IfcMapConversion
   // resolves through useAnchorGeoreference — no model is loaded here.
   'measure.geoToggle.enabledTitle',
-  'measure.geo.on',
   'measure.geo.easting',
   'measure.geo.northing',
   'measure.geo.height',
@@ -243,6 +267,20 @@ const NOT_RENDERED_IN_THIS_STATE: MeasureKey[] = [
   'measure.quantities.legend',
   'measure.quantities.massLegend',
   'measure.quantities.massLegendWithEstimated',
+  // These headings appear only when a loaded model supplies authored Qto or
+  // computed mesh quantities; the unresolved selection above supplies neither.
+  'measure.quantities.authoredHeading',
+  'measure.quantities.computedHeading',
+  // MeasurementsVisibilityChip.tsx's own rows (#5893) — a separate,
+  // always-mounted HUD chip this suite's `renderMeasure()` never renders
+  // (it exercises MeasurePanel/MeasureToolbar only); the chip has its own
+  // component, not a test file (mirrors SectionParkedChip's convention).
+  'measure.chip.hideAria',
+  'measure.chip.hideTitle',
+  'measure.chip.showAria',
+  'measure.chip.showTitle',
+  'measure.chip.clearAria',
+  'measure.chip.clearTitle',
 ];
 
 const NOT_RENDERED_PARAMS: MeasureKey[] = [
@@ -254,6 +292,7 @@ const NOT_RENDERED_PARAMS: MeasureKey[] = [
   'measure.quantities.noMeshToMeasure',
   'measure.quantities.meshAreaIncomplete',
   'measure.quantities.rescaledVolume',
+  'measure.chip.label', // MeasurementsVisibilityChip.tsx, see NOT_RENDERED_IN_THIS_STATE above
 ];
 
 /** Runs the shared static-key check for one (english-before, marked-after) pair.
@@ -279,7 +318,20 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
       measurements: [{ id: 'm1', start: mp(0, 0, 0), end: mp(1, 0, 0), distance: 1 }],
       snapEnabled: true,
     });
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
+    const english = chromeStrings(container);
+
+    registerLocale(PSEUDO_LOCALE, PSEUDO);
+    act(() => setLocale(PSEUDO_LOCALE));
+    const after = chromeStrings(container);
+
+    assertStaticCoverage(english, after);
+  });
+
+  it('list tab with the tool closed: the "Start measuring" affordance', () => {
+    useViewerStore.setState({ activeTool: 'select' });
+    const container = render(<MeasurementsPanel />);
+    openSection(container, 'List');
     const english = chromeStrings(container);
 
     registerLocale(PSEUDO_LOCALE, PSEUDO);
@@ -291,7 +343,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
 
   it('chrome: snap-off variant', () => {
     useViewerStore.setState({ snapEnabled: false });
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     const english = chromeStrings(container);
 
     registerLocale(PSEUDO_LOCALE, PSEUDO);
@@ -303,7 +355,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
 
   it('angle mode: kind buttons and every click-hint, across kinds and pick counts', () => {
     useViewerStore.setState({ measureMode: 'angle' });
-    render(<MeasureOverlay />);
+    renderMeasure();
 
     const states: Array<{ kind: 'points' | 'edges' | 'faces'; picks: number }> = [
       { kind: 'points', picks: 0 },
@@ -343,7 +395,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
 
   it('radius mode: hints on and off an active sequence', () => {
     useViewerStore.setState({ measureMode: 'radius', activeRadius: null });
-    render(<MeasureOverlay />);
+    renderMeasure();
 
     const walk = (out: Set<string>) => {
       act(() => useViewerStore.setState({ activeRadius: null }));
@@ -365,7 +417,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
 
   it('polyline mode: start hint before any point is placed', () => {
     useViewerStore.setState({ measureMode: 'polyline', activePolyline: null });
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     const english = chromeStrings(container);
 
     registerLocale(PSEUDO_LOCALE, PSEUDO);
@@ -393,7 +445,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
       radiusMeasurements: [{ id: 'r1', points: activeRadiusPoints }],
       activeRadius: { points: activeRadiusPoints },
     });
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     openSection(container, 'List');
     const english = new Set<string>();
     addReadable(document.body, english);
@@ -427,6 +479,10 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
     assertMarked(after, 'measure.angle.apexSetSuffix');
     assertMarked(after, 'measure.radius.indexLabel', { index: 1 });
     assertMarked(after, 'measure.radius.inProgress', { count: 3 });
+    assertMarked(after, 'measure.list.deleteDistance', { index: 1 });
+    assertMarked(after, 'measure.list.deletePolyline', { index: 1 });
+    assertMarked(after, 'measure.list.deleteAngle', { index: 1 });
+    assertMarked(after, 'measure.list.deleteRadius', { index: 1 });
 
     coveredParams.add('measure.polyline.inProgress');
     coveredParams.add('measure.polyline.indexLabel');
@@ -435,6 +491,10 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
     coveredParams.add('measure.angle.inProgress');
     coveredParams.add('measure.radius.indexLabel');
     coveredParams.add('measure.radius.inProgress');
+    coveredParams.add('measure.list.deleteDistance');
+    coveredParams.add('measure.list.deletePolyline');
+    coveredParams.add('measure.list.deleteAngle');
+    coveredParams.add('measure.list.deleteRadius');
     // Static, but sits beside a sibling {} expression in the same element
     // (see `assertMarked`'s own doc comment) so `assertStaticCoverage`'s
     // exact-match pass never finds it; checked explicitly above instead.
@@ -448,7 +508,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
       angleKind: 'edges',
       activeAngle: { kind: 'edges', picks: [edgePick, edgePick] },
     });
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     openSection(container, 'List');
     const english = new Set<string>();
     addReadable(document.body, english);
@@ -466,7 +526,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
   });
 
   it('list section: empty state', () => {
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     openSection(container, 'List');
     const english = new Set<string>();
     addReadable(document.body, english);
@@ -480,7 +540,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
   });
 
   it('quantities section: no selection prompt', () => {
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     openSection(container, 'Qty');
     const english = new Set<string>();
     addReadable(document.body, english);
@@ -495,7 +555,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
 
   it('quantities section: a selection unresolved to any loaded model', () => {
     useViewerStore.setState({ selectedEntity: { modelId: 'legacy', expressId: 2 } });
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     openSection(container, 'Qty');
     const english = new Set<string>();
     addReadable(document.body, english);
@@ -516,8 +576,69 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
     coveredParams.add('measure.quantities.unresolvedElements');
   });
 
+  it('source quantities: localized provenance, values and loading state (#6439)', () => {
+    const key: ExtrusionDefinitions['sources'][number]['key'] = {
+      model_sha256: 'fixture', schema: 'IFC4', length_unit_scale_bits: '0',
+      context: { kind: 'mapped', representation_map_path: [40] }, solid_id: 80,
+    };
+    const disk: SweptDiskDescriptions['elements'][string][number] = {
+      solid_id: 90, directrix_id: 91, mapping_path: [40], source_modified: true,
+      Radius: 0.1, InnerRadius: null, Directrix: [], status: { type: 'complete' },
+      directrix_metrics: null,
+    };
+    const container = render(<SourceQuantityContent
+      disks={{ loading: true, error: null, items: [{
+        ref: { modelId: 'model', expressId: 31 }, occurrences: [disk],
+        diagnostics: ['Unsupported directrix'],
+      }] }}
+      extrusions={{ loading: false, error: null, items: [{
+        ref: { modelId: 'model', expressId: 31 }, product: {
+          lengthUnitScale: 1, diagnostics: [], occurrences: [{
+            instance: {
+              ordinal: 0, source: key, product_id: 31, solid_id: 80,
+              mapping_path: [40], source_modified: true, world_from_source: null,
+              status: { type: 'complete' },
+            },
+            definition: {
+              key, source: {
+                solid_id: 80, SweptArea: null, profile: null, Position: null,
+                position_matrix: null, ExtrudedDirection: null, DirectionRatios: null,
+                axis_unit_vector: null, Depth: null, status: { type: 'complete' },
+              },
+              nominal_quantities: { profile_area: 2, projected_height: 3, nominal_volume: 6 },
+            },
+          }],
+        },
+      }] }}
+    />);
+    const english = chromeStrings(container);
+
+    registerLocale(PSEUDO_LOCALE, PSEUDO);
+    act(() => setLocale(PSEUDO_LOCALE));
+    const after = chromeStrings(container);
+
+    assertStaticCoverage(english, after);
+    const sourceStatic = [
+      'measure.source.heading', 'measure.source.limitation', 'measure.source.loading',
+      'measure.source.centrelineLength', 'measure.source.profileArea',
+      'measure.source.projectedHeight', 'measure.source.nominalVolume',
+      'measure.source.unavailable', 'measure.source.mapped',
+      'measure.source.modified', 'measure.source.unplaced',
+    ] as const satisfies readonly MeasureKey[];
+    for (const key of sourceStatic) {
+      assertMarked(after, key);
+      coveredStatic.add(key);
+    }
+    assertMarked(after, 'measure.source.product', { modelId: 'model', productId: 31 });
+    assertMarked(after, 'measure.source.sweptDiskSolid', { modelId: 'model', productId: 31, solidId: 90 });
+    assertMarked(after, 'measure.source.extrusionSolid', { modelId: 'model', productId: 31, solidId: 80 });
+    coveredParams.add('measure.source.product');
+    coveredParams.add('measure.source.sweptDiskSolid');
+    coveredParams.add('measure.source.extrusionSolid');
+  });
+
   it('point section: empty prompt (no live point)', () => {
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     openSection(container, 'Point');
     const english = new Set<string>();
     addReadable(document.body, english);
@@ -535,7 +656,7 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
       measurements: [{ id: 'm1', start: mp(0, 0, 0), end: mp(5, 6, 7), distance: 10.6 }],
       measureReferencePoint: { x: 1, y: 2, z: 3 },
     });
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     openSection(container, 'Point');
     const english = new Set<string>();
     addReadable(document.body, english);
@@ -548,11 +669,29 @@ describe('Measure tool localization (#4918)', { skip: !HAS_CATALOGUE && 'measure
     assertStaticCoverage(english, after);
   });
 
+  it('#5811 names the point-reference actions and lets both controls change the datum', () => {
+    useViewerStore.setState({
+      measurements: [{ id: 'm1', start: mp(0, 0, 0), end: mp(5, 6, 7), distance: 10.6 }],
+    });
+    const container = renderMeasure();
+    openSection(container, 'Point');
+
+    const setButton = container.querySelector('button[aria-label="Set this point as the relative-coordinate reference"]');
+    assert.ok(setButton, 'the reference action has an accessible name');
+    click(setButton);
+    assert.deepEqual(useViewerStore.getState().measureReferencePoint, { x: 5, y: 6, z: 7 });
+
+    const clearButton = container.querySelector('button[aria-label="Clear the reference point"]');
+    assert.ok(clearButton, 'the clear action has an accessible name');
+    click(clearButton);
+    assert.equal(useViewerStore.getState().measureReferencePoint, null);
+  });
+
   it('point section: live point (an in-progress drag)', () => {
     useViewerStore.setState({
       activeMeasurement: { start: mp(0, 0, 0), current: mp(1, 1, 1), distance: 1.7 },
     });
-    const container = render(<MeasureOverlay />);
+    const container = renderMeasure();
     openSection(container, 'Point');
     const english = new Set<string>();
     addReadable(document.body, english);

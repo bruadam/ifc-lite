@@ -8,12 +8,14 @@ use super::cache_keys::{
     data_model_cache_key, has_current_data_model, has_cached_symbolic, parquet_geometry_key,
     parquet_metadata_key, request_cache_key,
 };
+use super::replay_header::mark_header_from_cache;
 use super::{cache_symbolic_data_off_runtime, extract_file, ParseQuery};
 use crate::error::ApiError;
 use crate::services::baked_basis_zup;
 use crate::services::parquet::serialize_combined_for_layout;
 use crate::services::{extract_data_model, serialize_data_model_to_parquet};
-use crate::types::{ModelMetadata, ProcessingStats};
+use crate::types::{finish_meshes, ModelMetadata, ProcessingStats};
+use ifc_lite_processing::style::ModelFinishes;
 use crate::AppState;
 use axum::{
     body::Body,
@@ -92,7 +94,7 @@ pub async fn parse_parquet(
     if let (Some(cached_parquet), Some(cached_metadata_json), true, true) = (
         state.cache.get_bytes(&parquet_cache_key).await?,
         state.cache.get_bytes(&metadata_cache_key).await?,
-        has_current_data_model(&state.cache, &cache_key).await,
+        has_current_data_model(&state.cache, &cache_key, query.data_model_entities).await,
         has_cached_symbolic(&state.cache, &cache_key).await,
     ) {
         tracing::info!(
@@ -101,14 +103,17 @@ pub async fn parse_parquet(
             "Parquet cache HIT - returning cached response"
         );
 
-        // Build response from cached data
+        // Build response from cached data. The stored header is the one the
+        // live parse wrote, `from_cache: false` included (#5542).
         let response = Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/x-parquet-geometry")
             .header(
                 "X-IFC-Metadata",
-                String::from_utf8(cached_metadata_json)
-                    .map_err(|error| ApiError::Internal(error.to_string()))?,
+                mark_header_from_cache(
+                    String::from_utf8(cached_metadata_json)
+                        .map_err(|error| ApiError::Internal(error.to_string()))?,
+                ),
             )
             .header(header::CONTENT_LENGTH, cached_parquet.len())
             .body(Body::from(cached_parquet))
@@ -131,21 +136,25 @@ pub async fn parse_parquet(
     // that's independent of tokio's blocking thread pool
     let serialize_start = tokio::time::Instant::now();
     let opening_filter = query.opening_filter;
+    let data_model_entities = query.data_model_entities;
     // Guard rides the blocking task (see parse_full): a cancelled handler
     // future must not release the admission slot while the work runs on.
     let (
         (
-            (geometry_result, combined_parquet),
+            ((geometry_result, mesh_count), combined_parquet),
             (data_model_stats, data_model_parquet),
             symbolic_data,
         ),
         _admission,
     ) = tokio::task::spawn_blocking(move || {
             // First: extract geometry and the data model in parallel.
-            let (geometry_result, data_model) = rayon::join(
+            // #5984: the finish index is a third independent read of the bytes.
+            let (mut geometry_result, (mut data_model, mut finishes)) = rayon::join(
                 || process_geometry_filtered_with_quality(&content, opening_filter, tessellation_quality),
-                || extract_data_model(&content),
+                || rayon::join(|| extract_data_model(&content), || ModelFinishes::from_content(&content)),
             );
+            let meshes = finish_meshes(&mut finishes, std::mem::take(&mut geometry_result.meshes));
+            drop(finishes);
 
             // Capture stats before moving data_model
             let dm_stats = DataModelStats {
@@ -154,6 +163,9 @@ pub async fn parse_parquet(
                 relationship_count: data_model.relationships.len(),
                 spatial_node_count: data_model.spatial_hierarchy.nodes.len(),
             };
+            // After the stats (#6034): they describe the MODEL, so the
+            // metadata header both entities variants share stays one value.
+            data_model_entities.apply(&mut data_model);
 
             // Second: the 2D symbol stream (IfcAnnotation + IfcGrid, endpoint
             // parity, issue #900) alongside serializing BOTH geometry and data
@@ -178,7 +190,7 @@ pub async fn parse_parquet(
                             geometry_result.metadata.coordinate_info.origin_shift,
                         );
                         serialize_combined_for_layout(
-                            &geometry_result.meshes,
+                            &meshes,
                             layout,
                             Some(&basis),
                         )
@@ -189,7 +201,7 @@ pub async fn parse_parquet(
 
             (
                 (
-                    (geometry_result, geo_parquet),
+                    ((geometry_result, meshes.len()), geo_parquet),
                     (dm_stats, dm_parquet),
                     symbolic_data,
                 ),
@@ -204,7 +216,7 @@ pub async fn parse_parquet(
 
     let serialize_time = serialize_start.elapsed();
     tracing::info!(
-        meshes = geometry_result.meshes.len(),
+        meshes = mesh_count,
         geometry_parquet_size = combined_parquet.len(),
         data_model_parquet_size = data_model_parquet.len(),
         total_serialize_time_ms = serialize_time.as_millis(),
@@ -212,7 +224,7 @@ pub async fn parse_parquet(
     );
 
     // Cache data model IMMEDIATELY (not in background) so it's ready when client polls
-    let data_model_cache_key = data_model_cache_key(&cache_key);
+    let data_model_cache_key = data_model_cache_key(&cache_key, data_model_entities);
     if let Err(e) = state
         .cache
         .set_bytes(&data_model_cache_key, &data_model_parquet)

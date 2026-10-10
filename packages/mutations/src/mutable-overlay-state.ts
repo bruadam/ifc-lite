@@ -6,7 +6,7 @@ import { sameOverlayValue } from './overlay-value-equality.js';
 import { NewEntityMap } from './new-entity-map.js';
 import type { PropertySet, QuantitySet } from '@ifc-lite/data';
 import type { IfcAttributeValue, PropertyMutation, QuantityMutation, AttributeMutation,
-  EntityTypeMutation, Mutation } from './types.js';
+  EntityTypeMutation, Mutation, SetOverlaySnapshot } from './types.js';
 
 
 /**
@@ -103,7 +103,166 @@ export class MutableOverlayState {
    */
   protected entityAliases: Map<number, number> = new Map();
   protected nextAllocatedId: number = 0;
+
+  /** Snapshot candidate ids for effective attribute reads. Includes named,
+   * positional and type overrides even when written without journal records;
+   * callers apply their normal live-entity and attribute-layout checks. */
+  getAttributeOverrideEntityIds(): number[] {
+    return [...new Set([
+      ...this.attributeKeysByEntity.keys(),
+      ...this.positionalAttrMutations.keys(),
+      ...this.typeMutations.keys(),
+    ])];
+  }
   protected mutationHistory: Mutation[] = [];
+
+  private mutationRevision = 0;
+
+  /** O(1) live-overlay invalidation token, independent of Undo history.
+   * Writes, removals and state publications advance it, including skipHistory.
+   * Conservative increments may invalidate unchanged geometry; it is never
+   * serialized or rewound by Undo/Redo. Detached failed drafts do not affect it.
+   */
+  getMutationRevision(): number { return this.mutationRevision; }
+
+  protected markOverlayChanged(): void { this.mutationRevision++; }
+
+  protected setAttributeMutation(entityId: number, key: string, mutation: AttributeMutation): void {
+    this.attributeMutations.set(key, mutation);
+    this.markOverlayChanged();
+    let bucket = this.attributeKeysByEntity.get(entityId);
+    if (!bucket) {
+      bucket = new Set();
+      this.attributeKeysByEntity.set(entityId, bucket);
+    }
+    bucket.add(key);
+  }
+
+  protected deleteAttributeMutation(entityId: number, key: string): boolean {
+    const removed = this.attributeMutations.delete(key);
+    if (removed) {
+      this.markOverlayChanged();
+      const bucket = this.attributeKeysByEntity.get(entityId);
+      if (bucket) {
+        bucket.delete(key);
+        if (bucket.size === 0) this.attributeKeysByEntity.delete(entityId);
+      }
+    }
+    return removed;
+  }
+
+  protected setPropertyMutation(entityId: number, key: string, mutation: PropertyMutation): void {
+    this.propertyMutations.set(key, mutation);
+    this.markOverlayChanged();
+    let bucket = this.propertyKeysByEntity.get(entityId);
+    if (!bucket) {
+      bucket = new Set();
+      this.propertyKeysByEntity.set(entityId, bucket);
+    }
+    bucket.add(key);
+  }
+
+  protected deletePropertyMutation(entityId: number, key: string): boolean {
+    const removed = this.propertyMutations.delete(key);
+    if (removed) {
+      this.markOverlayChanged();
+      const bucket = this.propertyKeysByEntity.get(entityId);
+      if (bucket) {
+        bucket.delete(key);
+        if (bucket.size === 0) this.propertyKeysByEntity.delete(entityId);
+      }
+    }
+    return removed;
+  }
+
+  protected setQuantityMutation(entityId: number, key: string, mutation: QuantityMutation): void {
+    this.quantityMutations.set(key, mutation);
+    this.markOverlayChanged();
+    let bucket = this.quantityKeysByEntity.get(entityId);
+    if (!bucket) {
+      bucket = new Set();
+      this.quantityKeysByEntity.set(entityId, bucket);
+    }
+    bucket.add(key);
+  }
+
+  protected deleteQuantityMutation(entityId: number, key: string): boolean {
+    const removed = this.quantityMutations.delete(key);
+    if (removed) {
+      this.markOverlayChanged();
+      const bucket = this.quantityKeysByEntity.get(entityId);
+      if (bucket) {
+        bucket.delete(key);
+        if (bucket.size === 0) this.quantityKeysByEntity.delete(entityId);
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Capture every overlay row one set owns on one entity (#5965). Deep-copied,
+   * so later edits to the live maps cannot reach into a recorded snapshot.
+   */
+  protected captureSetOverlay(kind: SetOverlaySnapshot['kind'], entityId: number, setName: string): SetOverlaySnapshot {
+    const prefix = `${entityId}:${setName}:`;
+    const maskKey = `${entityId}:${setName}`;
+    const rowsUnder = <M>(keys: Set<string> | undefined, rows: Map<string, M>) =>
+      [...(keys ?? [])].filter((key) => key.startsWith(prefix)).map((key): [string, M] => [key, rows.get(key)!]);
+    return structuredClone(kind === 'property'
+      ? {
+        kind, entityId, setName, masked: this.deletedPsets.has(maskKey),
+        entries: rowsUnder(this.propertyKeysByEntity.get(entityId), this.propertyMutations),
+        created: this.newPsets.get(entityId)?.get(setName) ?? null,
+      }
+      : {
+        kind, entityId, setName, masked: this.deletedQsets.has(maskKey),
+        entries: rowsUnder(this.quantityKeysByEntity.get(entityId), this.quantityMutations),
+        created: this.newQsets.get(entityId)?.get(setName) ?? null,
+      });
+  }
+
+  /**
+   * Put one set's overlay rows back exactly as `snapshot` captured them,
+   * dropping any row the set has gained since. Undo restores a whole-set
+   * mutation's `setOverlay.before`, redo its `after` (#5965).
+   */
+  restoreSetOverlay(snapshot: SetOverlaySnapshot): void {
+    const copy = structuredClone(snapshot);
+    this.markOverlayChanged();
+    const { entityId, setName } = copy;
+    const prefix = `${entityId}:${setName}:`;
+    const maskKey = `${entityId}:${setName}`;
+    const [masks, sets] = copy.kind === 'property'
+      ? [this.deletedPsets, this.newPsets as Map<number, Map<string, unknown>>]
+      : [this.deletedQsets, this.newQsets as Map<number, Map<string, unknown>>];
+    if (copy.masked) masks.add(maskKey);
+    else masks.delete(maskKey);
+    const entitySets = sets.get(entityId) ?? new Map<string, unknown>();
+    if (copy.created) entitySets.set(setName, copy.created);
+    else entitySets.delete(setName);
+    if (entitySets.size > 0) sets.set(entityId, entitySets);
+    else sets.delete(entityId);
+    if (copy.kind === 'property') {
+      for (const key of this.propertyKeysByEntity.get(entityId) ?? []) {
+        if (key.startsWith(prefix)) this.deletePropertyMutation(entityId, key);
+      }
+      for (const [key, row] of copy.entries) this.setPropertyMutation(entityId, key, row);
+    } else {
+      for (const key of this.quantityKeysByEntity.get(entityId) ?? []) {
+        if (key.startsWith(prefix)) this.deleteQuantityMutation(entityId, key);
+      }
+      for (const [key, row] of copy.entries) this.setQuantityMutation(entityId, key, row);
+    }
+  }
+
+  /**
+   * Record the set's overlay state on either side of a whole-set edit on the
+   * mutation it produced, for undo / redo (#5965). `before` is taken first.
+   */
+  protected stampSetOverlay(mutation: Mutation, before: SetOverlaySnapshot): void {
+    this.markOverlayChanged();
+    mutation.setOverlay = { before, after: this.captureSetOverlay(before.kind, before.entityId, before.setName) };
+  }
 
   /** Whether a base property set is masked by a whole-set deletion. */
   isPropertySetDeleted(entityId: number, psetName: string): boolean {
@@ -146,6 +305,7 @@ export class MutableOverlayState {
 
   protected restoreOverlayState(state: ReturnType<MutableOverlayState['copyOverlayState']>): void {
     Object.assign(this, state);
+    this.markOverlayChanged();
     // A cloned snapshot carries a plain Map: rebuild the class index (#5413).
     this.newEntities = NewEntityMap.from(this.newEntities);
   }

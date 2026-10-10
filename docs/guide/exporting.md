@@ -4,11 +4,11 @@ Guide to exporting IFC data in various formats.
 
 ## Textured IFC in the web viewer
 
-Normal IFC exports, visible subsets, and Export Changes package retained image
+Normal IFC exports, visible subsets, and Export modified IFC… package retained image
 resources into `.ifczip` automatically. The archive preserves original PNG/JPEG
 bytes, the IFC entry directory, and relative texture paths; authored images use
 content-addressed filenames. Untextured models continue to download as `.ifc`.
-SDK IFC exports and Export Changes omit unreachable appearance resources
+SDK IFC exports and Export modified IFC… omit unreachable appearance resources
 created by tracked commands, while the original session keeps those rows and
 images for Undo/Redo. Imported resources are preserved; this is not general
 cleanup of orphan entities from another authoring session.
@@ -24,6 +24,80 @@ unavailable. Export each model separately to preserve its appearance. Subset
 archives may retain unused images from their source model. The STEP subset
 closure retains inverse texture maps for included faces, including maps created
 or retargeted through pending edits.
+
+## Upload to Cesium ion
+
+Choose **File → Cesium ion** (also available in the command palette and mobile
+export menu), select a STEP IFC model, and provide a Cesium ion token with
+`assets:write` permission. The viewer uploads that model's complete IFC with
+pending property, attribute, geometry, georeferencing, and schedule edits applied.
+Hidden elements remain included. Uploads go directly from your browser to Cesium
+ion and its temporary S3 storage; no IFClite server receives the model or token.
+
+Use a separate write token from the token used for viewing Cesium content. The
+upload token stays in memory and is cleared when the dialog closes; it is never
+saved to browser storage or sent to analytics.
+
+IFC4 and IFC4X3 uploads use the canonical compatibility exporter after applying
+edits. It normalizes map units to metres. When the physical scale is one, supported
+map rotation and translation move into the original root `IfcLocalPlacement`
+frames; child placements, representations, openings and fills retain their
+original relationships. Other supported uniform scales use mapped Body
+representations under stricter ownership checks. These transformations preserve
+physical map coordinates, project units, properties and authored shape data.
+Ordinary IFC downloads retain their original coordinate representation. IFC2X3
+uploads keep their source schema and edits without an implicit upgrade.
+
+Unsupported coordinate consumers, ambiguous units or export warnings stop the
+upload before network transfer. For a model without georeferencing, set its
+location in Cesium ion. No undocumented heading or placement override is sent.
+A successful upload starts tiling; follow the asset link to check its progress.
+
+**Cancel upload** stops pending network work. An asset already created remains
+in your account, including when upload or completion fails. Follow its link to
+inspect or remove it before retrying. The viewer does not automatically delete
+assets. IFCX, LandXML, and models with retained image resources are currently
+unsupported by direct upload; textured models should be exported as IFCZIP to
+retain their images.
+
+The integration follows the [Cesium ion upload API](https://cesium.com/learn/ion/ion-upload-rest/)
+and adapts the MPL-2.0 upload feature from
+[GeoBIM's published IFClite fork](https://github.com/christof2304/ifc-lite/releases/tag/geobim-2026-09-24).
+
+Cesium uploads can be cancelled from their dialog or the status-bar Activity
+tray. The tray records **Cancelled** after native work drains; any already
+created remote asset remains available for inspection. A later retry has its
+own cancellation authority. Deviation CSV exports also appear in Activity and
+can be cancelled before the file is downloaded. Writers without a native abort
+contract offer no Activity Cancel action.
+
+### Placement acceptance evidence
+
+The catalogued `tests/models/buildingsmart/Infra-Bridge.ifc` is a real SketchUp
+2024 IFC4 model with millimetre project and map units. Canonical map-unit
+normalization preserves its engineering geometry and physical map coordinates.
+An actual viewer upload retained an edited girder `Name`; the complete tiled
+output preserved all 48 product `GlobalId` values, the other Names, and the
+normalized control's geometry and tile transforms.
+
+The catalogued `tests/models/ifc5/Georeferencing_georeferenced-bridge-deck.ifc`
+is an IfcOpenShell-authored IFC4X3_ADD2 model with map rotation and scale. An
+actual production SDK compatibility export and a combined viewer upload retained
+an edited slab `Name` and `GlobalId`; their stored tiled geometry matches the
+independently checked mapped control. The visually verified native Cesium control
+places the deck north–south along Golden Gate Bridge without a display correction.
+The combined upload also completed native Cesium rendering with identical geometry
+and tile transforms; its screenshot capture was unavailable. These are bounded
+fixture checks, not a claim that every IFC coordinate layout or authored CRS is
+supported. Datum
+accuracy depends on the authored CRS and the tiler's transformation.
+
+The [acceptance evidence](https://github.com/LTplus-AG/ifc-lite/blob/9fdc6b889/docs/architecture/evidence/cesium-ion-6587/README.md)
+retains original failed controls, corrected compatibility exports, independent
+geometry checks, actual metadata and screenshots. Mounted regressions exercise
+the selected model, pending edits, IFC2X3 schema retention, and refusal before
+transport. Earlier unchanged-source failures are historical controls; they do
+not establish a general provider defect.
 
 ## Quick Start: CDN Export (No Build Required)
 
@@ -361,7 +435,20 @@ asked for a subset the entire model.
 With `includeQuantities`, each entity additionally carries `ifc:hasQuantitySets`
 (`ifc:IfcElementQuantity` nodes with typed `ifc:IfcQuantity...` entries).
 
+Document PDF exports appear in the status-bar Activity tray while the native
+writer runs. Their rows record completion, missing-content warnings or failure.
+The PDF writer has no native abort contract, so its row offers no Cancel action.
+
 ## CSV Export
+
+The web viewer’s entities, properties, quantities and spatial hierarchy CSV commands
+share the same handler across the ribbon, command palette and mobile toolbar.
+They export the active model with pending native edits applied. In a federation,
+the Activity subject and existing export toast state that other loaded models
+are excluded. Each invocation has its own Activity row; Completed follows browser
+publication and Failed records writer or publication errors. Exports can finish
+after their initiating controls close. The Rust CSV writer has no abort contract,
+so these rows offer no Cancel action. An unavailable source creates no job.
 
 Export tabular data for spreadsheet applications:
 
@@ -438,6 +525,98 @@ For quick scripts there is also `exportToStep(dataStore, options?)`, which
 returns the STEP text as a string (defaults `schema` to the source model's own
 schema, so a round-trip preserves it; pass `schema` explicitly to convert.
 Prefer `StepExporter` and its `Uint8Array` output for very large files).
+
+#### Map units for interoperability
+
+STEP export preserves authored map units by default. For a consumer that needs
+metre-valued map coordinates, enable `normalizeMapUnitsToMetres` on a full
+IFC4 or IFC4X3 export using the source schema:
+
+```typescript
+const metreMap = new StepExporter(dataStore, mutationView).export({
+  schema: 'IFC4',
+  normalizeMapUnitsToMetres: true,
+});
+if (metreMap.stats.warnings.length) {
+  throw new Error(metreMap.stats.warnings.join('\n'));
+}
+await saveFile('metre-map.ifc', metreMap.content);
+```
+
+The exporter resolves the emitted model after session edits, changes
+`IfcProjectedCRS.MapUnit` to a separate metre unit, and scales every referencing
+`IfcMapConversion.Eastings`, `Northings`, `OrthogonalHeight` and `Scale` together.
+An omitted `Scale` means 1 before conversion. The engineering geometry and
+`IfcProject.UnitsInContext` remain unchanged, as do rotation and
+`IfcMapConversionScaled.FactorX`, `FactorY` and `FactorZ`.
+
+A missing map unit is resolved through the source context's owning project.
+Ambiguous owners, unsupported or cyclic conversion units, invalid numeric
+values, unsupported coordinate operations and retained WKT unit definitions
+are preserved with warnings. A CRS shared by multiple operations changes only
+when all those operations can be normalized safely. Delta exports and schema
+conversions reject this option. Ordinary IFC file exports retain their original
+map units unless this option is enabled.
+
+#### Map rotation and scale for interoperability
+
+`normalizeMapGeometry` is a separate, opt-in asynchronous compatibility export.
+It requires a full IFC4 or IFC4X3 export using the source schema and a metre
+map unit. Enable unit normalization first when the authored map unit differs:
+
+```typescript
+const compatibleMap = await new StepExporter(dataStore, mutationView).exportAsync({
+  schema: 'IFC4',
+  normalizeMapUnitsToMetres: true,
+  normalizeMapGeometry: true,
+});
+if (compatibleMap.stats.warnings.length) {
+  throw new Error(compatibleMap.stats.warnings.join('\n'));
+}
+await saveFile('compatible-map.ifc', compatibleMap.content);
+```
+
+Canonical Rust resolves the emitted model after edits. A rigid map rotation
+with exactly unit physical scale moves into the original `IfcLocalPlacement`
+roots. Child placements and all representation records remain intact, including
+Body, Axis, FootPrint, Box, annotations, opening/fill relationships and supported
+endpoint-local connection geometry. Root frames are cloned, so shared geometry
+points and directions are not mutated. TrueNorth directions, including the
+implicit +Y default, rotate into the new engineering frame using cloned metadata.
+This metadata adjustment covers the coordinate-operation context and contexts
+reachable from represented products. Unused definition contexts retain their
+original TrueNorth and representation records.
+
+TrueNorth, when provided, must have exactly two direction ratios under the
+IFC4/IFC4X3 `North2D` constraint. Malformed metadata is refused atomically;
+the ordinary edited IFC content is retained without normalization patches.
+
+Non-unit uniform physical scale uses absolute logical product placements and
+scaled `IfcMappedItem` Body representations. Both paths preserve physical map
+coordinates, logical placement origins, GUIDs, properties and authored units.
+The remaining coordinate operation retains only project-to-metre conversion.
+Exactly neutral rotation/physical scale preserves the original operation and
+geometry; machine-epsilon sine roundoff with exact neutral cosine/scale also
+remains untouched.
+
+Both paths require one map conversion, one project, SI metre-based project units,
+validated local 3D placements and identity 3D engineering contexts. The rigid
+path also accepts identity 3D sibling contexts explicitly declared by that same
+project, preserving the common Model/Plan engineering frame. Foreign contexts,
+unknown placement or connection-geometry consumers, malformed metadata and
+alignment/grid/structural consumers refuse atomically with explanatory warnings.
+Represented products without placements are refused.
+
+The scaled Body path additionally requires unambiguous Body ownership and type
+maps reachable from actual products. It refuses voids/fills, annotations and
+other coordinate consumers it cannot preserve. Its added wrapper requires fewer
+than 31 existing mapped levels. The rigid path adds no wrapper: 31 mapped levels
+can retain their original per-leaf styles; cycles, excessive depth and reference
+work are still refused. Nonuniform scale remains unsupported.
+
+Inspect warnings before sending the result to another service. Synchronous
+export rejects this option. Ordinary exports preserve their existing coordinate
+structure and bytes.
 
 #### Which schema identifier is written
 
@@ -658,6 +837,14 @@ await saveFile('model.ifcx', result.content);  // string; result.stats has count
 
 A Rust-side variant is also available as `GeometryProcessor.exportIfcx(bytes, onlyKnownProperties?, pretty?)`.
 
+The low-level `IfcxWriter` in `@ifc-lite/ifcx` accepts an optional
+`effectiveSpatialEdges` array when exporting a live `mutationView`. Supply the
+complete current `IfcRelAggregates`, `IfcRelNests`, and
+`IfcRelContainedInSpatialStructure` edge set as `{ sourceId, targetId,
+relationshipType }` records. This replaces the parsed `spatialHierarchy` for
+child links, so containment edits appear in the IFCX file. The writer reports
+an error if it detects an edited spatial relationship without these edges.
+
 ## OpenUSD (.usda) Export
 
 Export a model as a real **OpenUSD ASCII** (`.usda`) stage — distinct from IFCX, which is
@@ -804,6 +991,49 @@ All four take `undefined` for "no isolation filter" and an empty
 exports nothing rather than everything. Pass `undefined`, not
 `new Uint32Array()`, when you do not want to filter.
 
+## Saving Edits Through the Rust Writer
+
+`StepExporter` needs the whole file as one buffer in the JS heap, which fails
+past V8's ArrayBuffer ceiling (~2 GB). `exportStep` takes the session's edits
+as the mutation log `MutablePropertyView.exportMutations()` returns and writes
+them natively, streaming every record the log does not touch:
+
+```typescript
+// `view` is the session's MutablePropertyView, `bytes` the source file.
+const saved = gp.exportStep(bytes, '', undefined, view.exportMutations());
+```
+
+The output is byte-identical to `new StepExporter(store, view).export(...)`
+for the same edits, except the GlobalIds of the records the export generates
+(regenerated property and quantity sets and their relationships), which the
+Rust writer derives instead of drawing at random. The shared parity fixture
+`rust/export/tests/fixtures/step_log_parity_vectors.json` pins this from both
+sides. The log applies property and quantity edits (create, update, delete, whole-set
+deletion), root-attribute and positional edits, retypes, entity deletion (with
+the same reference cleanup: list slots narrowed, relationships withheld) and
+created entities, whose payloads travel in the log's `newEntities` member
+(`view.getNewEntities()`), since a `CREATE_ENTITY` record carries only the id:
+
+```typescript
+const log = { ...JSON.parse(view.exportMutations()), newEntities: view.getNewEntities() };
+const savedWithCreations = gp.exportStep(bytes, '', undefined, JSON.stringify(log));
+```
+
+Georeferencing edits travel in `georefMutations` (the `StepExportOptions`
+shape): an existing `IfcProjectedCRS` / `IfcMapConversion` is edited in place,
+a missing one is created. Like `StepExporter`, the writer refuses them for an
+IFC2X3 output; an IFC2X3 model's georeferencing is its `ePSet_MapConversion` /
+`ePSet_ProjectedCRS` property sets, which are ordinary property edits.
+
+A log the TypeScript replay would throw on (an invalid class name in a retype)
+is refused with an error rather than exported, and so is a log it would save
+WITHOUT an edit: a mutation `type` the writer does not recognise, an attribute
+edit whose value is `null` (clear an attribute with `''`), or a `CREATE_ENTITY`
+whose payload is missing from `newEntities`. A log does not combine with an
+isolation set. Native hosts merging several models pass one log per model to
+`ifc_lite_export::export_merged_models_with_logs`, which bakes each edited model
+the way `MergedExporter.exportAsync` does.
+
 ## Export Pipeline
 
 Chain multiple exports:
@@ -862,6 +1092,20 @@ The helper is pure: apply `entityIds` through an atomic mutation transaction, th
 Validation is synchronous, bounded and conservative: a changed record, dependency set, or exceeded work/byte budget throws before replay. Formatting-equivalent rewrites may also require refreshing the command. Source data is assumed immutable within a model; replacement models require new guards. Capture once per command state, not during rendering. Viewer preview planning additionally needs a snapshot-time overlay checkpoint across its asynchronous export/worker interval; a replay dependency guard is not a replacement for that checkpoint.
 
 The guard caps the source index at 200,000 entities before constructing its effective index, authored overlay entities at 100,000, traversed records at 100,000, references at two million and authored values at eight million. Exact UTF-8 accounting uses a fixed scratch buffer before allocating each encoded row. Its 192 MiB effective-row budget covers the planner's bounded 128 MiB source plus 64 MiB output, including higher-precision newly authored UVs. Immutable source records retain identity markers rather than duplicate large source strings in every history checkpoint. Material/type inheritance and material-definition representations are included; sharing a type or material does not pull peer products' geometry into the guard.
+
+### Serializing an element subgraph for re-meshing
+
+`serializeEntitySubgraph(dataStore, mutationView, { targets })` writes a small, standalone STEP file holding the target elements and what the mesher needs to rebuild them. That is each element's forward references, the project's units and representation contexts, and its openings and their fillings with the voiding and filling relationships. It also holds its `IfcRelAssociatesMaterial`, narrowed to the elements in the file. `remeshContextRoots(dataStore, mutationView, targets)` returns those extra roots on their own. Pass them back as `contextRoots` to add or drop context.
+
+```typescript
+import { serializeEntitySubgraph } from '@ifc-lite/export';
+
+const sub = serializeEntitySubgraph(store, mutationView, { targets: new Set([wallId]) });
+// sub.bytes: a complete STEP file; sub.ids: every express id it defines;
+// sub.unreadable: ids whose effective record could not be written faithfully.
+```
+
+The cost follows the targets' own reference closure, not the model size, so it can run on every authoring commit. Queued edits and overlay-created entities are written by the same writers as `StepExporter`, and express ids are kept, overlay-allocated ones included. Styles are left out, so a caller meshing the buffer supplies the model's load-time style wire itself.
 
 ### IFCX texture portability
 

@@ -15,6 +15,7 @@
 import React, { useCallback, useState, useMemo } from 'react';
 import { Plus, Trash2, Upload, Calendar, Hash, FileText, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -26,7 +27,7 @@ import {
 } from '@/components/ui/dialog';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
-import type { TitleBlockField, RevisionEntry } from '@ifc-lite/drawing-2d';
+import type { TitleBlockField } from '@ifc-lite/drawing-2d';
 
 interface TitleBlockEditorProps {
   open: boolean;
@@ -193,7 +194,7 @@ export function TitleBlockEditor({ open, onOpenChange }: TitleBlockEditorProps):
                     {FIELD_ICONS[field.id] || <FileText className="h-4 w-4" />}
                     <span className="truncate">{field.label}</span>
                   </div>
-                  <Input
+                  <Input aria-label={field.label}
                     value={field.value}
                     onChange={(e) => handleFieldChange(field.id, e.target.value)}
                     placeholder={t('sheetsPdf.titleBlock.fieldPlaceholder', { label: field.label.toLowerCase() })}
@@ -219,7 +220,7 @@ export function TitleBlockEditor({ open, onOpenChange }: TitleBlockEditorProps):
 
             {showNewFieldForm && (
               <div className="flex gap-2 p-3 bg-muted/30 rounded-lg">
-                <Input
+                <Input aria-label={t('sheetsPdf.titleBlock.fieldLabelPlaceholder')}
                   value={newFieldLabel}
                   onChange={(e) => setNewFieldLabel(e.target.value)}
                   placeholder={t('sheetsPdf.titleBlock.fieldLabelPlaceholder')}
@@ -252,21 +253,21 @@ export function TitleBlockEditor({ open, onOpenChange }: TitleBlockEditorProps):
                   <div key={field.id} className="flex items-center gap-2">
                     <div className="grid grid-cols-[120px_1fr] items-center gap-3 flex-1">
                       <span className="text-sm truncate">{field.label}</span>
-                      <Input
+                      <Input aria-label={field.label}
                         value={field.value}
                         onChange={(e) => handleFieldChange(field.id, e.target.value)}
                         placeholder={t('sheetsPdf.titleBlock.fieldPlaceholder', { label: field.label.toLowerCase() })}
                         className="h-8"
                       />
                     </div>
-                    <Button
-                      variant="ghost"
+                    <IconButton
+                      label={t('sheetsPdf.titleBlock.removeFieldLabel', { label: field.label })}
                       size="icon-sm"
                       className="text-destructive hover:text-destructive"
                       onClick={() => removeTitleBlockField(field.id)}
                     >
                       <Trash2 className="h-4 w-4" />
-                    </Button>
+                    </IconButton>
                   </div>
                 ))}
               </div>
@@ -339,7 +340,7 @@ export function TitleBlockEditor({ open, onOpenChange }: TitleBlockEditorProps):
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs">{t('sheetsPdf.titleBlock.revisionNumberLabel')}</Label>
-                    <Input
+                    <Input aria-label={t('sheetsPdf.titleBlock.revisionNumberLabel')}
                       value={newRevision.revision}
                       onChange={(e) => setNewRevision(prev => ({ ...prev, revision: e.target.value }))}
                       placeholder={t('sheetsPdf.titleBlock.revisionNumberPlaceholder')}
@@ -348,7 +349,7 @@ export function TitleBlockEditor({ open, onOpenChange }: TitleBlockEditorProps):
                   </div>
                   <div>
                     <Label className="text-xs">{t('sheetsPdf.titleBlock.dateLabel')}</Label>
-                    <Input
+                    <Input aria-label={t('sheetsPdf.titleBlock.dateLabel')}
                       value={newRevision.date}
                       onChange={(e) => setNewRevision(prev => ({ ...prev, date: e.target.value }))}
                       placeholder={t('sheetsPdf.titleBlock.datePlaceholder')}
@@ -358,7 +359,7 @@ export function TitleBlockEditor({ open, onOpenChange }: TitleBlockEditorProps):
                 </div>
                 <div>
                   <Label className="text-xs">{t('sheetsPdf.titleBlock.descriptionLabel')}</Label>
-                  <Input
+                  <Input aria-label={t('sheetsPdf.titleBlock.descriptionLabel')}
                     value={newRevision.description}
                     onChange={(e) => setNewRevision(prev => ({ ...prev, description: e.target.value }))}
                     placeholder={t('sheetsPdf.titleBlock.descriptionPlaceholder')}
@@ -367,7 +368,7 @@ export function TitleBlockEditor({ open, onOpenChange }: TitleBlockEditorProps):
                 </div>
                 <div>
                   <Label className="text-xs">{t('sheetsPdf.titleBlock.authorLabel')}</Label>
-                  <Input
+                  <Input aria-label={t('sheetsPdf.titleBlock.authorLabel')}
                     value={newRevision.author}
                     onChange={(e) => setNewRevision(prev => ({ ...prev, author: e.target.value }))}
                     placeholder={t('sheetsPdf.titleBlock.authorPlaceholder')}
@@ -409,14 +410,13 @@ export function TitleBlockEditor({ open, onOpenChange }: TitleBlockEditorProps):
                       <span className="truncate">{rev.description}</span>
                       {rev.author && <span className="text-muted-foreground">{t('sheetsPdf.titleBlock.byAuthor', { author: rev.author })}</span>}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
+                    <IconButton
+                      label={t('sheetsPdf.titleBlock.removeRevisionLabel', { revision: rev.revision })}
                       className="h-6 w-6 text-destructive hover:text-destructive"
                       onClick={() => removeRevision(index)}
                     >
                       <Trash2 className="h-3 w-3" />
-                    </Button>
+                    </IconButton>
                   </div>
                 ))}
               </div>

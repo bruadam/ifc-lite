@@ -3,17 +3,16 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * File-command surface shared by every desktop toolbar style (classic
- * `MainToolbar` and the ribbon). Owns the Open / Add Model / Refresh
- * flows, the hidden file inputs, and the global `ifc-lite:*` load
- * events, so both toolbars drive the exact same load pipeline and the
- * logic lives once. Exactly one toolbar mounts at a time, so the
- * window listeners registered here never double-fire.
+ * File-command surface for the ribbon. Owns the Open / Add Model / Refresh
+ * flows, hidden file inputs, and global `ifc-lite:*` load events. The ribbon
+ * mounts it once, so the window listeners never double-fire.
  */
 
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useViewerStore, isIfcxDataStore, type FederatedModel } from '@/store';
-import { useIfc } from '@/hooks/useIfc';
+import { useIfcLoader } from '@/hooks/useIfcLoader';
+import { useIfcFederation } from '@/hooks/useIfcFederation';
+import { selectCanRefreshModels, selectHasModelsLoaded } from '@/hooks/model-presence';
 import { recordRecentFiles, cacheFileBlobs } from '@/lib/recent-files';
 import {
   supportsFileSystemAccess,
@@ -21,13 +20,14 @@ import {
   readFreshFile,
 } from '@/services/file-system-access';
 import { toast } from '@/components/ui/toast';
+import { useTranslation } from '@/i18n';
 import { isCollabEnabled } from '@/lib/collab/config';
 import { ingestDxfFiles, splitDxfFiles } from '@/hooks/ingest/dxfIngest';
 import { usePreparedModelFileRoute } from '@/hooks/ingest/usePreparedModelFileRoute';
 import { ShareDialog } from '../ShareDialog';
 import { FederationSetupControls } from '../FederationSetupControls';
 
-import { FILE_ACCEPT, isGltfBundleFile, isSupportedModelFile } from '@/services/supported-model-files';
+import { FILE_ACCEPT, isModelSidecarFile, isSupportedModelFile } from '@/services/supported-model-files';
 import { captureModelTags, restoreModelTags } from '@/lib/model-tags/carry-over';
 
 // FILE_ACCEPT offers `.dxf` while `isSupportedModelFile` rejects it: DXF
@@ -66,25 +66,20 @@ export interface FileCommands {
 }
 
 export function useFileCommands(): FileCommands {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const addModelInputRef = useRef<HTMLInputElement>(null);
-  const {
-    loadFile,
-    loading,
-    geometryResult,
-    ifcDataStore,
-    models,
-    clearAllModels,
-    loadFilesSequentially,
-    loadFederatedIfcx,
-    addIfcxOverlays,
-    addModel,
-  } = useIfc();
+  // Narrow selectors (#6232 perf): `useIfc()` subscribes to `models` and
+  // `geometryResult`, re-rendering the toolbar on every geometry update.
+  const { loadFile } = useIfcLoader();
+  const { loadFilesSequentially, loadFederatedIfcx, addIfcxOverlays, addModel } = useIfcFederation(loadFile);
+  const ifcDataStore = useViewerStore((s) => s.ifcDataStore);
+  const clearAllModels = useViewerStore((s) => s.clearAllModels);
   const resetViewerState = useViewerStore((state) => state.resetViewerState);
 
   // Share dialog host. Owned here (not by a toolbar or tab panel) because
-  // this hook is mounted by whichever toolbar style is active for the whole
-  // session, while ribbon tab panels unmount on tab switch/collapse — the
+  // this hook is mounted by RibbonToolbar for the whole session, while its
+  // tab panels unmount on tab switch/collapse — the
   // `ifc-lite:open-share-dialog` event (RoomPanel's "Create a room") must
   // always find a live listener.
   const collabEnabled = useMemo(() => isCollabEnabled(), []);
@@ -139,7 +134,7 @@ export function useFileCommands(): FileCommands {
     };
   }, [loadFile, addModel, loadFederatedIfcx]);
 
-  const hasModelsLoaded = models.size > 0 || Boolean(geometryResult?.meshes && geometryResult.meshes.length > 0);
+  const hasModelsLoaded = useViewerStore(selectHasModelsLoaded);
 
   const routeOpenedFiles = useCallback((supportedFiles: File[], handles?: (FileSystemFileHandle | undefined)[]) => {
     if (supportedFiles.length === 1) {
@@ -164,7 +159,7 @@ export function useFileCommands(): FileCommands {
     if (dxfFiles.length > 0) void ingestDxfFiles(dxfFiles);
 
     // Filter to supported files (IFC, IFCX, GLB, point clouds)
-    const supportedFiles = modelFiles.filter(file => isSupportedModelFile(file) || isGltfBundleFile(file));
+    const supportedFiles = modelFiles.filter(file => isSupportedModelFile(file) || isModelSidecarFile(file));
 
     if (supportedFiles.length === 0) {
       e.target.value = '';
@@ -195,12 +190,12 @@ export function useFileCommands(): FileCommands {
     } else if (newFilesAreIfcx && !existingIsIfcx && ifcDataStore) {
       // User trying to add IFCX to IFC4 model - won't work
       console.warn('[toolbar] Cannot add IFCX files to non-IFCX model');
-      alert(`IFCX overlay files cannot be added to IFC4 models.\n\nPlease load IFCX files separately.`);
+      toast.error(t('viewerShell.file.ifcxOverlayRequiresIfcx'));
     } else {
       // Standard case - add as independent models (IFC4, GLB, or mixed)
       void loadFilesSequentially(supportedFiles, handles);
     }
-  }, [loadFilesSequentially, addIfcxOverlays, ifcDataStore]);
+  }, [loadFilesSequentially, addIfcxOverlays, ifcDataStore, t]);
 
   const prepareAndAdd = usePreparedModelFileRoute(addSupportedFiles);
 
@@ -211,7 +206,7 @@ export function useFileCommands(): FileCommands {
     const { dxfFiles, modelFiles } = splitDxfFiles(Array.from(files));
     if (dxfFiles.length > 0) void ingestDxfFiles(dxfFiles);
     // <input> yields no live handle, so models added this way aren't refreshable.
-    const supportedFiles = modelFiles.filter(file => isSupportedModelFile(file) || isGltfBundleFile(file));
+    const supportedFiles = modelFiles.filter(file => isSupportedModelFile(file) || isModelSidecarFile(file));
     prepareAndAdd(supportedFiles);
     // Reset input so same files can be selected again
     e.target.value = '';
@@ -229,7 +224,7 @@ export function useFileCommands(): FileCommands {
     // DXF reference underlays split off before model routing (issue #1782).
     const dxfPicked = opened.filter(o => o.file.name.toLowerCase().endsWith('.dxf'));
     if (dxfPicked.length > 0) void ingestDxfFiles(dxfPicked.map(o => o.file));
-    const supported = opened.filter(o => isSupportedModelFile(o.file) || isGltfBundleFile(o.file));
+    const supported = opened.filter(o => isSupportedModelFile(o.file) || isModelSidecarFile(o.file));
     prepareAndAdd(supported.map(o => o.file), supported.map(o => o.handle));
   }, [prepareAndAdd]);
 
@@ -249,7 +244,7 @@ export function useFileCommands(): FileCommands {
     if (dxfPicked.length > 0) void ingestDxfFiles(dxfPicked.map(o => o.file));
     // The picker keeps an "all files" option, so drop anything unsupported
     // before it reaches the load pipeline (matches the <input> + Add Model paths).
-    const opened = picked.filter(o => isSupportedModelFile(o.file) || isGltfBundleFile(o.file));
+    const opened = picked.filter(o => isSupportedModelFile(o.file) || isModelSidecarFile(o.file));
     if (opened.length === 0) return;
 
     prepareAndOpen(opened.map(o => o.file), opened.map(o => o.handle));
@@ -261,10 +256,7 @@ export function useFileCommands(): FileCommands {
   // <input type="file">, cache-restored, and IFCX-composed models have no
   // handle, so a mixed session hides the button rather than risk dropping the
   // handle-less models during the rebuild.
-  const canRefresh = useMemo(() => {
-    if (loading || models.size === 0) return false;
-    return Array.from(models.values()).every(m => m.sourceHandle);
-  }, [models, loading]);
+  const canRefresh = useViewerStore(selectCanRefreshModels);
 
   const handleRefresh = useCallback(async () => {
     const targets = (Array.from(useViewerStore.getState().models.values()) as FederatedModel[])

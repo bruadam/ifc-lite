@@ -5,22 +5,23 @@
 import type { TranslationValue } from '../types';
 
 /**
- * The command lists both the classic `MainToolbar` and the ribbon render
- * from a single registry, so neither style can host a command the other
- * lacks (#4918 slice 2, following slice 1's `main-toolbar.en.ts`):
- * - `export-commands.ts` — `ClassicExportMenuItems` / `RibbonExportGroup`
- * - `camera-commands.ts` — `CameraCommandMenuItems` / `ViewTab`
- * - `bottom-panels.ts` consumer `BottomPanelMenuItems`
- * - `AuthorPanelMenuItems`
+ * Shared command labels rendered by the ribbon, palette and mobile surfaces
+ * from one registry (#4918 slice 2, #5874):
+ * - `export-commands.ts` — `RibbonExportGroup` / command palette / mobile menu
+ * - `camera-commands.ts` tooltips and registered View commands — `ViewTab`
+ * - panel registry titles — ribbon Analyze / Author / View tabs
  * - `ClassVisibilityMenu` (`ClassVisibilityMenuContent`)
  *
- * The two data-only registries (`export-commands.ts`, `camera-commands.ts`)
- * are plain arrays with no React import, so they carry a translation KEY per
- * row rather than calling `t()` themselves — the same pattern
- * `sectionConstants.ts`'s `AXIS_INFO` uses. Renderers call `t(row.xKey)`.
+ * The data-only registries carry translation keys rather than calling `t()`
+ * themselves. The camera table supplies tooltips; registered View commands
+ * supply button names. This follows `sectionConstants.ts`'s `AXIS_INFO`.
  * IFC EXPRESS names and single-letter/number keyboard shortcuts stay literal.
  */
 export const sharedCommandsEn = {
+  'exportCommands.ion.label': 'Cesium ion',
+  'exportCommands.ion.menuLabel': 'Upload to Cesium ion',
+  'exportCommands.ion.tooltip': 'Upload edited IFC to your Cesium ion account',
+
   'exportCommands.ifc.label': 'IFC',
   'exportCommands.ifc.menuLabel': 'Export IFC (with changes)',
   'exportCommands.ifc.tooltip': 'Export IFC (with changes)',
@@ -54,8 +55,8 @@ export const sharedCommandsEn = {
   'exportCommands.csv.item.spatial': 'Spatial Hierarchy',
 
   'exportCommands.json.label': 'JSON',
-  'exportCommands.json.menuLabel': 'Export JSON (All Data)',
-  'exportCommands.json.tooltip': 'Export JSON (all data)',
+  'exportCommands.json.menuLabel': 'Export JSON (active model)',
+  'exportCommands.json.tooltip': 'Export the active model as JSON',
 
   'exportCommands.screenshot.label': 'Screenshot',
   'exportCommands.screenshot.menuLabel': 'Screenshot',
@@ -65,12 +66,15 @@ export const sharedCommandsEn = {
   'exportCommands.pdf.menuLabel': 'Export PDF (to-scale 3D view)',
   'exportCommands.pdf.tooltip': 'Export PDF (to-scale 3D view)',
 
-  'cameraCommands.group.camera': 'Camera',
-  'cameraCommands.group.preset': 'Preset views',
-  'cameraCommands.group.rotate': 'Rotate',
+  'exportCommands.modifiedIfc.label': 'Modified IFC',
+  'exportCommands.modifiedIfc.menuLabel': 'Export modified IFC…',
+  'exportCommands.modifiedIfc.tooltip': 'Export every model with unexported edits, edits applied',
 
-  'cameraCommands.home.label': 'Isometric',
-  'cameraCommands.home.tooltip': 'Home (isometric + reset visibility)',
+  // Extension-contributed exporters: the row text is the exporter's own name.
+  'exportCommands.extension.exportedToast': 'Exported with {name}',
+  'exportCommands.extension.failedToast': '"{name}" failed: {error}',
+
+  'cameraCommands.home.tooltip': 'Home (isometric camera + fit)',
   'cameraCommands.zoomIn.label': 'Zoom in',
   'cameraCommands.zoomIn.tooltip': 'Zoom in',
   'cameraCommands.zoomOut.label': 'Zoom out',
@@ -94,18 +98,12 @@ export const sharedCommandsEn = {
   'cameraCommands.rotateRight.label': 'Rotate right',
   'cameraCommands.rotateRight.tooltip': 'Rotate right 90°',
 
-  'workspacePanels.workspaceLabel': 'Workspace',
-  'workspacePanels.bottom.script': 'Script Editor',
-  'workspacePanels.bottom.lists': 'Lists',
+  'workspacePanels.panel.collab': 'Collaboration room',
+  'workspacePanels.panel.layers': 'Layer stack',
+  'workspacePanels.panel.presentation': 'Presentation',
   'workspacePanels.bottom.gantt': 'Schedule (Gantt)',
   'workspacePanels.bottom.charts': 'Charts',
-  'workspacePanels.bottom.flow': 'Flow',
   'workspacePanels.bottom.document': 'Document',
-
-  'workspacePanels.authorLabel': 'Author',
-  'workspacePanels.author.appearance': 'Appearance',
-  'workspacePanels.author.addElement': 'Add Element',
-  'workspacePanels.author.extensions': 'Extensions',
 
   'classVisibility.viewHeading': '3D View',
   'classVisibility.viewModeAriaLabel': '3D view mode',
@@ -137,7 +135,7 @@ export const sharedCommandsEn = {
   'classVisibility.fastGeometry.descriptionExact': 'Exact: full cuts + density · on reload',
 
   'classVisibility.pinnedDetail.label': 'Detail pinned: {tier}',
-  'classVisibility.pinnedDetail.descriptionIgnored': 'Ignored in Exact · from a ?geomTier= link',
-  'classVisibility.pinnedDetail.descriptionOverrides': 'Overrides automatic detail · from a ?geomTier= link',
-  'classVisibility.clear': 'Clear',
+  'classVisibility.pinnedDetail.descriptionIgnored': 'Ignored in Exact · manage in Performance settings',
+  'classVisibility.pinnedDetail.descriptionOverrides': 'Overrides automatic detail · manage in Performance settings',
+  'classVisibility.performanceSettings': 'Performance settings',
 } as const satisfies Record<string, TranslationValue>;

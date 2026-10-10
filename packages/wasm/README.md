@@ -33,6 +33,23 @@ console.log(`Entities: ${refs.length}`);
 api.free();                           // free the API instance
 ```
 
+`api.extrusionDefinitions(bytes, ids)` returns exact authored
+`IfcExtrudedAreaSolid` sources and placed product occurrences without decoding
+meshes. Omit `ids` for all products, pass `new Uint32Array()` for none, or
+selected product STEP IDs for a filtered view. Repeated mapping targets share a source key while each
+occurrence retains its f64 `world_from_source` matrix and deterministic ordinal.
+Complete sources with valid positive net profile area have
+`nominal_quantities` in raw squared/cubed IFC file units; unsupported or
+invalid sources have `null`.
+For a complete source-profile point, apply `profile_position`, then
+`position_matrix`, then `world_from_source`; the last matrix includes file-unit
+conversion and maps to absolute IFC Z-up metres. An absent optional `Position`
+leaves its matrix field `null`, so use identity for that step when composing
+rather than expecting an identity array. Check `status` before interpreting a
+null matrix; unsupported sources and bounded output are reported by `status`
+and `diagnostics`. CSG operands carry
+`source_modified=true` because their final body can differ.
+
 ## Meshes (pre-pass + job batches)
 
 Geometry runs as a single pre-pass (one scan that produces a flat job list
@@ -191,6 +208,21 @@ residuals. Frames and asset identities are bound into the report; the call does
 not align a loaded model or approve scan accuracy. See the
 [registration contract](../../docs/api/wasm.md#scan-correspondence-registration).
 
+`IfcAPI.segmentScanPoints` detects planes in an xyz `Float32Array` point cloud
+(voxel means, PCA normals, region growing, a robust refit and coplanar
+merging). It also detects cylinders, such as columns and pipes, among the
+remaining voxels (seeded RANSAC, then a least-squares refit), and wide round
+and polygonal columns among rings of vertical planes; a column's surface is
+not also reported as planes. The JSON report is independent of point order. See the
+[segmentation contract](../../docs/api/wasm.md#scan-plane-segmentation); the
+typed wrapper is `@ifc-lite/geometry/scan-segmentation`.
+
+`IfcAPI.proposeScanElements` turns that report into proposed walls, slabs,
+columns and pipes in the IFC model frame, each with a confidence and its source
+detections; it creates nothing. See the
+[proposal contract](../../docs/api/wasm.md#scan-element-proposals); the typed
+wrapper is `@ifc-lite/geometry/scan-proposals`.
+
 `IfcAPI.planMeshTransfer` composes registered opaque textured-mesh observations
 onto supported direct IFC tessellations using the shared atlas planner. Unknown
 samples retain existing target albedo; the IFPA response includes explicit
@@ -219,3 +251,34 @@ the versioned behavior.
 Combined fill and dashed-stroke paints can still refuse atomically when
 multiple run boundaries produce crossings outside the current fill-region
 qualifier.
+
+## Retained alignment station frames
+
+`AlignmentAxisJs` evaluates one `IfcAlignment` through the canonical Rust
+evaluator. Its `GlobalId` and `Name` properties use exact IFC EXPRESS names;
+`expressId`, `geometricHorizontalLengthMeters` and `approximate` are derived
+metadata. The caller owns the handle and must call `free()` in `finally`.
+
+```ts
+import init, { AlignmentAxisJs } from '@ifc-lite/wasm';
+
+await init();
+const content = await (await fetch('alignment.ifc')).text();
+const axis = new AlignmentAxisJs(content, 39);
+try {
+  const sample = axis.evaluate(10);
+  console.log(axis.GlobalId, axis.Name, sample);
+} finally {
+  axis.free();
+}
+```
+
+`evaluate(distanceMeters)` returns a `Float64Array` containing horizontal
+distance, absolute IFC Z-up point X/Y/Z in metres, and normalized world tangent
+X/Y/Z. Distance is alignment-local geometric horizontal length from the physical
+start, independent of authored chainage and different from 3D arc length. No
+renderer origin or axis conversion is applied. Nonfinite or out-of-range
+distances and unresolved units, curves or placements fail explicitly. The
+`approximate` flag identifies supported approximation paths; it must be exposed
+to precision-sensitive consumers. Whole-source parsing belongs in a disposable
+worker when used by the viewer, so releasing the tool also releases WASM pages.

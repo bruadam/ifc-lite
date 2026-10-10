@@ -7,6 +7,7 @@ import type { MeshData } from '@ifc-lite/geometry';
 import { Scene } from './scene.js';
 import { Renderer } from './index.js';
 import { ModelTranslations } from './model-translation.js';
+import { INSTANCE_STRIDE_BYTES } from './instanced-render.js';
 import { MathUtils } from './math.js';
 import type { Mesh } from './types.js';
 import { modelPlacementBounds } from './model-placement-bounds.js';
@@ -155,19 +156,25 @@ describe('whole-model renderer placement (#4226)', () => {
     assert.equal(scene.getEntityBoundingBox(2)?.min.x, 13);
   });
 
-  it('keeps same-colour overrides attached to their own federated model', () => {
-    const scene = new Scene(), { device, pipeline } = recordingGpu();
+  it('keeps same-colour overrides attached to their own federated model', async () => {
+    const colorTable = await import('./entity-color-table.js').catch(() => null);
+    assert.ok(colorTable, 'the renderer provides the entity colour table');
+    const { lookupEntityColor } = colorTable;
+    const scene = new Scene(), { device, pipeline, buffers } = recordingGpu();
     scene.appendToBatches([triangle(1, 0), triangle(2, 1, 3)], device, pipeline);
+    const allocated = buffers.length;
     scene.setColorOverrides(new Map([[1, [1, 0, 0, 1]], [2, [1, 0, 0, 1]]]), device, pipeline);
-    const overlays = scene.getOverrideBatches();
-    assert.equal(overlays.length, 2);
-    const before = overlays.map((batch) => ({ batch, origin: batch.origin![0], buffer: batch.vertexBuffer }));
+    // #6076: the override is a colour-table entry, so the only allocation is
+    // the table; the base batch that moves with its model is what gets painted.
+    assert.equal(buffers.length, allocated + 1, 'no overlay geometry is allocated');
+    const before = scene.getBatchedMeshes().map((batch) => ({ batch, origin: batch.origin![0], buffer: batch.vertexBuffer }));
     scene.setModelTranslation(1, [10, 0, 0]);
     for (const { batch, origin, buffer } of before) {
       const expectedModel = batch.expressIds.includes(2) ? 1 : 0;
       assert.ok([...batch.modelIndices!].every((index) => index === expectedModel));
       assert.equal(batch.origin![0], origin + (expectedModel === 1 ? 10 : 0));
-      assert.equal(batch.vertexBuffer, buffer, 'overlay movement does not rebuild its geometry');
+      assert.equal(batch.vertexBuffer, buffer, 'translation does not rebuild the painted batch');
+      assert.deepEqual(lookupEntityColor(scene.getEntityColorTable().getImage(), batch.expressIds[0]), [1, 0, 0, 1]);
     }
   });
 
@@ -385,7 +392,7 @@ for (const reshape of [false, true]) it(`does not resurrect removed released geo
 });
 
 describe('ModelTranslations yaw (#4890)', () => {
-  const STRIDE = 88;
+  const STRIDE = INSTANCE_STRIDE_BYTES;
 
   /** Write one instance record's 3 linear columns + translation, little-endian,
    *  matching `INSTANCE_STRIDE_BYTES`'s column-major mat4 layout. */
@@ -403,19 +410,19 @@ describe('ModelTranslations yaw (#4890)', () => {
   }
 
   it('keeps canonical f64 instance anchors through a centimetre model move at 5,000 km (#5049)', () => {
-    const translations = new ModelTranslations(), data = new ArrayBuffer(120), view = new DataView(data);
+    const translations = new ModelTranslations(), data = new ArrayBuffer(STRIDE), view = new DataView(data);
     writeRecord(view, [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [5_000_000, 0, 0]);
     const anchors = new Float64Array([5_000_000.015625, 0, 0]);
     const matrixTranslations = new Float32Array([5_000_000, 0, 0]);
-    translations.placeInstances(data, 7, 120, anchors, matrixTranslations);
+    translations.placeInstances(data, 7, STRIDE, anchors, matrixTranslations);
 
     translations.set(7, [0.01, 0, 0]);
-    translations.placeInstances(data, 7, 120, anchors, matrixTranslations);
+    translations.placeInstances(data, 7, STRIDE, anchors, matrixTranslations);
     assert.equal(anchors[0], 5_000_000.025625, 'f64 residual survives the model translation');
     assert.equal(matrixTranslations[0], view.getFloat32(48, true), 'materialization baseline follows the V1 matrix write');
 
     translations.set(7, [0, 0, 0]);
-    translations.placeInstances(data, 7, 120, anchors, matrixTranslations);
+    translations.placeInstances(data, 7, STRIDE, anchors, matrixTranslations);
     assert.equal(anchors[0], 5_000_000.015625, 'undo returns to the exact source anchor');
   });
 

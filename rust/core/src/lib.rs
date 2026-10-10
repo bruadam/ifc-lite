@@ -88,11 +88,12 @@ mod schema_registry_tests;
 
 pub use columnar_index::{ColumnLengthMismatch, ColumnarEntityIndex};
 pub use compatibility::{is_exporter_stratum_alias, EXPORTER_STRATUM_ALIASES};
-pub use decoder::{build_entity_index, EntityDecoder, EntityIndex};
+pub use decoder::{build_entity_index, EntityDecoder, EntityIndex, GridAxisIndex};
 pub use dense_index::DenseEntityIndex;
 pub use error::{Error, Result};
 pub use fast_parse::{
-    extract_coordinate_list_from_entity, extract_entity_refs_from_list, extract_entity_type_name,
+    extract_coordinate_list_from_entity, extract_coordinate_list_from_entity_f64,
+    extract_entity_refs_from_list, extract_entity_type_name,
     extract_face_indices_from_entity, extract_first_entity_ref, parse_coordinates_direct,
     parse_indices_direct, process_triangulated_faceset_direct, should_use_fast_path, FastMeshData,
 };
@@ -104,7 +105,7 @@ pub use georef::{GeoRefExtractor, GeoRefSource, GeoReference};
 pub use limits::{RtcVerdict, MAX_MAPPED_ITEM_DEPTH, MAX_PLACEMENT_DEPTH};
 pub use model_bounds::{scan_model_bounds, scan_placement_bounds, ModelBounds};
 pub use parser::{
-    entity_count, find_keyword, keyword_ends_with, keyword_eq, keyword_starts_with,
+    declared_schema_bounded, entity_count, find_keyword, keyword_ends_with, keyword_eq, keyword_starts_with,
     nth_attribute_is_present, oversized_id_report, parse_entity, report_malformed_records,
     report_oversized_ids, report_scan_diagnostics, set_report_sink, skip_step_comment,
     EntityScanner, StepListItems, Token,

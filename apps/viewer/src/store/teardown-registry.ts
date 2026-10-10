@@ -62,10 +62,12 @@ import { drawing2DTeardown } from './slices/drawing2DSlice.teardown.js';
 import { sheetTeardown } from './slices/sheetSlice.teardown.js';
 import { bcfTeardown } from './slices/bcfSlice.teardown.js';
 import { idsTeardown } from './slices/idsSlice.teardown.js';
+import { validationDraftTeardown } from './slices/validationDraftSlice.js';
 import { listTeardown } from './slices/listSlice.js';
 import { pinboardTeardown } from './slices/pinboardSlice.teardown.js';
 import { lensTeardown } from './slices/lensSlice.js';
 import { compareTeardown } from './slices/compareSlice.js';
+import { compareRunsTeardown } from './slices/compareRunsSlice.js';
 import { scriptTeardown } from './slices/scriptSlice.teardown.js';
 import { chatTeardown } from './slices/chatSlice.teardown.js';
 import { cesiumTeardown } from './slices/cesiumSlice.teardown.js';
@@ -73,14 +75,16 @@ import { scheduleTeardown } from './slices/scheduleSlice.teardown.js';
 import { playbackTeardown } from './slices/playbackSlice.js';
 import { searchTeardown } from './slices/searchSlice.teardown.js';
 import { annotationsTeardown } from './slices/annotationsSlice.teardown.js';
-import { addElementTeardown } from './slices/addElementSlice.teardown.js';
-import { splitToolTeardown } from './slices/splitToolSlice.js';
+import { authoringSessionTeardown } from './slices/authoringSessionSlice.js';
+import { authoringDefaultsTeardown } from './slices/authoringDefaultsSlice.js';
 import { modelPlacementTeardown } from './slices/modelPlacementSlice.js';
 import { pointCloudTeardown } from './slices/pointCloudSlice.js';
+import { scanDetectionTeardown } from './slices/scanDetectionSlice.js';
 import { zonesTeardown } from './slices/zonesSlice.js';
 import { layerStackTeardown } from './slices/layerStackSlice.teardown.js';
 import { modelTagsTeardown } from './slices/modelTagsSlice.teardown.js';
 import { historyTeardown } from './slices/historySlice.teardown.js';
+import { sceneStateTeardown } from './slices/sceneStateSlice.js';
 
 /**
  * Every slice teardown the viewer store knows about.
@@ -104,10 +108,12 @@ export const viewerTeardownRegistry: readonly AnySliceTeardown[] = createTeardow
   sheetTeardown,
   bcfTeardown,
   idsTeardown,
+  validationDraftTeardown,
   listTeardown,
   pinboardTeardown,
   lensTeardown,
   compareTeardown,
+  compareRunsTeardown,
   scriptTeardown,
   chatTeardown,
   cesiumTeardown,
@@ -115,9 +121,10 @@ export const viewerTeardownRegistry: readonly AnySliceTeardown[] = createTeardow
   playbackTeardown,
   searchTeardown,
   annotationsTeardown,
-  addElementTeardown,
-  splitToolTeardown,
+  authoringSessionTeardown,
+  authoringDefaultsTeardown,
   pointCloudTeardown,
+  scanDetectionTeardown,
   modelPlacementTeardown,
   appearanceReferenceTeardown,
   zonesTeardown,
@@ -127,6 +134,7 @@ export const viewerTeardownRegistry: readonly AnySliceTeardown[] = createTeardow
   chartTeardown,
   flowTeardown,
   documentTeardown,
+  sceneStateTeardown,
 ]);
 
 /**

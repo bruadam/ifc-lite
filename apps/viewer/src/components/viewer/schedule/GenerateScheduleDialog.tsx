@@ -15,7 +15,8 @@
  */
 
 import { useEffect, useMemo, useState, useCallback, type ReactNode } from 'react';
-import { CalendarPlus, Layers, Building2, Ruler, AlertTriangle, Loader2 } from 'lucide-react';
+import { CalendarPlus, Layers, Building2, Ruler, AlertTriangle } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 import {
   Dialog,
   DialogContent,
@@ -46,6 +47,7 @@ import { formatLocaleDate } from '@/i18n/intlFormat';
 import { HeightStrategyPanel } from './HeightStrategyPanel';
 import { GenerateAdvancedPanel } from './GenerateAdvancedPanel';
 import { ScheduleSummaryLine } from './ScheduleSummaryLine';
+import { useScheduleGeometryContext } from './useScheduleGeometryContext';
 
 interface GenerateScheduleDialogProps {
   open: boolean;
@@ -56,26 +58,23 @@ export function GenerateScheduleDialog({ open, onOpenChange }: GenerateScheduleD
   const { t, locale } = useTranslation();
   const { ifcDataStore, models, activeModelId } = useIfc();
   const commitGeneratedSchedule = useViewerStore(s => s.commitGeneratedSchedule);
+  const mutationViews = useViewerStore(s => s.mutationViews);
+  const mutationVersion = useViewerStore(s => s.mutationVersion);
   const setGanttPanelVisible = useViewerStore(s => s.setGanttPanelVisible);
   const setAnimationEnabled = useViewerStore(s => s.setAnimationEnabled);
 
   // Resolve the store to read from in federation-aware order. See
   // `resolveActiveDataStore` in GanttPanel for the shared rationale.
   const activeStore = resolveActiveDataStore(ifcDataStore, activeModelId, models);
+  const sourceModel = [...models.values()].find((model) => model.ifcDataStore === activeStore);
+  const mutationView = sourceModel ? mutationViews.get(sourceModel.id) : undefined;
 
   // Resolve the source-model's geometry context. The `IfcElement` strategy
   // needs `meshes` + `idOffset` to compute each element's true Z elevation;
   // the spatial strategies don't touch geometry.
-  const modelContext = useMemo(() => {
-    const sourceModelId = resolveScheduleSourceModelId(models, activeModelId);
-    if (!sourceModelId) return null;
-    const model = models.get(sourceModelId);
-    const meshes = model?.geometryResult?.meshes;
-    if (!meshes || meshes.length === 0) return null;
-    return { meshes, idOffset: model?.idOffset ?? 0 };
-  }, [models, activeModelId]);
+  const modelContext = useScheduleGeometryContext(models, activeModelId);
 
-  const hasSpatial = canGenerateScheduleFrom(activeStore);
+  const hasSpatial = canGenerateScheduleFrom(activeStore, null, mutationView);
   const hasGeometry = !!modelContext;
   const canGenerate = hasSpatial || hasGeometry;
 
@@ -116,8 +115,8 @@ export function GenerateScheduleDialog({ open, onOpenChange }: GenerateScheduleD
   const effectiveOptions = useMemo(() => ({ ...options, scheduleName: options.scheduleName.trim() || defaultScheduleName }), [options, defaultScheduleName]);
   const preview = useMemo(() => {
     if (!canGenerate) return null;
-    return generateScheduleFromSpatialHierarchy(activeStore, effectiveOptions, modelContext);
-  }, [activeStore, canGenerate, modelContext, effectiveOptions]);
+    return generateScheduleFromSpatialHierarchy(activeStore, effectiveOptions, modelContext, mutationView);
+  }, [activeStore, canGenerate, modelContext, effectiveOptions, mutationView, mutationVersion]);
 
   const canSubmit = !!preview && !preview.empty && preview.groupCount > 0 && !submitting;
   const handleChange = useCallback(<K extends keyof GenerateScheduleOptions>(
@@ -233,7 +232,7 @@ export function GenerateScheduleDialog({ open, onOpenChange }: GenerateScheduleD
                 />
               </div>
               {options.strategy !== 'IfcElement' && !hasSpatial && (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-2xs text-muted-foreground">
                   {t('schedule.generateDialog.spatialHierarchyMissing')}
                 </p>
               )}
@@ -353,7 +352,7 @@ export function GenerateScheduleDialog({ open, onOpenChange }: GenerateScheduleD
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>{t('schedule.generateDialog.cancel')}</Button>
           <Button onClick={handleGenerate} disabled={!canSubmit}>
-            {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CalendarPlus className="h-4 w-4 mr-2" />}
+            {submitting ? <Spinner size="md" className="mr-2" /> : <CalendarPlus className="h-4 w-4 mr-2" />}
             {t('schedule.generateDialog.title')}
           </Button>
         </DialogFooter>

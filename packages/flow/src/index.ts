@@ -45,6 +45,7 @@ export type {
   FlowNode,
   FlowEdge,
   FlowInput,
+  FlowFileSlot,
   FlowOutput,
   FlowDocument,
   DocumentProblem,
@@ -69,7 +70,10 @@ export { describeFlowIO, declaredInputKeys, resolveDeclaredParam, unknownInputKe
 export type { FlowIO, FlowInputInfo, FlowOutputInfo } from './introspect.js';
 export { nodeAvailability, checkAvailability } from './availability.js';
 export type { HostFeatures, AvailabilityStatus, NodeAvailability } from './availability.js';
+export { referencedSecrets, replaceSecretRefs } from './secret-refs.js';
 
-export { runFlow, topologicalOrder, MemoCache, FlowCycleError, DEFAULT_MAX_CROSS } from './scheduler.js';
+export { runFlow, MemoCache, DEFAULT_MAX_CROSS } from './scheduler.js';
+export { topologicalOrder, FlowCycleError } from './order.js';
 export { trackingKeyOf, ORPHAN_NODE_ID } from './orphans.js';
 export type { RunOptions, RunResult, RunLogEntry, NodeReport, NodeStatus, GraphOutputValue } from './scheduler.js';
+

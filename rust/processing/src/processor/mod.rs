@@ -34,9 +34,14 @@ mod id_filter;
 pub use id_filter::{
     process_geometry_filtered_with_quality, process_geometry_filtered_with_quality_and_ids,
 };
+mod baked_basis;
+pub use baked_basis::process_geometry_streaming_filtered_with_baked_basis;
+use baked_basis::PassScope;
 pub(crate) mod instancing;
 mod jobs;
 mod opening_filter;
+mod phase_marks;
+use phase_marks::{mark, Mark};
 mod properties;
 mod quick_metadata;
 mod schema_detection;
@@ -453,7 +458,7 @@ pub fn process_geometry_streaming_filtered_with_options(
         content,
         opening_filter,
         options,
-        None,
+        PassScope::default(),
         on_batch,
         on_color_update,
         on_quick_metadata_bootstrap,
@@ -464,12 +469,12 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
     content: &[u8],
     opening_filter: OpeningFilterMode,
     options: StreamingOptions,
-    entity_ids: Option<&HashSet<u32>>,
+    PassScope { entity_ids, baked_basis_out }: PassScope<'_>,
     mut on_batch: impl FnMut(&[MeshData], usize, usize),
     mut on_color_update: impl FnMut(&[(u32, [f32; 4])]),
     mut on_quick_metadata_bootstrap: impl FnMut(&QuickMetadataBootstrap),
 ) -> ProcessingResult {
-    let total_start = Clock::now();
+    let total_start = mark(Mark::PipelineStart, Clock::now());
     let parse_start = Clock::now();
     let entity_scan_start = Clock::now();
 
@@ -863,7 +868,7 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
     // downstream phases resolve refs against it, and expose it (as before) to the
     // geometry workers further down.
     let entity_index = match provided_index {
-        Some(idx) => ProcessingIndex::Hash(idx),
+        Some(idx) => ProcessingIndex::hash(idx),
         None => inline_index.finish(),
     };
     entity_index.install(&mut decoder);
@@ -891,13 +896,13 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
         ..
     } = resolved;
 
-    let entity_scan_time = entity_scan_start.elapsed();
+    let entity_scan_time = mark(Mark::EntityScanEnd, entity_scan_start.elapsed());
     scan_span.record("total_entities", total_entities as u64);
     scan_span.record("geometry_entities", entity_jobs.len() as u64);
     scan_span.record("phase_ms", entity_scan_time.as_millis() as u64);
     drop(scan_guard);
 
-    let lookup_start = Clock::now();
+    let lookup_start = mark(Mark::LookupStart, Clock::now());
     let lookup_span = tracing::debug_span!("lookup", phase_ms = tracing::field::Empty).entered();
     if options.include_properties {
         resolve_space_zone_properties_lazy(&mut entity_jobs, &mut decoder, &rel_defines_spans);
@@ -907,7 +912,7 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
             geometry_priority_score(&right.ifc_type).cmp(&geometry_priority_score(&left.ifc_type))
         });
     }
-    let lookup_time = lookup_start.elapsed();
+    let lookup_time = mark(Mark::LookupEnd, lookup_start.elapsed());
     lookup_span.record("phase_ms", lookup_time.as_millis() as u64);
     drop(lookup_span);
 
@@ -1040,7 +1045,7 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
     }
 
     // Preprocess complex geometry
-    let preprocess_start = Clock::now();
+    let preprocess_start = mark(Mark::PreprocessStart, Clock::now());
     let preprocess_span =
         tracing::debug_span!("preprocess", phase_ms = tracing::field::Empty).entered();
     // Resolve BOTH unit scales once via the shared resolver (the scan recorded
@@ -1098,11 +1103,12 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
     let coord_space = frame.coordinate_space();
     let has_rtc_offset = frame.needs_shift();
     router.set_rtc_offset(frame.rtc_offset());
-    let preprocess_time = preprocess_start.elapsed();
+    site_local::publish_baked_basis(baked_basis_out, frame, site_transform.as_deref());
+    let preprocess_time = mark(Mark::PreprocessEnd, preprocess_start.elapsed());
     preprocess_span.record("phase_ms", preprocess_time.as_millis() as u64);
     drop(preprocess_span);
 
-    let parse_time = parse_start.elapsed();
+    let parse_time = mark(Mark::ParseEnd, parse_start.elapsed());
     tracing::info!(
         entity_scan_time_ms = entity_scan_time.as_millis(),
         lookup_time_ms = lookup_time.as_millis(),
@@ -1112,7 +1118,7 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
     );
 
     // PARALLEL GEOMETRY PROCESSING
-    let geometry_start = Clock::now();
+    let geometry_start = mark(Mark::GeometryStart, Clock::now());
     let entity_index_arc = entity_index; // Immutable and shared across jobs.
     let unit_scale = router.unit_scale();
     let rtc_offset = router.rtc_offset();
@@ -1496,7 +1502,7 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
         current_chunk_size = throughput_chunk_size;
     }
 
-    let geometry_time = geometry_start.elapsed();
+    let geometry_time = mark(Mark::GeometryEnd, geometry_start.elapsed());
     // Surface the aggregated CSG diagnostics — same per-reason breakdown the
     // browser console shows on the wasm path.
     let csg_failures = diag_collectors
@@ -1572,7 +1578,7 @@ fn process_geometry_streaming_filtered_with_options_and_ids(
         [rtc_offset.0, rtc_offset.1, rtc_offset.2],
     );
 
-    let total_time = total_start.elapsed();
+    let total_time = mark(Mark::TotalEnd, total_start.elapsed());
     pipeline_span.record("element_count", total_jobs as u64);
     pipeline_span.record("total_ms", total_time.as_millis() as u64);
 

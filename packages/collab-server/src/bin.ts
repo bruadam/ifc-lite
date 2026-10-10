@@ -66,6 +66,10 @@ async function main() {
         secret: tokenSecret,
         dir: dataDir,
         maxClaimedRooms: Number(process.env.COLLAB_MAX_CLAIMED_ROOMS ?? 100_000),
+        // Joins below go through `accessControl.serverOptions.authenticate`
+        // unchanged, which is what confirms a room, so an unused claim can
+        // be released or expire (#6581).
+        claimsPendingUntilJoin: true,
         // Only honor X-Forwarded-For behind a trusted reverse proxy; a directly
         // reachable server that trusts the header lets every mint request pick
         // a fresh spoofed IP (its own rate-limit bucket). Default OFF.
@@ -75,6 +79,8 @@ async function main() {
       })
     : null;
   const blobStorage = new FsBlobStorage(dataDir);
+  // Fail at startup, not on the first blob request, if the blobs dir can't be made.
+  await blobStorage.ready;
   const blobGcConfig = resolveBlobGcConfig();
   const handle = await startCollabServer({
     port,

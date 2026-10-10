@@ -24,8 +24,9 @@
 
 import type { Mat4 } from './types.js';
 import { shadowShaderSource } from './shaders/shadow.wgsl.js';
-import { packRteDrawableDelta, packRteOrigin } from './relative-to-eye.js';
-import { uploadInstancedRteDeltas } from './instanced-rte.js';
+import { packRteOrigin, tryPackRteDrawableDelta } from './relative-to-eye.js';
+import { drawInstanceRuns, uploadInstancedRteDeltas, type InstanceRun } from './instanced-rte.js';
+import { INSTANCED_RTE_DELTA_SLOT, INSTANCED_VERTEX_BUFFERS } from './instanced-vertex-layout.js';
 import { packRteClipBox, rtePlaneDistance } from './rte-clip-space.js';
 import type {
   ShadowClip,
@@ -142,7 +143,7 @@ export class ShadowPass {
       flat: make('vs_shadow_flat', [this.posBuffer(28)]),
       textured: make('vs_shadow_textured', [this.posBuffer(36)]),
       quantized: make('vs_shadow_quantized', [this.quantBuffer()]),
-      instanced: make('vs_shadow_instanced', [this.posBuffer(28), this.instanceBuffer()]),
+      instanced: make('vs_shadow_instanced', INSTANCED_VERTEX_BUFFERS),
     };
   }
 
@@ -191,13 +192,23 @@ export class ShadowPass {
     if (clipping && !this.clipPipelines) this.clipPipelines = this.createPipelineSet(true);
     const pipelines = clipping && this.clipPipelines ? this.clipPipelines : this.pipelines;
 
-    for (const draw of draws) {
-      if (draw.kind !== 'instanced' || !draw.instanceBuffer || !draw.instanceCount || !draw.canonicalAnchors) continue;
-      uploadInstancedRteDeltas(this.device, [{
-        instanceBuffer: draw.instanceBuffer,
+    // Occluders outside the camera-relative envelope cannot be rasterised in
+    // this RTE frame (#6128): a flat draw is skipped whole (`drawable`), an
+    // instanced draw is limited to its in-envelope runs.
+    // An instanced draw without its anchors or delta stream has no valid
+    // camera-relative lanes to read, so it is skipped rather than drawn stale.
+    // The camera must be the colour pass's: the streams are shared by every
+    // pass in this submission (see `instanced-rte.ts`).
+    const drawable = new Array<boolean>(draws.length).fill(true);
+    const instanceRuns = new Array<readonly InstanceRun[]>(draws.length);
+    for (let i = 0; i < draws.length; i++) {
+      const draw = draws[i];
+      if (draw.kind !== 'instanced' || !draw.instanceBuffer || !draw.instanceCount || !draw.canonicalAnchors || !draw.rteDeltas) continue;
+      instanceRuns[i] = uploadInstancedRteDeltas(this.device, [{
         instanceCount: draw.instanceCount,
         canonicalAnchors: draw.canonicalAnchors,
-      }], rte?.cameraWorld ?? [0, 0, 0]);
+        rteDeltas: draw.rteDeltas,
+      }], rte?.cameraWorld ?? [0, 0, 0])[0]!;
     }
 
     // Grow the per-draw ring if this frame needs more slots than it holds.
@@ -236,7 +247,7 @@ export class ShadowPass {
       if (d.kind !== 'instanced') {
         const origin = d.origin ?? [d.model?.[12] ?? 0, d.model?.[13] ?? 0, d.model?.[14] ?? 0] as const;
         const camera = rte?.cameraWorld ?? [0, 0, 0] as const;
-        packRteDrawableDelta(origin, camera, this.drawScratch, base + 20);
+        drawable[i] = tryPackRteDrawableDelta(origin, camera, this.drawScratch, base + 20);
       }
     }
     if (draws.length > 0) {
@@ -262,14 +273,17 @@ export class ShadowPass {
 
     for (let i = 0; i < draws.length; i++) {
       const d = draws[i];
+      if (!drawable[i]) continue;
       pass.setPipeline(pipelines[d.kind]);
       pass.setBindGroup(0, this.drawBindGroup, [i * this.drawStride]);
       pass.setVertexBuffer(0, d.vertexBuffer);
       pass.setIndexBuffer(d.indexBuffer, 'uint32');
       if (d.kind === 'instanced') {
-        if (!d.instanceBuffer || !d.instanceCount) continue;
+        const runs = instanceRuns[i];
+        if (!runs || !d.instanceBuffer || !d.rteDeltas) continue;
         pass.setVertexBuffer(1, d.instanceBuffer);
-        pass.drawIndexed(d.indexCount, d.instanceCount);
+        pass.setVertexBuffer(INSTANCED_RTE_DELTA_SLOT, d.rteDeltas.buffer);
+        drawInstanceRuns(pass, d.indexCount, runs);
       } else {
         pass.drawIndexed(d.indexCount);
       }
@@ -354,28 +368,6 @@ export class ShadowPass {
     return {
       arrayStride: 12,
       attributes: [{ shaderLocation: 0, offset: 0, format: 'uint16x4' }],
-    };
-  }
-
-  private instanceBuffer(): GPUVertexBufferLayout {
-    return {
-      // V2 records retain the V1 matrix/flags and append shared CPU-packed RTE
-      // deltas. Depth consumes the same record as colour and picking so a
-      // national-grid occurrence cannot cast from its rounded V1 pose.
-      arrayStride: 120,
-      stepMode: 'instance',
-      attributes: [
-        { shaderLocation: 3, offset: 0, format: 'float32x4' },
-        { shaderLocation: 4, offset: 16, format: 'float32x4' },
-        { shaderLocation: 5, offset: 32, format: 'float32x4' },
-        { shaderLocation: 6, offset: 48, format: 'float32x4' },
-        // Per-occurrence flags (bit 1 = hidden), so a hidden/isolated instance
-        // stops casting, matching the colour pass's discard. Offset 84 within the
-        // V1 prefix (mat4 + entityId + rgba + flags).
-        { shaderLocation: 9, offset: 84, format: 'uint32' },
-        { shaderLocation: 10, offset: 88, format: 'float32x4' },
-        { shaderLocation: 11, offset: 104, format: 'float32x4' },
-      ],
     };
   }
 

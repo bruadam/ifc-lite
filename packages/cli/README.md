@@ -100,3 +100,45 @@ Determinism: the same model plus the same op sequence yields byte-identical rewa
 ## License
 
 MPL-2.0
+
+Semantic datasets use the same shared profile and provider engine as the viewer. Run `ifc-lite semantic --help` for `validate`, `query`, `assets`, and authenticated HTTPS `serve`; see the [headless semantic guide](https://ifclite.dev/docs/guide/semantic-headless/).
+
+### Model revisions and history
+
+```bash
+ifc-lite match Structure_R03.ifc Structure_R02.ifc --json
+ifc-lite history build v1.ifc v2.ifc v3.ifc --include-artifacts --out model.ifchistory.zip
+ifc-lite history inspect model.ifchistory.zip --json
+ifc-lite history stamp model.ifchistory.zip --out stamped.ifc
+ifc-lite history changes model.ifchistory.zip --since 2 --out changes.ifc --bcf deleted.bcf --csv deleted.csv
+```
+
+`match` reports evidence without accepting identity. `--geometry` adds geometry
+fingerprints (requires the WASM runtime); `--no-content`, `--exclude-types T,...`
+and repeated `--threshold name=value` tune matching. History build uses file
+order as the mainline and SHA-256 artifact digests as commit ids. `--by-content`
+accepts unambiguous content matches; repeated `--identity-in` and `--lineage-in`
+accept reviewed sidecars only for the adjacent delivery pair their digests pin.
+`--since` accepts a commit id or a 1-based commit index. Non-adjacent comparisons
+need `--include-artifacts`. `--pset` changes the custom property-set name.
+`--omit-authors` omits commit author fields and the generated LastChangedBy property.
+
+Remote commit services use the same provider as the viewer:
+
+```bash
+export IFC_LITE_COMMIT_URL=https://commits.example.com/api/v1
+# Set IFC_LITE_COMMIT_TOKEN securely in your environment.
+ifc-lite commits projects
+ifc-lite commits models --project PROJECT
+ifc-lite commits list --project PROJECT --model MODEL
+ifc-lite commits download --project PROJECT --model MODEL --commit COMMIT --out model.ifc
+ifc-lite commits upload revision.ifc --project PROJECT --model MODEL --parent COMMIT --idempotency-key UUID
+```
+
+`commits` prints JSON; listing commands return one page with an opaque cursor.
+Continue with `--cursor` and optionally `--limit`. `show`, `diff --base`, and
+`element --key` inspect commit metadata and changes. `create-model --name` creates
+an empty model; its first upload requires `--parent none`. Writes require the
+source's write capability. Uploads require the exact evaluated parent and a
+caller-supplied idempotency key so retries cannot silently fork or duplicate a
+commit. Credentials are never saved by the CLI.

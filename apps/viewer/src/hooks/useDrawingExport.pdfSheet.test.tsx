@@ -59,19 +59,12 @@ import {
   type DrawingSheet,
 } from '@ifc-lite/drawing-2d';
 import useDrawingExport from './useDrawingExport.js';
+import type { DxfUnderlayRenderData } from './useDxfUnderlay';
 import { sheetTransformCacheKeyOf, type CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key.js';
 
 /** The preview's placement-cache ref, as this file passes it in. */
 type CacheRef = { current: CachedSheetTransform | null };
 
-// happy-dom has no `window.alert` — the production error path calls it on
-// failure, which would otherwise throw `ReferenceError: alert is not
-// defined` inside the fire-and-forget async IIFE and hang this test's
-// `addImageCalled` promise forever with no visible cause.
-(globalThis as unknown as { alert: (msg?: string) => void }).alert = (msg) => {
-  // eslint-disable-next-line no-console -- test-only diagnostic for a swallowed export error
-  console.error('[handleExportPDF alert]', msg);
-};
 process.on('unhandledRejection', (reason) => {
   // eslint-disable-next-line no-console -- test-only diagnostic
   console.error('[unhandledRejection]', reason);
@@ -206,6 +199,7 @@ function buildPlanDrawing(): Drawing2D {
 }
 
 interface HarnessProps {
+  dxfUnderlays?: readonly DxfUnderlayRenderData[];
   activeSheet: DrawingSheet;
   drawing: Drawing2D;
   axis: 'down' | 'front' | 'side';
@@ -214,7 +208,7 @@ interface HarnessProps {
   onReady: (fn: (scaleFactor?: number) => void) => void;
 }
 
-function Harness({ activeSheet, drawing, axis, isPinned, cachedSheetTransformRef, onReady }: HarnessProps): null {
+function Harness({ activeSheet, drawing, axis, isPinned, cachedSheetTransformRef, onReady, dxfUnderlays = [] }: HarnessProps): null {
   const { handleExportPDF } = useDrawingExport({
     drawing,
     displayOptions: {
@@ -235,7 +229,7 @@ function Harness({ activeSheet, drawing, axis, isPinned, cachedSheetTransformRef
     cloudAnnotations2D: [],
     sheetEnabled: true,
     activeSheet,
-    dxfUnderlays: [],
+    dxfUnderlays,
     ifcDataStore: null,
     coordinateInfo: undefined,
     scanSection: { points: [] },
@@ -304,6 +298,7 @@ function stubRasterization(): {
 }
 
 interface ExportOptions {
+  dxfUnderlays?: readonly DxfUnderlayRenderData[];
   /** Section axis the hook is mounted with. Defaults to 'down' — the axis
    *  every pre-existing case in this file used. */
   axis?: 'down' | 'front' | 'side';
@@ -339,15 +334,14 @@ async function exportPdfForSheet(
   // freshly-constructed instance picks up). Patching `jsPDF.prototype`
   // silently patches nothing a real instance ever calls.
   const { jsPDF } = await import('jspdf');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsPDF's own `.d.ts` doesn't declare `API` as holding `addImage`, but it does at runtime (verified above); this is a test-only spy, not production code.
-  const jsPDFApi = jsPDF.API as any;
+  // jsPDF's static API type omits plugins copied onto instances at runtime.
+  const jsPDFApi = jsPDF.API as unknown as { addImage: (...args: unknown[]) => InstanceType<typeof jsPDF> };
   const originalAddImage = jsPDFApi.addImage;
   let resolveAddImage!: (args: unknown[]) => void;
   const addImageCalled = new Promise<unknown[]>((resolve) => {
     resolveAddImage = resolve;
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capturing jsPDF's own variadic addImage overloads
-  jsPDFApi.addImage = function (...args: any[]) {
+  jsPDFApi.addImage = function (...args: unknown[]) {
     resolveAddImage(args);
     return originalAddImage.apply(this, args);
   };
@@ -358,6 +352,7 @@ async function exportPdfForSheet(
       root.render(
         <Harness
           activeSheet={sheet}
+          dxfUnderlays={options.dxfUnderlays}
           drawing={drawing}
           axis={axis}
           isPinned={isPinned}
@@ -760,5 +755,18 @@ describe('generateSheetSVG — title block "Scale" field vs. a fit-clamped drawi
     const sheet = withPopulatedScaleField(buildSheet('A3_LANDSCAPE', 50, '1:50'));
     const { svg } = await exportPdfForSheet(sheet); // buildDrawing()'s default 4m span fits comfortably
     assert.equal(parseTitleBlockScaleFieldText(svg), '1:50');
+  });
+});
+
+describe('sheet CAD reference lineweights (#6615)', () => {
+  it('preserves the declared paper millimetres instead of thinning them with the IFC drafting factor', async () => {
+    const dxfUnderlays: DxfUnderlayRenderData[] = [{ id: 'cad', opacity: 1, fills: [], texts: [], lines: [{
+      points: [{ x: 0, y: 0 }, { x: 4, y: 0 }], color: '#000000', widthMm: 0.35, dashed: false, closed: false,
+    }] }];
+    const { svg } = await exportPdfForSheet(buildSheet('A3_LANDSCAPE', 100, '1:100'), buildDrawing(), { dxfUnderlays });
+    const xml = new DOMParser().parseFromString(svg, 'image/svg+xml');
+    const line = xml.querySelector('#dxf-underlays polyline');
+    assert.ok(line, 'the real sheet exporter includes the CAD reference');
+    assert.equal(Number(line.getAttribute('stroke-width')), 0.35, 'sheet SVG coordinates and lineweight are both paper millimetres');
   });
 });

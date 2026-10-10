@@ -6,6 +6,7 @@ import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { scrubEvent } from './analytics-scrub.js';
 import { beforeSend, ensureCapturableStack } from './analytics.js';
+import * as analytics from './analytics.js';
 import { __setChunkReloadPendingForTests } from './chunk-version-skew.js';
 
 // `scrubEvent` is the single `before_send` gate every captured event passes
@@ -21,6 +22,121 @@ const exceptionEvent = (value: string, extraProps: Record<string, unknown> = {})
     $exception_list: [{ type: 'Error', value }],
     ...extraProps,
   },
+});
+
+it('stored analytics opt-out suppresses explicit and automatic captures (#5866)', () => {
+  // These additions are checked at runtime so the production-revert oracle
+  // reaches assertions when it removes them from the existing module.
+  const added = analytics as typeof analytics & {
+    setAnalyticsOptOut?: (value: boolean) => void;
+    consentAwareAnalyticsClient?: (target: typeof analytics.posthog) => typeof analytics.posthog;
+  };
+  assert.ok(added.setAnalyticsOptOut);
+  assert.ok(added.consentAwareAnalyticsClient);
+  let explicitEvents = 0;
+  let exceptions = 0;
+  const guarded = added.consentAwareAnalyticsClient({
+    capture: () => { explicitEvents++; return undefined; },
+    captureException: () => { exceptions++; return undefined; },
+  });
+  try {
+    added.setAnalyticsOptOut(true);
+    guarded.capture('command_executed', { command_id: 'test' });
+    guarded.captureException(new Error('test'));
+    assert.equal(beforeSend({ event: 'command_executed', properties: { command_id: 'test' } }), null);
+    assert.equal(explicitEvents, 0);
+    assert.equal(exceptions, 0);
+
+    added.setAnalyticsOptOut(false);
+    guarded.capture('command_executed', { command_id: 'test' });
+    assert.equal(explicitEvents, 1);
+  } finally {
+    added.setAnalyticsOptOut(false);
+  }
+});
+
+it('records consenting session starts across opt-in and idle session rotation (#5614)', () => {
+  // Keep the import valid under a production-hunk revert so the oracle reaches
+  // the missing-recorder assertion instead of failing at module load.
+  const added = analytics as typeof analytics & {
+    createViewerSessionStartRecorder?: (
+      capture: () => void,
+      getSessionId: () => string,
+      isOptedOut: () => boolean,
+    ) => { onSessionId: (sessionId: string) => void; startNow: () => void };
+  };
+  assert.ok(added.createViewerSessionStartRecorder);
+  let optedOut = true;
+  let sessionId = '';
+  let nextSessionId: string | null = null;
+  const captures: string[] = [];
+  const record = added.createViewerSessionStartRecorder(
+    () => {
+      if (nextSessionId) {
+        sessionId = nextSessionId;
+        nextSessionId = null;
+        record.onSessionId(sessionId); // SDK callback during capture().
+      }
+      captures.push(`viewer_session_started:${sessionId}`);
+    },
+    () => sessionId,
+    () => optedOut,
+  );
+
+  record.startNow();
+  assert.deepEqual(captures, [], 'an opted-out visit has no denominator event');
+  optedOut = false;
+  nextSessionId = 'session-a';
+  record.startNow(); // A fresh no-interaction visit must create its SDK session.
+  record.onSessionId('session-a'); // Window-ID callback must not duplicate it.
+  sessionId = 'session-b';
+  record.onSessionId('session-b'); // An idle tab entered a new SDK session.
+  optedOut = true;
+  record.onSessionId('session-c');
+  optedOut = false;
+  nextSessionId = 'session-c';
+  record.startNow(); // Opt-in capture rotates the SDK session before sending.
+  record.onSessionId('session-c');
+  assert.deepEqual(captures, [
+    'viewer_session_started:session-a',
+    'viewer_session_started:session-b',
+    'viewer_session_started:session-c',
+  ]);
+
+  const scrubbed = beforeSend({
+    event: 'viewer_session_started',
+    properties: { $session_id: 'session-c', $current_url: 'https://ifclite.com/?model=secret' },
+  });
+  assert.equal(scrubbed?.properties?.$session_id, 'session-c');
+  assert.equal(scrubbed?.properties?.$current_url, 'https://ifclite.com/');
+});
+
+it('does not let session telemetry failure interrupt a viewer event (#5614)', () => {
+  const added = analytics as typeof analytics & {
+    createViewerSessionStartRecorder?: (
+      capture: () => void,
+      getSessionId: () => string,
+      isOptedOut: () => boolean,
+    ) => { onSessionId: (sessionId: string) => void; startNow: () => void };
+  };
+  assert.ok(added.createViewerSessionStartRecorder);
+  const warnings: unknown[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...messages: unknown[]) => { warnings.push(messages[0]); };
+  try {
+    let attempts = 0;
+    const record = added.createViewerSessionStartRecorder(
+      () => { attempts++; if (attempts === 1) throw new Error('network unavailable'); },
+      () => 'session-a',
+      () => false,
+    );
+    assert.doesNotThrow(() => record.onSessionId('session-a'));
+    record.onSessionId('session-a'); // Failed starts remain retryable.
+    assert.equal(attempts, 2);
+    assert.equal(warnings.length, 1);
+  } finally {
+    console.warn = originalWarn;
+  }
 });
 
 describe('scrubEvent — error_kind tagging', () => {
@@ -76,6 +192,21 @@ describe('scrubEvent — noise filter + PII guard (regression)', () => {
     assert.equal(out, null);
   });
 
+  it('keeps ifc_model_loaded\'s closed load_path vocabulary, which the `path` word rule used to delete (#6961)', () => {
+    // Field verdicts split by load path; before #6961 the property never
+    // reached PostHog at all, because `load_path` matches the `path` word.
+    for (const loadPath of ['wasm', 'cache', 'server', 'point-cloud', 'landxml']) {
+      const out = scrubEvent({ event: 'ifc_model_loaded', properties: { load_path: loadPath } });
+      assert.equal(out?.properties?.load_path, loadPath);
+    }
+    // Anything outside the vocabulary is still a path-shaped key and goes.
+    const leaked = scrubEvent({ event: 'ifc_model_loaded', properties: { load_path: '/Users/me/Tower.ifc', mesh_count: 3 } });
+    assert.ok(leaked?.properties, 'the event itself is kept');
+    const kept: Record<string, unknown> = leaked.properties;
+    assert.ok(!('load_path' in kept));
+    assert.equal(kept.mesh_count, 3);
+  });
+
   it('strips a confidential file name and path from event properties', () => {
     const out = scrubEvent({
       event: 'custom',
@@ -86,6 +217,26 @@ describe('scrubEvent — noise filter + PII guard (regression)', () => {
     assert.equal(out?.properties?.file_name, undefined);
     assert.equal(out?.properties?.detail, '[redacted]');
     assert.equal(out?.properties?.count, 3);
+  });
+
+  it('keeps `file:*` command ids but still redacts file: and blob: URLs', () => {
+    const out = scrubEvent({
+      event: 'command_executed',
+      properties: {
+        command_id: 'file:open',
+        recent: 'file:recent',
+        local: 'file:///srv/share/plans',
+        local_short: 'file:/srv/share/plans',
+        drive: 'file:c:/projects/plans.rvt',
+        blob: 'blob:https://www.ifclite.com/0b6e9a8c-5d1f-4c3e-9a1b-2f4d6e8a0c1e',
+      },
+    });
+    assert.equal(out?.properties?.command_id, 'file:open');
+    assert.equal(out?.properties?.recent, 'file:recent');
+    assert.equal(out?.properties?.local, '[redacted]');
+    assert.equal(out?.properties?.local_short, '[redacted]');
+    assert.equal(out?.properties?.drive, '[redacted]');
+    assert.equal(out?.properties?.blob, '[redacted]');
   });
 
   it('strips query + hash from URL auto-properties instead of deleting them', () => {

@@ -538,7 +538,7 @@ its input vectors.
 ## Spatial Hierarchy
 
 ```typescript
-import { IfcTypeEnum } from '@ifc-lite/data';
+import { IfcTypeEnum, type SpatialNode } from '@ifc-lite/data';
 
 // spatialHierarchy is optional on IfcDataStore; guard before use
 const hierarchy = store.spatialHierarchy;
@@ -547,20 +547,25 @@ if (!hierarchy) throw new Error('No spatial hierarchy in this model');
 // Project structure
 console.log(`Project: ${hierarchy.project.name}`);
 
+// Storeys are NOT direct children of the project: the tree is
+// Project -> Site -> Building -> Storey, so walk it rather than reading
+// `project.children` directly.
+function* storeysOf(node: SpatialNode): Generator<SpatialNode> {
+  if (node.type === IfcTypeEnum.IfcBuildingStorey) yield node;
+  for (const child of node.children ?? []) yield* storeysOf(child);
+}
+
 // Navigate storeys (SpatialNode.type is a numeric IfcTypeEnum)
-for (const child of hierarchy.project.children) {
-  if (child.type === IfcTypeEnum.IfcBuildingStorey) {
-    const storey = child;
-    console.log(`Storey: ${storey.name}`);
+for (const storey of storeysOf(hierarchy.project)) {
+  console.log(`Storey: ${storey.name}`);
 
-    // Get elements on this storey (byStorey is keyed by the storey express id)
-    const elements = hierarchy.byStorey.get(storey.expressId) ?? [];
-    console.log(`  Elements: ${elements.length}`);
+  // Get elements on this storey (byStorey is keyed by the storey express id)
+  const elements = hierarchy.byStorey.get(storey.expressId) ?? [];
+  console.log(`  Elements: ${elements.length}`);
 
-    // Get storey elevation
-    const elevation = hierarchy.storeyElevations.get(storey.expressId);
-    console.log(`  Elevation: ${elevation}m`);
-  }
+  // Get storey elevation
+  const elevation = hierarchy.storeyElevations.get(storey.expressId);
+  console.log(`  Elevation: ${elevation}m`);
 }
 
 // Find storey for an element
@@ -761,3 +766,23 @@ The numeric arrays are borrowed and must not be mutated. They remain valid until
 Parsed, worker-hydrated and server-loaded spatial hierarchies use the shared
 `spatialLookups` helper from `@ifc-lite/data`. `getPath` accepts both a spatial
 node and a contained object; containing-space queries follow live membership.
+
+Stores reconstructed without STEP resource rows can supply immutable
+`IfcDataStore.georeferencing` (`GeoreferenceInfo` or `null`) alongside
+`lengthUnitScale`. `extractGeoreferencingOnDemand` uses this pre-extracted
+fact before scanning STEP bytes. An absent field retains ordinary source
+extraction; `null` explicitly records that no georeference was supplied. The
+worker transport preserves these fields when reconstructing a store.
+
+`computeTransformMatrix(MapConversion)` derives the canonical 4×4 matrix
+from the current conversion, including its optional axis scale factors.
+
+The classification readers accept an optional native mutation view: `extractClassificationsOnDemand(store, entityId, mutationView)` and `extractClassificationSystemsOnDemand(store, mutationView)`. Definitions, references and association/type memberships then use the effective IFC records, with the same named/positional attribute precedence as export. Model-local caches refresh at the overlay revision. Source-empty stores retain unresolved markers for source attributes they cannot reconstruct; complete authored records remain readable. Source association endpoint edits require the original source bytes: forwarded immutable memberships cannot reconstruct those live edits, so callers must refuse population claims for that case. An unresolved classification chain does not establish that an explicitly named system is absent.
+
+## Material occurrence precedence
+
+`extractAllMaterialsOnDemand(store, entityId, view)` returns every occurrence assignment, falling back to the entity's type only when the occurrence has none. The optional native mutation view applies current relationship retargeting, deletions, aliases, material edits and newly authored assignment shapes through the same effective readers used for STEP export.
+
+`extractMaterialPropertiesOnDemand(store, entityId, view, revision)` uses the same current assignments for generic material property groups. Named edits apply before positional edits, matching exported records. An unset layer `IsVentilated` remains undefined rather than becoming an explicit false value.
+
+`materialAssignmentsAvailable(store, entityId, view)` reports whether the supplied graph and current edits can prove the complete selected material membership. Source-empty transport without membership data, or with relevant edits to unavailable source relationship records, yields `false`; retained source markers and authored records do not establish a complete count. The Assistant reports null totals and unverified source markers in those cases.

@@ -15,7 +15,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ToolContext } from '../context.js';
 import { DEFAULT_CONFIG, InMemoryModelRegistry, NOOP_PROGRESS, SILENT_LOGGER } from '../context.js';
 import { fullScope } from '../auth/scope.js';
@@ -28,9 +28,8 @@ const REPO_ROOT = resolve(here, '../../../../');
 const SAMPLE_IFC = resolve(REPO_ROOT, 'apps/viewer/public/samples/building-architecture.ifc');
 // The same shipped example the CLI's `flow.test.ts` runs: a write-capable
 // graph (`model.setProperty`, gated on the exact pset) with no element
-// creation, so it runs fine against `HeadlessLikeBackend`'s store adapter
-// (which does not yet implement `addColumn`/`addWall`/etc. — see flow.ts's
-// module doc).
+// creation. Public creation routes and native Undo are independently exercised
+// in flow-creation-native.test.ts (#6232).
 const AUDIT_FLOW = resolve(REPO_ROOT, 'apps/viewer/src/lib/flow/examples/05-fire-rating-audit.flow.json');
 
 const registry = buildDefaultToolRegistry();
@@ -63,6 +62,32 @@ describe('#5167 describe_flow / run_flow', () => {
   it('registers both tools in default discovery', () => {
     expect(describeFlow, 'describe_flow must be registered').toBeDefined();
     expect(runFlow, 'run_flow must be registered').toBeDefined();
+  });
+
+  it('describes missing session services and refuses execution before model resolution (#6612)', async () => {
+    if (!describeFlow || !runFlow) throw new Error('flow tools not registered');
+    const ctx: ToolContext = { registry: new InMemoryModelRegistry(), scope: fullScope(), progress: NOOP_PROGRESS,
+      log: SILENT_LOGGER, signal: new AbortController().signal, config: DEFAULT_CONFIG };
+    const flow = { flowVersion: 2, id: 'session', name: 'Session', capabilities: ['model.create'],
+      inputs: [], outputs: [], nodes: [{ id: 'load', type: 'session.loadModels' }], edges: [] };
+    const description = structured(await describeFlow.handler({ flow }, ctx));
+    expect(description.ok).toBe(false);
+    expect(description.availability).toEqual(expect.arrayContaining([expect.objectContaining({ nodeId: 'load', status: 'unavailable' })]));
+    await expect(runFlow.handler({ flow }, ctx)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION', message: expect.stringContaining('sessionModels') });
+    expect(ctx.registry.list()).toHaveLength(0);
+  });
+
+  it('reports a missing AI model service before model resolution (#6923)', async () => {
+    if (!describeFlow || !runFlow) throw new Error('flow tools not registered');
+    const ctx: ToolContext = { registry: new InMemoryModelRegistry(), scope: fullScope(), progress: NOOP_PROGRESS,
+      log: SILENT_LOGGER, signal: new AbortController().signal, config: DEFAULT_CONFIG };
+    const flow = { flowVersion: 2, id: 'ai', name: 'AI', capabilities: ['model.read', 'network.ai'], inputs: [], outputs: [],
+      nodes: [{ id: 'walls', type: 'model.select' }, { id: 'table', type: 'table.fromEntities' }, { id: 'sum', type: 'ai.summarize' }],
+      edges: [{ from: ['walls', 'entities'], to: ['table', 'entities'] }, { from: ['table', 'table'], to: ['sum', 'table'] }] };
+    const description = structured(await describeFlow.handler({ flow }, ctx));
+    expect(description.availability).toEqual(expect.arrayContaining([expect.objectContaining({ nodeId: 'sum', status: 'unavailable' })]));
+    await expect(runFlow.handler({ flow }, ctx)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION', message: expect.stringContaining('backend feature "ai"') });
+    expect(ctx.registry.list()).toHaveLength(0);
   });
 
   it('describe_flow returns the declared inputs and outputs with types, from an inline document', async () => {
@@ -132,7 +157,9 @@ describe('#5167 describe_flow / run_flow', () => {
     const summary = structured(result) as { ok: boolean; outputs: Array<{ key: string; data: unknown }> };
     expect(summary.ok).toBe(true);
     const table = summary.outputs.find((o) => o.key === 'table.table');
-    const rows = (table?.data as { rows: Array<Record<string, unknown>> }).rows;
+    expect(table).toBeDefined();
+    if (!table) throw new Error('run_flow did not return its declared table output');
+    const rows = (table.data as { rows: Array<Record<string, unknown>> }).rows;
     // The rows the run just wrote (walls that had no FireRating) now carry
     // the overridden value, never the graph's own default ('REI60').
     expect(rows.some((r) => r['Pset_WallCommon.FireRating'] === 'REI90')).toBe(true);
@@ -266,5 +293,76 @@ describe('run_flow — table.joinByKey over MCP (#5167)', () => {
     // "some row matched".
     expect(matched).toEqual([{ Mark: 'T-200', GlobalId: '0wall000000000000000w2' }]);
     expect(unmatched.map((row) => row.Mark)).toEqual(['T-999']);
+  });
+});
+
+
+describe('run_flow — secrets (#5167 phase 3.5)', () => {
+  it('redacts a secret a granted server echoes back, in the complete result (#5446 review)', async () => {
+    if (!runFlow) throw new Error('run_flow not registered');
+    const ctx = await contextWithModel();
+    process.env.IFC_LITE_TEST_ECHO_5446 = 'echoed-secret-value-5446';
+      const echo = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) =>
+        new Response(JSON.stringify({ receivedAuthorization: new Headers(init?.headers).get('authorization') }), { status: 200 }));
+    try {
+      const result = await runFlow.handler({ flow: {
+        flowVersion: 1, id: 's', name: 's',
+        capabilities: ['secret.read:IFC_LITE_TEST_ECHO_5446', 'network.fetch:api.example.com'], inputs: [],
+        outputs: [{ nodeId: 'req', port: 'body', label: 'body' }],
+        nodes: [{ id: 'req', type: 'http.request', params: { url: 'https://api.example.com/echo', headers: { Authorization: 'Bearer {{secret:IFC_LITE_TEST_ECHO_5446}}' } } }],
+        edges: [],
+      }, model_id: 'sample' }, ctx);
+      expect(echo).toHaveBeenCalledOnce();
+      const everything = JSON.stringify(result);
+      expect(everything).toContain('<secret:IFC_LITE_TEST_ECHO_5446>');
+      expect(everything).not.toContain('echoed-secret-value-5446');
+    } finally {
+      echo.mockRestore();
+      delete process.env.IFC_LITE_TEST_ECHO_5446;
+    }
+  });
+
+  it('rejects a {{secret:NAME}} reference the graph does not declare, before the run starts', async () => {
+    if (!runFlow) throw new Error('run_flow not registered');
+    const ctx = await contextWithModel();
+    const doc = {
+      flowVersion: 1, id: 's', name: 's', capabilities: [], inputs: [], outputs: [],
+      nodes: [{ id: 'req', type: 'http.request', params: { url: 'https://api.example.invalid/', headers: { Authorization: 'Bearer {{secret:API_TOKEN}}' } } }],
+      edges: [],
+    };
+    await expect(runFlow.handler({ flow: doc, model_id: 'sample' }, ctx)).rejects.toThrow(/does not declare "secret\.read:API_TOKEN"/);
+  });
+
+  it('rejects a declared-but-unset secret reference, before the run starts', async () => {
+    if (!runFlow) throw new Error('run_flow not registered');
+    const ctx = await contextWithModel();
+    const doc = {
+      flowVersion: 1, id: 's', name: 's', capabilities: ['secret.read:DEFINITELY_NOT_SET_5167_MCP'], inputs: [], outputs: [],
+      nodes: [{ id: 'req', type: 'http.request', params: { url: 'https://api.example.invalid/{{secret:DEFINITELY_NOT_SET_5167_MCP}}' } }],
+      edges: [],
+    };
+    expect(process.env.DEFINITELY_NOT_SET_5167_MCP).toBeUndefined();
+    await expect(runFlow.handler({ flow: doc, model_id: 'sample' }, ctx)).rejects.toThrow(/declared but not set/);
+  });
+
+  it('a declared+set secret is interpolated, but the request is still refused for reaching an ungranted host — and the secret never appears in the result', async () => {
+    if (!runFlow) throw new Error('run_flow not registered');
+    const ctx = await contextWithModel();
+    const doc = {
+      flowVersion: 1, id: 's', name: 's', capabilities: ['secret.read:IFC_LITE_TEST_TOKEN_5167_MCP'], inputs: [],
+      outputs: [{ nodeId: 'req', port: 'status', label: 'status' }],
+      nodes: [{ id: 'req', type: 'http.request', params: { url: 'https://api.example.invalid/', headers: { Authorization: 'Bearer {{secret:IFC_LITE_TEST_TOKEN_5167_MCP}}' } } }],
+      edges: [],
+    };
+    process.env.IFC_LITE_TEST_TOKEN_5167_MCP = 'super-secret-mcp-token-value-xyz789';
+    try {
+      const result = await runFlow.handler({ flow: doc, model_id: 'sample' }, ctx);
+      const summary = structured(result) as { ok: boolean; errors: Array<{ message: string }> };
+      expect(summary.ok).toBe(false);
+      expect(summary.errors[0].message).toMatch(/network\.fetch refused/);
+      expect(JSON.stringify(summary)).not.toContain('super-secret-mcp-token-value-xyz789');
+    } finally {
+      delete process.env.IFC_LITE_TEST_TOKEN_5167_MCP;
+    }
   });
 });

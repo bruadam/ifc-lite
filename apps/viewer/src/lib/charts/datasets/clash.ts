@@ -11,8 +11,9 @@
  * distance for a penetration histogram.
  */
 import type { ChartDataset, ChartDatasetColumn, ChartDatasetRow } from '@ifc-lite/charts';
-import { clashReviewKey, DEFAULT_CLASH_REVIEW_STATUS, type ClashElementRef } from '@ifc-lite/clash';
+import { clashReviewKey, DEFAULT_CLASH_REVIEW_STATUS, type Clash, type ClashElementRef, type ClashReviewStatus, type ClashSeverity, type ClashStatus } from '@ifc-lite/clash';
 import type { ViewerState } from '@/store';
+import { effectiveStoreyId } from '@/lib/effective-storey';
 
 export const CLASH_COLUMNS = {
   rule: 'Rule',
@@ -44,14 +45,14 @@ export const CLASH_DATASET_COLUMNS: ChartDatasetColumn[] = [
   { id: CLASH_COLUMNS.group, label: 'Group', kind: 'category' },
 ];
 
-export type ClashDatasetState = Pick<ViewerState, 'clashResult' | 'clashReviews' | 'clashGroups' | 'clashRunSeq' | 'models' | 'resolveGlobalIdInModel'>;
+export type ClashDatasetState = Pick<ViewerState, 'clashResult' | 'clashReviews' | 'clashGroups' | 'clashRunSeq' | 'models' | 'mutationViews' | 'resolveGlobalIdInModel'>;
 
 /** Storey of an element, resolved like the CSV export: renderer id → local id → spatial hierarchy. */
 function storeyOf(state: ClashDatasetState, ref: ClashElementRef): string {
   const hit = state.resolveGlobalIdInModel(ref.model, ref.ref);
   if (!hit) return '';
   const store = state.models.get(hit.modelId)?.ifcDataStore;
-  const storeyId = store?.spatialHierarchy?.elementToStorey.get(hit.expressId);
+  const storeyId = store ? effectiveStoreyId(store, state.mutationViews.get(hit.modelId), hit.expressId) : undefined;
   return storeyId ? store?.entities.getName(storeyId) || '' : '';
 }
 
@@ -69,35 +70,79 @@ function fingerprintStrings(parts: Iterable<string>): string {
   return h.toString(16);
 }
 
+/**
+ * What one clash row shows. The current result and a saved report (#6947)
+ * both build their rows from this one list through `clashDatasetRow`, so a
+ * column added here reaches both and neither can order its values differently.
+ */
+export interface ClashRowFacts {
+  rule: string;
+  severity: ClashSeverity;
+  status: ClashStatus;
+  review: ClashReviewStatus;
+  typeA: string;
+  typeB: string;
+  modelA: string;
+  modelB: string;
+  storey: string;
+  distance: number | null;
+  group: string;
+}
+
+/** One dataset row in `CLASH_DATASET_COLUMNS` order. `ids` are renderer ids; a saved report passes none. */
+export function clashDatasetRow(facts: ClashRowFacts, ids: ArrayLike<number>): ChartDatasetRow {
+  const { typeA, typeB } = facts;
+  return {
+    ids,
+    values: [
+      facts.rule,
+      facts.severity,
+      facts.status,
+      facts.review,
+      typeA,
+      typeB,
+      typeA <= typeB ? `${typeA} vs ${typeB}` : `${typeB} vs ${typeA}`,
+      facts.modelA,
+      facts.modelB,
+      facts.storey,
+      facts.distance,
+      facts.group,
+    ],
+  };
+}
+
+/** Clash id to the title of the group it is in, for the grouping the panel currently shows. */
+export function clashGroupTitles(state: Pick<ClashDatasetState, 'clashGroups'>): Map<string, string> {
+  const groupOf = new Map<string, string>();
+  for (const group of state.clashGroups ?? []) for (const member of group.members) groupOf.set(member.id, group.title);
+  return groupOf;
+}
+
+/** The row facts of one clash of the current result, read from the live store. */
+export function liveClashFacts(state: ClashDatasetState, clash: Clash, groupOf: ReadonlyMap<string, string>): ClashRowFacts {
+  const modelName = (id: string): string => state.models.get(id)?.name ?? id;
+  return {
+    rule: clash.rule,
+    severity: clash.severity,
+    status: clash.status,
+    review: state.clashReviews.get(clashReviewKey(clash))?.status ?? DEFAULT_CLASH_REVIEW_STATUS,
+    typeA: clash.a.tag,
+    typeB: clash.b.tag,
+    modelA: modelName(clash.a.model),
+    modelB: modelName(clash.b.model),
+    storey: storeyOf(state, clash.a),
+    distance: clash.distance,
+    group: groupOf.get(clash.id) ?? '',
+  };
+}
+
 export function buildClashDataset(state: ClashDatasetState): ChartDataset {
   const result = state.clashResult;
   const rows: ChartDatasetRow[] = [];
-  const groupOf = new Map<string, string>();
+  let groupOf = new Map<string, string>();
   if (result) {
-    for (const group of state.clashGroups ?? []) for (const member of group.members) groupOf.set(member.id, group.title);
-    const modelName = (id: string): string => state.models.get(id)?.name ?? id;
-    for (const clash of result.clashes) {
-      const review = state.clashReviews.get(clashReviewKey(clash));
-      const typeA = clash.a.tag;
-      const typeB = clash.b.tag;
-      rows.push({
-        ids: [clash.a.ref, clash.b.ref],
-        values: [
-          clash.rule,
-          clash.severity,
-          clash.status,
-          review?.status ?? DEFAULT_CLASH_REVIEW_STATUS,
-          typeA,
-          typeB,
-          typeA <= typeB ? `${typeA} vs ${typeB}` : `${typeB} vs ${typeA}`,
-          modelName(clash.a.model),
-          modelName(clash.b.model),
-          storeyOf(state, clash.a),
-          clash.distance,
-          groupOf.get(clash.id) ?? '',
-        ],
-      });
-    }
+    groupOf = clashGroupTitles(state);
+    for (const clash of result.clashes) rows.push(clashDatasetRow(liveClashFacts(state, clash, groupOf), [clash.a.ref, clash.b.ref]));
   }
   // Reviews and groups change without a new run, so their CONTENT is part of
   // the identity: a status edit keeps `clashReviews.size`, and a manual
@@ -106,5 +151,7 @@ export function buildClashDataset(state: ClashDatasetState): ChartDataset {
   // live after its members had been regrouped away (#4833).
   const reviews = fingerprintStrings([...state.clashReviews].map(([key, review]) => `${key}=${review.status}`).sort());
   const groups = fingerprintStrings([...groupOf].map(([id, title]) => `${id}=${title}`).sort());
-  return { source: 'clash', columns: CLASH_DATASET_COLUMNS, rows, fingerprint: `clash:${state.clashRunSeq}:${rows.length}:${reviews}:${groups}` };
+  const storeyColumn = CLASH_DATASET_COLUMNS.findIndex((column) => column.id === CLASH_COLUMNS.storey);
+  const storeys = fingerprintStrings(rows.map((row) => String(row.values[storeyColumn])));
+  return { source: 'clash', columns: CLASH_DATASET_COLUMNS, rows, fingerprint: `clash:${state.clashRunSeq}:${rows.length}:${reviews}:${groups}:${storeys}` };
 }

@@ -22,6 +22,9 @@ import type { MeshData } from '@ifc-lite/geometry';
 import type { WebGPUDevice } from '../device.js';
 import type { Scene } from '../scene.js';
 import type { PointCloudRenderer } from '../pointcloud/point-cloud-renderer.js';
+import type { PointCloudNode } from '../pointcloud/point-cloud-node.js';
+import { readDeviationAssetStats, readDeviationDistances, type DeviationAssetStats } from './deviation-readback.js';
+import type { DeviationDistances } from './deviation-statistics.js';
 
 /**
  * Build a deterministic fingerprint of the BVH input mesh set so
@@ -100,6 +103,7 @@ export interface DeviationComputeResult {
  */
 export class DeviationComputer {
     private pipeline: DeviationPipeline | null = null;
+    private computedBuffers: WeakSet<GPUBuffer> | null = null;
     /**
      * Cache of which mesh-set the BVH was built from. We rebuild on
      * `computeDeviations` only when the cached "fingerprint" misses,
@@ -127,6 +131,35 @@ export class DeviationComputer {
         this.pipeline?.destroy();
         this.pipeline = new DeviationPipeline(device);
         this.bvhFingerprint = null;
+        this.computedBuffers = null;
+    }
+
+    /** On-demand GPU readback; each row belongs to one scan asset. */
+    async readAssetStats(ctx: DeviationComputeContext): Promise<DeviationAssetStats[]> {
+        return this.readComputed(ctx, readDeviationAssetStats);
+    }
+
+    /** Every computed point's signed distance, grouped by scan asset (#6872). */
+    async readDistances(ctx: DeviationComputeContext): Promise<DeviationDistances> {
+        return this.readComputed(ctx, readDeviationDistances);
+    }
+
+    private async readComputed<T>(
+        ctx: DeviationComputeContext,
+        read: (device: GPUDevice, nodes: Iterable<PointCloudNode>, wasComputed: (buffer: GPUBuffer) => boolean) => Promise<T>,
+    ): Promise<T> {
+        const computed = this.computedBuffers;
+        if (!computed || !ctx.pointCloudRenderer) {
+            throw new Error('No completed deviation run to read back.');
+        }
+        const result = await read(
+            ctx.device.getDevice(), ctx.pointCloudRenderer.getInternalNodes(),
+            (buffer) => computed.has(buffer),
+        );
+        if (this.computedBuffers !== computed) {
+            throw new Error('Deviation results changed during readback. Recompute and try again.');
+        }
+        return result;
     }
 
     /**
@@ -153,6 +186,7 @@ export class DeviationComputer {
         if (!this.pipeline || !ctx.pointCloudRenderer) {
             throw new Error('Renderer not initialised — call init() first.');
         }
+        this.computedBuffers = null;
         const meshes = collectAllSceneMeshes(ctx.scene);
         // Fingerprint folds in per-mesh expressId / modelIndex /
         // positions length / triangle count, so two distinct meshes
@@ -176,6 +210,7 @@ export class DeviationComputer {
         const encoder = ctx.device.getDevice().createCommandEncoder({ label: 'pointcloud-deviation' });
         let chunksProcessed = 0;
         let pointsProcessed = 0;
+        const computedBuffers = new WeakSet<GPUBuffer>();
         const nodes = ctx.pointCloudRenderer.getInternalNodes();
         for (const node of nodes) {
             for (const chunk of node.chunks) {
@@ -194,6 +229,7 @@ export class DeviationComputer {
                 if (ok) {
                     chunksProcessed++;
                     pointsProcessed += chunk.pointCount;
+                    computedBuffers.add(chunk.deviationBuffer);
                 }
             }
         }
@@ -212,6 +248,7 @@ export class DeviationComputer {
             // them.
             this.pipeline.releaseTransientParams();
         }
+        this.computedBuffers = computedBuffers;
         ctx.requestRender();
 
         // Suggest a default half-range = max(0.01m, max-extent / 1000).
@@ -244,5 +281,6 @@ export class DeviationComputer {
         this.pipeline?.destroy();
         this.pipeline = null;
         this.bvhFingerprint = null;
+        this.computedBuffers = null;
     }
 }

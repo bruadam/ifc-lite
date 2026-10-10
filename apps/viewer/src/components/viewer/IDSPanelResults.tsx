@@ -17,18 +17,25 @@
  * targeted (it already ran across all of them in one pass).
  */
 
-import { Boxes, Eye, EyeOff, Filter, Focus, Layers, RefreshCw } from 'lucide-react';
+import { useMemo, type ReactNode } from 'react';
+import { ValidationBenchmark } from './validation/ValidationBenchmark';
+import { AnalysisStaleRegion } from './analysis/AnalysisPanel';
+import { ValidationResultsSplit } from './validation/ValidationResultsSplit';
+import { ValidationResultCoverage, ValidationResultSource, validationSourceName } from './validation/ValidationResultHead';
+import { ResultView } from './result/ResultView';
+import { validationReportSummary } from '@/lib/validation/report-summary';
+import { Boxes, Eye, EyeOff, Filter, Focus, Layers, Palette } from 'lucide-react';
 import type { ValidationReport, IDSAuditReport } from '@ifc-lite/ids';
 import type { UseValidationResults } from '@/hooks/validation/useValidationResults';
 import type { IDSFocusMode } from '@/store/slices/idsSlice';
-import { useViewerStore } from '@/store';
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { IDSAuditSummary } from './IDSAuditSummary';
+import { IDSCheckSummary } from './IDSCheckSummary';
 import { ReportExportButton } from './IDSReportExportButton';
+import { SaveValidationReportButton } from './validation/SaveValidationReportButton';
 import { SpecificationCard } from './IDSSpecificationCard';
 import { PassRateBar, StatusIcon } from './IDSPanelStatus';
 import { cn } from '@/lib/utils';
@@ -38,6 +45,8 @@ import { formatLocaleNumber } from '@/i18n/intlFormat';
 
 interface IDSPanelResultsProps {
   results: UseValidationResults;
+  /** Growing definition/editor controls scroll with the summary (#6690). */
+  summaryControls?: ReactNode;
   /** IDS-only: re-run against a different federated model. Unused (never
    *  called) for a rule-set report — its switcher does not render. */
   runValidation: (targetModelId?: string) => Promise<ValidationReport | null>;
@@ -58,6 +67,7 @@ interface IDSPanelResultsProps {
 
 export function IDSPanelResults({
   results,
+  summaryControls,
   runValidation,
   auditReport = null,
   multiModel: idsMultiModel = false,
@@ -74,11 +84,11 @@ export function IDSPanelResults({
     report, activeSpecificationId, filterMode,
     isolationScope, isolateMode, isolationActive, visibilityFilterActive, focusMode,
     clearIsolation, setFilterMode, setIsolationScope, setFocusMode,
-    applyColors, isolateFailed, isolatePassed, isolateInvolved, isolateSetMembers,
+    colorsShown, toggleColors, isolateFailed, isolatePassed, isolateInvolved, isolateSetMembers,
     exportReportJSON, exportReportHTML, exportReportBCF, bcfExportProgress,
     setActiveSpecification,
   } = results;
-  const storeModels = useViewerStore((s) => s.models);
+  const summary = useMemo(() => report ? validationReportSummary(report) : null, [report]);
   const failedActive = isolationActive && isolateMode === 'failed';
   const passedActive = isolationActive && isolateMode === 'passed';
   const involvedActive = isolationActive && isolateMode === 'involved';
@@ -86,7 +96,7 @@ export function IDSPanelResults({
   const handleIsolatePassed = () => { if (passedActive) clearIsolation(); else isolatePassed(); };
   const handleIsolateInvolved = () => { if (involvedActive) clearIsolation(); else isolateInvolved(); };
 
-  if (!report) return null;
+  if (!report || !summary) return null;
   const isRules = report.source.kind === 'rules';
 
   const specScope = isolationScope === 'spec';
@@ -96,14 +106,22 @@ export function IDSPanelResults({
   const involvedLabel = involvedActive ? t('idsPanel.showAllInvolved') : t(specScope ? 'idsPanel.isolateInvolvedSpec' : 'idsPanel.isolateInvolvedIds');
 
   return (
-    <>
+    <ValidationResultsSplit summary={<>
+      {summaryControls}
+      <AnalysisStaleRegion>
       {auditReport && auditReport.status !== 'valid' && (
         <div className="p-3 border-b">
           <IDSAuditSummary report={auditReport} auditing={false} />
         </div>
       )}
 
-      <div className="p-3 border-b bg-muted/30" {...tourAnchor(TOUR_ANCHORS.idsSummary)}>
+      <ResultView
+        source={validationSourceName(report)}
+        header={<ValidationResultSource report={report} />}
+        coverage={<ValidationResultCoverage report={report} />}
+        summaryClassName="p-3 bg-muted/30"
+        summaryProps={tourAnchor(TOUR_ANCHORS.idsSummary)}
+        summary={<>
         {idsMultiModel && !isRules && (
           <div className="flex items-center gap-1.5 mb-2 text-xs text-muted-foreground min-w-0">
             <span className="shrink-0">{t('idsPanel.validate')}</span>
@@ -124,13 +142,6 @@ export function IDSPanelResults({
             </select>
           </div>
         )}
-        {isRules && report.modelInfo.length > 0 && (
-          <div className="mb-2 text-xs text-muted-foreground truncate">
-            {t('validationPanel.results.validatedAgainst', {
-              models: report.modelInfo.map((m) => storeModels.get(m.modelId)?.name ?? m.modelId).join(', '),
-            })}
-          </div>
-        )}
         <div className="flex items-center gap-2 mb-2">
           <StatusIcon status={report.summary.failedSpecifications > 0 ? 'fail' : 'pass'} />
           <span className="font-medium text-sm">
@@ -141,6 +152,9 @@ export function IDSPanelResults({
             })}
           </span>
         </div>
+        {!isRules && <IDSCheckSummary report={report} />}
+        {!isRules && <div className="text-xs font-medium">{t('idsPanel.entitySpecificationResults')}</div>}
+        <ValidationBenchmark summary={summary} name={validationSourceName(report)} />
         <div className="grid grid-cols-3 gap-2 text-xs text-center">
           <div className="bg-background rounded p-2">
             <div className="font-medium">{formatLocaleNumber(locale, report.summary.totalEntitiesChecked)}</div>
@@ -151,15 +165,17 @@ export function IDSPanelResults({
             <div className="text-muted-foreground">{t('idsPanel.passed')}</div>
           </div>
           <div className="bg-background rounded p-2">
-            <div className="font-medium text-red-600">{formatLocaleNumber(locale, report.summary.totalEntitiesFailed)}</div>
+            <div className="font-medium text-red-600">{formatLocaleNumber(locale, summary.failed)}</div>
             <div className="text-muted-foreground">{t('idsPanel.failed')}</div>
           </div>
         </div>
         <div className="mt-2"><PassRateBar passRate={report.summary.overallPassRate} /></div>
+        {!isRules && <p className="text-xs text-muted-foreground mt-2">{t('idsPanel.summaryUnitsHint')}</p>}
         <p className="text-xs text-muted-foreground mt-2 text-center">
           {t(specScope ? 'idsPanel.specScopeHint' : 'idsPanel.idsScopeHint')}
         </p>
-      </div>
+        </>}
+      />
 
       <div className="p-2 border-b flex items-center gap-1 flex-wrap">
         <Select value={filterMode} onValueChange={(v) => setFilterMode(v as 'all' | 'failed' | 'passed')}>
@@ -187,73 +203,71 @@ export function IDSPanelResults({
 
         <div className="flex-1 min-w-2" />
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={failedActive ? 'secondary' : 'ghost'} size="sm"
-              className={cn('h-8 w-8 p-0', failedActive && 'text-red-600')}
-              aria-pressed={failedActive} aria-label={failedLabel}
-              onClick={handleIsolateFailed} disabled={noActiveSpec}
-              {...tourAnchor(TOUR_ANCHORS.idsIsolateFailed)}
-            >
-              <EyeOff className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{failedLabel}</TooltipContent>
-        </Tooltip>
+        <IconButton
+          label={failedLabel}
+          variant={failedActive ? 'secondary' : 'ghost'}
+          size="sm"
+          className={cn('h-8 w-8 p-0', failedActive && 'text-red-600')}
+          aria-pressed={failedActive}
+          onClick={handleIsolateFailed}
+          disabled={noActiveSpec}
+          {...tourAnchor(TOUR_ANCHORS.idsIsolateFailed)}
+        >
+          <EyeOff className="h-4 w-4" />
+        </IconButton>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={passedActive ? 'secondary' : 'ghost'} size="sm"
-              className={cn('h-8 w-8 p-0', passedActive && 'text-green-600')}
-              aria-pressed={passedActive} aria-label={passedLabel}
-              onClick={handleIsolatePassed} disabled={noActiveSpec}
-            >
-              <Eye className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{passedLabel}</TooltipContent>
-        </Tooltip>
+        <IconButton
+          label={passedLabel}
+          variant={passedActive ? 'secondary' : 'ghost'}
+          size="sm"
+          className={cn('h-8 w-8 p-0', passedActive && 'text-green-600')}
+          aria-pressed={passedActive}
+          onClick={handleIsolatePassed}
+          disabled={noActiveSpec}
+        >
+          <Eye className="h-4 w-4" />
+        </IconButton>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={involvedActive ? 'secondary' : 'ghost'} size="sm"
-              className="h-8 w-8 p-0"
-              aria-pressed={involvedActive} aria-label={involvedLabel}
-              onClick={handleIsolateInvolved} disabled={noActiveSpec}
-            >
-              <Boxes className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{involvedLabel}</TooltipContent>
-        </Tooltip>
+        <IconButton
+          label={involvedLabel}
+          variant={involvedActive ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-8 w-8 p-0"
+          aria-pressed={involvedActive}
+          onClick={handleIsolateInvolved}
+          disabled={noActiveSpec}
+        >
+          <Boxes className="h-4 w-4" />
+        </IconButton>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost" size="sm" className="h-8 w-8 p-0"
-              aria-label={t('idsPanel.clearIsolation')}
-              onClick={clearIsolation} disabled={!visibilityFilterActive}
-            >
-              <Focus className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('idsPanel.clearIsolation')}</TooltipContent>
-        </Tooltip>
+        <IconButton
+          label={t('idsPanel.clearIsolation')}
+          size="sm"
+          className="h-8 w-8 p-0"
+          onClick={clearIsolation}
+          disabled={!visibilityFilterActive}
+        >
+          <Focus className="h-4 w-4" />
+        </IconButton>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label={t('idsPanel.reapplyColors')} onClick={applyColors}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('idsPanel.reapplyColors')}</TooltipContent>
-        </Tooltip>
+        {/* #6373: this was "Reapply Colors" (it re-sent the red/green), and
+            nothing gave the model's own colours back. A toggle now: pressed
+            while the report colours are on screen, and pressing it restores
+            the originals without discarding the report. */}
+        <IconButton
+          label={colorsShown ? t('idsPanel.restoreOriginalColors') : t('idsPanel.showValidationColors')}
+          variant={colorsShown ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-8 w-8 p-0"
+          aria-pressed={colorsShown}
+          onClick={toggleColors}
+        >
+          <Palette className="h-4 w-4" />
+        </IconButton>
 
         <Separator orientation="vertical" className="h-4 mx-1" />
 
+        <SaveValidationReportButton report={report} disabled={validating} />
         <ReportExportButton
           onExportJSON={exportReportJSON}
           onExportHTML={exportReportHTML}
@@ -263,7 +277,7 @@ export function IDSPanelResults({
         />
       </div>
 
-      <div className="flex items-center gap-1 px-2 py-1 border-b text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-1 px-2 py-1 border-b text-2xs text-muted-foreground">
         <span>{t('idsPanel.onSelect')}</span>
         <div className="inline-flex rounded-md border border-border overflow-hidden">
           {([
@@ -282,7 +296,10 @@ export function IDSPanelResults({
         </div>
       </div>
 
-      <ScrollArea className="flex-1" {...tourAnchor(TOUR_ANCHORS.idsResults)}>
+      </AnalysisStaleRegion>
+    </>}>
+      <AnalysisStaleRegion className="flex-1 min-h-0 flex flex-col">
+      <ScrollArea className="flex-1 min-h-0" {...tourAnchor(TOUR_ANCHORS.idsResults)}>
         <div className="p-2 space-y-2">
           {report.specificationResults.map((specResult) => (
             <SpecificationCard
@@ -299,6 +316,7 @@ export function IDSPanelResults({
           ))}
         </div>
       </ScrollArea>
-    </>
+      </AnalysisStaleRegion>
+    </ValidationResultsSplit>
   );
 }

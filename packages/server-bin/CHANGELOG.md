@@ -1,5 +1,45 @@
 # @ifc-lite/server-bin
 
+## 2.0.0
+
+### Major Changes
+
+- [#5791](https://github.com/LTplus-AG/ifc-lite/pull/5791) [`013b43c`](https://github.com/LTplus-AG/ifc-lite/commit/013b43cea4d7bff58c803b7774666d8b0d122026) Thanks [@louistrue](https://github.com/louistrue)! - **Migration: `DELETE /api/v1/cache/{key}` no longer accepts the bare SHA-256 file hash. Pass the `cache_key` a parse returned (`result.cache_key`, e.g. `{sha256}-default`), the same key `GET /api/v1/cache/{key}` takes. A bare hash now answers `400 BAD_REQUEST`. Error bodies that were `text/plain` or empty are now JSON (`{"error","code"}`); status codes are unchanged.**
+  
+  `GET` and `DELETE /api/v1/cache/{key}` now take the same key, the `cache_key` a parse returned, resolved through one function: a key one accepts the other accepts, and anything else is a `400` from both. Before, passing `result.cache_key` to both got a hit from `GET` and a `400` from `DELETE`. `DELETE` still removes every cached variant of that source file, and its response `key` field is now the `cache_key` it was given rather than the bare hash. A malformed key on `GET` is now a `400` rather than a `404`. A cache `GET` hit now holds a parse admission slot while it decodes the stored model, so concurrent reads of a large model are bounded like parses and can answer `503 OVERLOADED` with `Retry-After`; a miss needs no slot.
+  
+  Every error response now uses the same `{"error", "code"}` JSON body. Extractor rejections (a bad query value, a non-multipart upload), `/api/v1/metrics` while disabled, the bearer-token `401` (now with `WWW-Authenticate: Bearer`), the `/api/v1/cache/check/{hash}` miss, unknown routes, wrong methods, the request timeout and caught panics used to answer with `text/plain` or an empty body.
+
+### Minor Changes
+
+- [#6198](https://github.com/LTplus-AG/ifc-lite/pull/6198) [`f05d031`](https://github.com/LTplus-AG/ifc-lite/commit/f05d0319c271fb7f73958695199274f5543206c3) Thanks [@louistrue](https://github.com/louistrue)! - The data model can now leave out the STEP instances no client looks up ([#6034](https://github.com/LTplus-AG/ifc-lite/issues/6034)). With `?data_model_entities=rooted` on `POST /api/v1/parse/parquet`, `/parse/parquet/optimized` or `/parse/parquet-stream`, the data model's entities table carries only the rooted entities (the ones with a GlobalId), plus every non-rooted instance another data-model table references by id, such as the materials and material sets the materials table names. Every id in the relationship, property, quantity, material, classification, document and spatial tables still resolves, those tables are byte-identical to the default payload, and `entity_id`s are unchanged. Fetch it with `GET /api/v1/parse/data-model/{key}?data_model_entities=rooted`, and pass the same parameter to `/api/v1/cache/check/{hash}`.
+  
+  The rooted table is cached under its own key (`-datamodel-rooted-v8`), so a warm cache never serves one variant to a request for the other. Without the parameter, output and cache keys are unchanged.
+
+## 1.22.1
+
+### Patch Changes
+
+- [#5949](https://github.com/LTplus-AG/ifc-lite/pull/5949) [`68bf0f5`](https://github.com/LTplus-AG/ifc-lite/commit/68bf0f5a35c32b28574a95c184637206420d9bda) Thanks [@louistrue](https://github.com/louistrue)! - The release fallback no longer picks a release whose shared `SHA256SUMS` doesn't list this platform's archive. That release would download and then fail checksum verification, which aborted the install even when an older release could have worked. A SHA256SUMS-only release now counts only after its body is seen to list the archive; otherwise the lookup moves on to the next older release.
+
+## 1.22.0
+
+### Minor Changes
+
+- [#5734](https://github.com/LTplus-AG/ifc-lite/pull/5734) [`6c98f57`](https://github.com/LTplus-AG/ifc-lite/commit/6c98f579bdbd255573961732d49da1fddf87a831) Thanks [@louistrue](https://github.com/louistrue)! - Fall back to the newest older GitHub release that carries this platform's binary when the package version's own `v<version>` release is missing ([#5525](https://github.com/LTplus-AG/ifc-lite/issues/5525)). `npx @ifc-lite/server-bin` 404'd on every platform for 1.20.0 and 1.21.0 because those versions reached npm without a matching release. The fallback is found through the GitHub releases API, only considers releases that also publish a checksum, is SHA-256 verified like the primary download, and prints a warning naming both the requested and the used version. It only triggers on a 404, never on a network or server error. When no fallback is available, the error now says how to pin a version that has binaries instead of recommending the Docker template.
+
+### Patch Changes
+
+- [#5741](https://github.com/LTplus-AG/ifc-lite/pull/5741) [`f0e92a0`](https://github.com/LTplus-AG/ifc-lite/commit/f0e92a0e2f5acd0214d3d373facc286f2f8eef9d) Thanks [@louistrue](https://github.com/louistrue)! - Fix `GET /api/v1/cache/{key}` never hitting for the `cache_key` a `POST /api/v1/parse` returned, so `getCached(result.cache_key)` from `@ifc-lite/server-client` now returns the cached response instead of `null`: the route looks up the entry under the key the JSON parse route actually writes. Every Parquet replay (`POST /api/v1/parse/parquet` and `/parquet/optimized` hits, `GET /api/v1/cache/geometry/{hash}`, and the `parquet-stream` replay's `complete` event) now reports `stats.from_cache: true`, so `parseParquet()` no longer says `from_cache: false` on a warm cache.
+
+## 1.21.0
+
+### Minor Changes
+
+- [#5581](https://github.com/LTplus-AG/ifc-lite/pull/5581) [`4044f73`](https://github.com/LTplus-AG/ifc-lite/commit/4044f736ace389d7eaf043bba76dce691122985e) Thanks [@louistrue](https://github.com/louistrue)! - The streaming Parquet route can now share geometry across batches ([#5407](https://github.com/LTplus-AG/ifc-lite/issues/5407)). With `?parquet_layout=shared-shapes&stream_shapes=cross-batch`, `POST /api/v1/parse/parquet-stream` sends each distinct shape once for the whole stream, as `POST /api/v1/parse/parquet` already did for the whole model, instead of once per batch. You no longer have to pick between the small shared payload and the bounded memory of a streamed parse. A batch carries only the shapes no earlier batch sent. Its mesh rows can point back into earlier batches, and every `batch` event states `vertex_base` / `index_base`. Server memory stays bounded: across batches it keeps where each distinct shape landed, plus at most 256 MiB of template meshes for rotated repeats. On five fixtures, the streamed payload is 2.2x to 6.8x smaller than the batch-local shared stream, with the same vertex rows as the buffered route.
+  
+  It is a separate opt-in because a client that decodes each batch on its own would misread rows that point back. Without it, and on every other route, output is byte-identical to before. `stream_shapes=cross-batch` on the default flat layout answers `400`.
+
 ## 1.20.0
 
 ### Minor Changes

@@ -44,6 +44,11 @@ pub mod error;           // Error types
 
 ### Parser Module
 
+`ifc_lite_core::declared_schema_bounded(ifc_bytes)` reads the first actual
+`FILE_SCHEMA` identifier in the first 64 KiB of the STEP header. It skips
+comments and quoted decoys and stops at the header section boundary, returning
+`None` when no declaration is found in that window.
+
 #### Token
 
 ```rust
@@ -424,6 +429,23 @@ IFC length units; `AnalyticStatus::Unsupported` carries a reason and no partial
 segments when the directrix cannot be described exactly. The processing API below
 places those segments in product world coordinates.
 
+`extract_analytic_extrusion(entity, decoder)` reads a source
+`IfcExtrudedAreaSolid` without tessellation. Its `AnalyticExtrusion` retains the
+authored `SweptArea` and `Position` STEP IDs, raw file-unit `Depth`, authored
+`IfcDirection.DirectionRatios`, a derived unit axis, and a separate matrix for
+the solid-local `Position`. `extract_analytic_profile` resolves exact closed
+line and arc loops for rectangles, circles, and supported arbitrary profiles,
+including holes, signed winding area, and exact perimeter in file units. The profile's own `Position` matrix
+remains separate. Arbitrary boundaries also require conservative
+[topology validation](#analytic-arbitrary-profile-topology), including contained,
+disjoint holes; unresolved topology produces `Unsupported`. Unsupported profile geometry or malformed extrusion
+parameters produce `AnalyticStatus::Unsupported` with a reason; no sampled
+outline is substituted. `ProfileType` must be `AREA`, and
+`ValidExtrusionDirection` rejects a direction perpendicular to the solid's
+local Z axis. These are **source-local, IFC Z-up file-unit** values:
+product placement, representation mapping, unit conversion to world metres,
+and later CSG remain distinct steps.
+
 ### Features
 
 ```toml
@@ -517,6 +539,12 @@ must produce identical local-frame geometry across native and wasm targets;
 ordinary routers continue to use the target and environment default. The frame
 choice cannot be changed after construction because router caches depend on it.
 
+For repeated `IfcMappedItem` sources, `mapping_origin_transform(source, decoder)`
+parses the source map's origin once. `resolve_scaled_mapped_item_transform_with_origin_loader`
+accepts a loader for that matrix and still parses each item's `MappingTarget`
+before invoking it; both methods use the same target-times-origin composition
+as `resolve_scaled_mapped_item_transform`.
+
 Other notable re-exports: `orient_mesh_outward`, `calculate_normals`, `ClippingProcessor`, `Plane`, `Triangle` (CSG), `hash_mesh_world` / `GeometryHasher` (geometry-diff hashing), instancing encode/decode helpers, and the nalgebra types `Point2`, `Point3`, `Vector2`, `Vector3`.
 
 `embedded_raster_dimensions(step_binary)` returns optional PNG/JPEG dimensions
@@ -542,8 +570,20 @@ pub use processor::{
 // Analysis-ready export document (welded, Z-up, world metres)
 pub use geometry_export::{build_geometry_data_export, ExportedElement, GeometryDataExport};
 
-// Optional authored swept-disk descriptions, keyed by product occurrence ID
-pub use analytic_export::{extract_swept_disk_descriptions, SweptDiskDescriptions};
+// Optional authored swept-disk checks and reusable swept-disk/extrusion sources
+pub use analytic_export::{
+    check_swept_disk, extract_analytic_quantity_sources, AnalyticQuantitySources,
+    extract_swept_disk_descriptions, extract_swept_disk_definitions,
+    extract_extrusion_definitions, AnalyticSourceContext, AnalyticSourceKey,
+    extrusion_nominal_quantities, DirectrixMetrics, DirectrixSegmentMetrics,
+    ExtrusionDefinition, ExtrusionDefinitions, ExtrusionInstance,
+    ExtrusionNominalQuantities, SweptDiskDescriptions,
+    SweptDiskCheckError, SweptDiskCheckFinding, SweptDiskCheckOptions,
+    SweptDiskCheckReport, SweptDiskFindingCode, SweptDiskOccurrence,
+    SweptDiskDefinition, SweptDiskDefinitions,
+    SweptDiskInstance, SweptDiskSourceKey, SweptDiskSourceContext,
+    SweptDiskNominalQuantities,
+};
 
 pub use georeferencing::{
     extract_georeferencing, extract_georeferencing_with_index, Georeferencing,
@@ -557,18 +597,177 @@ pub use parallel_scan::build_entity_index_parallel;
 
 `extract_swept_disk_descriptions(ifc_bytes, ids)` returns the outer `Radius`,
 optional `InnerRadius`, and ordered exact line/circular-arc `Directrix` for
-supported `IfcSweptDiskSolid` items. Coordinates and radii are absolute IFC
-world metres, Z-up; `ids` optionally filters product STEP IDs. Each record
-identifies its source solid and mapped-item path. `source_modified` identifies
-boolean operands whose authored sweep alone does not describe the final body.
-It does not indicate cuts from external `IfcRelVoidsElement` openings.
-Unsupported curves or transforms have an explicit status and no partial
-directrix. For an unsupported transform, radii retain their authored values
-converted to metres; no world circular radius is implied. The existing mesh
-export remains a separate, unchanged operation.
-For partial composite sweeps and raw-circle bounds, the existing mesher can
-cover a different extent ([#5566](https://github.com/LTplus-AG/ifc-lite/issues/5566));
-the analytic description follows the IFC source parameters.
+supported `IfcSweptDiskSolid` items. Call `disk.directrix_metrics()` on an
+occurrence to get `Option<DirectrixMetrics>`. A complete description returns
+`Some`, with `total_length` and indexed `segments` containing centreline
+`length` and optional `bend_angle`. Lengths, coordinates, and radii are
+absolute IFC world metres, Z-up. An arc's
+`bend_angle` is the positive sweep magnitude in radians; its signed
+`Directrix::Arc::sweep_angle` retains travel direction. Line segments have no
+bend angle. These geometric measurements do not include fabrication bend
+allowances or deductions. `ids` optionally filters product STEP IDs.
+
+`disk.nominal_quantities()` derives circular material cross-section area,
+cross-section area × centreline length (nominal volume), and outer/optional
+inner lateral areas. Areas are in m² and volume in m³. These are estimates of
+the uncut source sweep: self-overlap and mitred joins can change the physical
+body, so they are not IFC-authored `IfcElementQuantity` values or certified net
+quantities. The method returns `None` for an unsupported description, CSG
+operand, broken directrix join, degenerate segment, or arc whose radius does
+not exceed the disk radius. A sharp but joined mitre remains a nominal estimate.
+JSON and Python directrix exports include the same values under
+`nominal_quantities`.
+
+`extrusion_nominal_quantities(&source_extrusion)` derives exact net profile
+area (outer boundary less holes), perpendicular height, and nominal volume
+for a complete `AnalyticExtrusion`. For an oblique extrusion, perpendicular
+height is `Depth × |unit ExtrudedDirection.z|` in the solid's local frame.
+These values use **raw IFC file-length units** (squared and cubed as
+appropriate), because the source extrusion has no product occurrence
+transform. The function returns `None` for unsupported or invalid source
+profiles; it does not claim a product's post-boolean net quantity.
+
+Each record identifies its source solid and mapped-item path.
+`source_modified` identifies an authored CSG operand whose sweep may differ
+from the final body, so its metrics are source geometry measurements rather
+than final fabricated quantities. It does not indicate cuts from external
+`IfcRelVoidsElement` openings. Unsupported curves or transforms have an
+explicit status, no partial directrix, and the method returns `None`. For an
+unsupported transform, radii retain their authored values converted to metres;
+no world circular radius is implied. The existing mesh export remains a
+separate operation.
+
+`check_swept_disk(&occurrence, &options)` checks the extracted source geometry
+without decoding or tessellating it again. `SweptDiskCheckOptions::default()`
+uses 1e-9 m for a zero-length segment, 1e-6 m for a disconnected join, and
+1e-6 rad for a tangent discontinuity. The checker also flags a circular arc
+whose centreline radius does not exceed the swept disk radius. A report's
+findings identify the source segment, or both sides of a join, with a stable
+`SweptDiskFindingCode`, measured value, threshold and units. An unsupported
+analytic description produces a report with `skipped_reason` and no partial
+findings. `source_modified` is carried into the report so an authored CSG
+operand is not mistaken for the finished body. All tolerance values must be
+finite and nonnegative; `SweptDiskCheckOptions::validate()` and the checker
+return `SweptDiskCheckError` otherwise. These are geometric diagnostics, not
+fabrication-code checks or bend-allowance calculations. IFC allows non-tangent
+consecutive segments to form a miter, so a tangent discontinuity is an
+inspection cue rather than an automatic schema violation
+([IfcSweptDiskSolid](https://ifc43-docs.standards.buildingsmart.org/IFC/RELEASE/IFC4x3/HTML/lexical/IfcSweptDiskSolid.htm)).
+
+`extract_analytic_quantity_sources(ifc_bytes, ids)` collects flattened
+swept-disk descriptions, reusable swept-disk definitions, and reusable
+extrusion definitions in one bounded canonical representation walk. Description
+indices match source-instance `ordinal` values; the individual entry points
+keep their existing output contracts.
+
+`extract_swept_disk_definitions(ifc_bytes, ids)` provides an opt-in
+source/instance form without changing the flattened result above. A source
+contains authored `Radius`, `InnerRadius`, and `Directrix` in raw IFC file
+length units. Its key includes the IFC-byte SHA-256, `FILE_SCHEMA`, exact f64
+length-unit-scale bits, solid STEP id, and either the top-level representation
+id or ordered `IfcRepresentationMap` ids. The bits are encoded as 16 hex
+digits so JSON consumers preserve exact identity. Repeated mapped items that use the
+same representation map share a source but remain separate instances with
+deterministic ordinals and mapped-item paths. `source_modified` still marks CSG
+operands.
+
+`extract_swept_disk_views` returns the world descriptions and reusable raw
+definitions together from one bounded walk and one decoded source cache. The
+rebar schedule uses this paired view to retain complete world-space sweeps even
+if the independent definition output budget omits a reusable source key.
+
+Each instance's column-major f64 `world_from_source` maps raw source
+coordinates directly into absolute IFC Z-up metres; it includes the file-unit
+scale, product placement and nested mapped transforms. A source radius is not
+a world radius until the uniform instance scale is applied. Nonuniform world
+disks carry an unsupported instance status; invalid matrices have `None` and
+an unsupported status. The source remains available for inspection. Work and
+output budgets are reported in `diagnostics` when reached.
+
+`extract_extrusion_definitions(ifc_bytes, ids)` uses the same bounded
+representation walk to return exact `IfcExtrudedAreaSolid` source profiles and
+placed product occurrences without tessellation. `AnalyticSourceKey` contains
+the model SHA-256, schema, exact unit-scale bits, solid ID, and either a direct
+representation ID or ordered representation-map IDs. Repeated mapping targets
+share one `ExtrusionDefinition` while preserving separate `ExtrusionInstance`
+ordinals, mapped-item paths, and f64 transforms.
+
+Source `ProfileType`, `DirectionRatios`, `Depth`, profile loops, area, perimeter,
+and profile/solid `Position` matrices remain in IFC file units. For a complete
+source with valid positive net profile area, `nominal_quantities` reuses
+`extrusion_nominal_quantities` to
+report net profile area, projected height, and nominal volume in squared,
+linear, and cubed IFC file-length units; unsupported or invalid sources yield `None`.
+For a boundary point from a complete source, apply the profile
+`profile_position`, then the extrusion `position_matrix`, then the instance
+`world_from_source`; the last matrix maps to absolute IFC Z-up metres and
+includes product placement, mapping, and file-unit scale. An absent optional
+`Position` leaves its matrix field as `None`, so use identity for that step
+when composing rather than expecting an identity array. Check source and
+instance statuses before using an absent matrix: unsupported or tapered source
+geometry and invalid or singular occurrence transforms have explicit statuses.
+`source_modified` marks CSG operands, not final post-boolean geometry. Source
+and instance output budgets are independent and report truncation in
+`diagnostics`.
+
+`ifc_lite_export::build_rebar_schedule(ifc_bytes, ids, &options)` returns one
+row per selected `IfcReinforcingBar` entity, including rows whose body has no
+supported swept-disk source. `rows` is keyed by occurrence STEP ID. Each row
+exposes and serializes its IFC identity as `GlobalId` and `Name`, matching `IfcRoot`.
+Every represented source sweep has its own ordinal, solid/directrix IDs, mapping path,
+outer/inner radii, directrix metrics, geometric check report and an optional
+reusable `SweptDiskSourceKey`. It keeps repeated mapped sources and CSG operands
+distinct; repeated uses of one map share the source key. A missing key is
+reported per row without dropping the world sweep. The `authored` map uses exact EXPRESS
+attribute names; each entry identifies the occurrence or type entity that
+supplied it. Numeric measures retain `value_file_units` and their `value_si`
+conversion, while centreline lengths are separately derived world metres.
+An authored `CrossSectionArea` of zero remains in the record with its provenance;
+the row diagnostic states that it does not establish a physical section area.
+Radii are effective world metres for complete paths; an unsupported transform
+retains source radii in metres without implying a world circular radius.
+Conflicting occurrence/type values are reported, with the occurrence taking
+precedence. `bar_entity_count` and `represented_sweep_count` count IFC records,
+not manufactured bars. The API provides no physical bar count, cutting length,
+or certified fabrication result.
+
+`build_rebar_schedule_with_preflight(ifc_bytes, ids, &options, &limits)` adds
+caller-defined geometric comparisons to each represented sweep. Construct
+`RebarPreflightLimits::new(min_inside_bend_radius_m,
+min_straight_segment_length_m, max_developed_centreline_length_m)` with finite,
+nonnegative SI-metre limits. Each comparison retains its measured value, limit,
+segment index (when applicable), and pass/fail result; equality passes. The
+inside radius is the centreline arc radius minus the swept outer radius.
+Modified CSG sources, unsupported directrices, and paths with gaps or zero-length
+segments receive a skip reason and `comparisons: None`; assessed sweeps have
+`comparisons: Some(...)`. The underlying source findings remain in `checks`.
+Tangent discontinuities remain inspection cues and do not skip comparisons. Rows
+without a swept-disk source receive `preflight_skipped_reason`. Missing line or
+arc segments are listed as unassessed. These comparisons do not certify a
+cutting length or fabrication-code compliance.
+
+`build_rebar_schedule_with_fabrication_precheck(ifc_bytes, ids, &options,
+&policy)` adds an opt-in `RebarFabricationPolicy` without changing the legacy
+preflight API. Start with `RebarFabricationPolicy::default()` and set any subset
+of finite nonnegative SI limits: minimum inside bend radius or straight segment
+length, maximum developed centreline length, maximum absolute difference
+between authored `NominalDiameter` and the geometric outer diameter, and an
+inclusive finite, nonnegative bend-angle range `[minimum, maximum]` in radians.
+The policy is validated before IFC decoding. Each requested check reports
+`pass`, `fail`, or `uncheckable`, a source bar/solid/directrix ID, segment index
+when applicable, measurement, threshold, units, and reason. The reason is
+`None` for a passing check and explains a failure or unavailable measurement
+otherwise. An absent arc,
+straight segment, or positive authored `NominalDiameter` is uncheckable;
+conflicting type assignments and occurrence/type diameter conflicts also make
+the diameter comparison uncheckable. Authored diameter retains occurrence or
+type provenance. Geometry comparisons require a complete world-circular
+source; modified CSG, unsupported transforms and incomplete paths are
+uncheckable. Bend angle is the magnitude of each directrix arc sweep, not a
+join discontinuity. The result is always `precheck_only`: material, bending
+process, allowances, jurisdiction and physical bar count remain unchecked.
+Authored `BarLength` is not a verified cutting length. A reinforcing-bar entity
+may represent more than one manufactured bar.
 
 ### Appearance authoring
 
@@ -645,7 +844,17 @@ pub use merged::{export_merged, export_merged_with_stats, MergedOptions, MergedS
 pub use obj::{export_obj, export_obj_with_stats, ObjOptions, ObjStats};
 pub use step::{export_step, export_step_json, export_step_with_stats,
                AttrMutation, PropMutation, StepOptions, StepStats};
+// A `MutablePropertyView.exportMutations()` log, applied with byte parity to
+// the TypeScript `StepExporter` (#5941). `MutationLog::from_json` reads the log.
+pub use step_log::{export_step_with_log, export_step_with_log_to_writer,
+                   export_merged_models_with_logs, MutationLog,
+                   LogMutation, LogNewEntity, MutationKind, GeorefMutations,
+                   LogExportStats, StepCounters};
 pub use model::{build_export_model, stream_export_model, ExportModel /* ... */};
+pub use quantity_analysis::{analyze_authored_quantities, AuthoredQuantityAnalysis /* ... */};
+// Additional opt-in join: analyze_quantities(content, ids) -> QuantityAnalysis.
+// It combines authored observations with nominal source occurrences; product_total
+// is None with an aggregate diagnostic because overlap/voids/CSG are unknown.
 // `ExportModel` and both streaming entry points carry the model's UnitScales.
 // Attribute values are in the FILE's units, unlike the geometry exporters'
 // output, which is normalised to metres — so a consumer writing a quantity
@@ -659,6 +868,60 @@ pub use model::{stream_export_model_with_options, build_export_model_with_option
                 ModelOptions, Placement};
 pub use ifc_lite_core::{AttributeValue, DecodedEntity, IfcType};
 ```
+
+`analyze_authored_quantities(ifc_bytes, ids)` is an opt-in, untessellated view
+keyed by actual product STEP ID. It reuses the export model's physical-quantity
+decoder and retains each `IfcElementQuantity`/leaf entity ID, exact EXPRESS
+names, numeric authored value, kind, and occurrence or inherited type origin.
+`kind` is the full IFC leaf type, such as `IfcQuantityLength`.
+`IfcRelDefinesByProperties.RelatingPropertyDefinition` may name one definition
+or an IFC4 `IfcPropertySetDefinitionSet`; every linked `IfcElementQuantity` is
+retained. Malformed definitions and exhausted relationship, set-visit, or
+authored-row, quantity-leaf-visit, aggregate quantity-set or leaf decode-byte, or
+type-relationship work budgets appear in
+`diagnostics`, with expansion stopped at the cap.
+Per-record diagnostics are capped at 1,024 plus one truncation notice; distinct
+work-budget refusal reasons remain visible after that cap.
+It reports both sides of a conflict instead of applying the flattened row's
+occurrence precedence. Explicit quantity units use the canonical bounded IFC
+unit resolver; an unresolved or dimensionally mismatched unit has a diagnostic
+instead of a guessed length-scale conversion. The IFC4X3 `IfcQuantityNumber`
+is preserved too; Number and Count use an explicit named unit when supplied
+and are otherwise dimensionless. `product_count` counts selected
+IFC product entities, not represented solids or physical bars. Derived source
+estimates remain separate from this authored view.
+For Count and Number, distinct explicit unit entities are conservatively
+reported as a conflict even when their display symbols match, since unit names
+do not certify dimensional equivalence.
+
+`analyze_quantities(content, ids)` joins those authored observations with the
+canonical swept-disk and extrusion source/instance APIs. It keeps one source
+record per geometric use, its source key and mapping path, plus formula, origin,
+unit, limitation and status for each nominal measurement. Swept-disk directrix estimates are
+in world metres; extrusion source estimates remain in raw IFC file units.
+`Depth` is labelled as an authored solid parameter, separate from an authored
+`IfcElementQuantity`. Product, source-use and unique-source counts are distinct.
+`product_total` remains absent with `aggregate_diagnostic`, since overlap,
+openings and CSG prevent a defensible final material total.
+
+`export_step_with_log` applies the mutation log a `MutablePropertyView`
+records (`exportMutations()`), replayed as `importMutations` replays it into a
+view wired like the viewer's, and writes the file the TypeScript `StepExporter`
+writes for it: byte-identical apart from the GlobalIds of generated records,
+which are derived from the host and the new express id. Records the log does
+not change stream from the source; memory beyond the record index grows with
+the edits. A log carrying a mutation kind the writer does not apply yet, an
+unrecognised mutation `type`, or an `UPDATE_ATTRIBUTE` with a `null` `newValue`
+is an `InvalidInput` error (the TypeScript replay skips the latter two; a native
+save refuses rather than drop an edit), as is combining a log with `StepOptions::included` or
+with the per-edit vectors. `LogExportStats` reports the new and modified entity
+counts the header states and the warnings the TypeScript exporter would give.
+`export_merged_models_with_logs(models, logs, opts)` is `export_merged_models`
+with a log per model: each edited model is first written through
+`export_step_with_log` in its own schema, as `MergedExporter.exportAsync` bakes
+edited models through `StepExporter`, and its georeferencing edits are not
+applied (reported in `MergedStats::warnings`), as the TypeScript bake passes
+none.
 
 `export_step_with_stats` returns `StepStats`. `total` and `written` describe
 the selected entity set. The remaining counters are validity or refusal
@@ -1050,3 +1313,57 @@ fill while retaining the existing symbol JSON shape. Deserialization accepts
 older symbol JSON and leaves missing provenance unknown. WASM and the server
 consume the enriched extraction; callers that only need 2D data can keep using
 the legacy API.
+
+### Analytic arbitrary-profile topology
+
+`ifc_lite_geometry::analytic::extract_analytic_profile` preserves exact source
+line and circular-arc primitives. For `IfcArbitraryClosedProfileDef` and
+`IfcArbitraryProfileDefWithVoids`, `Complete` requires a simple outer boundary,
+simple inner boundaries inside it, mutually disjoint boundaries, and no nested
+inner boundaries. This implements the material-region conditions in
+[buildingSMART's profile definition](https://ifc43-docs.standards.buildingsmart.org/IFC/RELEASE/IFC4x3/HTML/lexical/IfcArbitraryProfileDefWithVoids.htm).
+An invalid or unconfirmed topology returns `Unsupported` on the source profile,
+with no partial loops. `extract_analytic_extrusion` propagates that status.
+Consumers must require `Complete` before reporting nominal material quantities.
+
+Validation uses outward-rounded analytic curve enclosures and ray crossings;
+it does not substitute a drawing polygon or reuse the renderer's repair of
+malformed holes. Adjacent segments may meet at their designated endpoints.
+Their outgoing derivatives must establish separation, and all possible contacts
+must stay within the precision neighbourhood of that join. Sub-precision
+contacts there are treated as the same topological join, consistent with IFC's
+point-identity tolerance; strict simplicity below that resolution is not claimed. Other
+segment pairs and separate loops must have certified clearance. The authored
+segments, winding, area and perimeter are not changed by validation.
+
+The context-free extractor uses
+`EntityDecoder::geometric_context_precision_range()`: a lazy, cached scan of
+declared geometric-context `Precision` values in file-length units. The largest
+declaration sets boundary clearance; the smallest declaration limits adjacent
+endpoint equivalence. This conservatively covers profiles reused across representations.
+Subcontexts inherit from geometric contexts; scanning those base declarations
+also covers their precision. This may reject a close boundary valid in a
+tighter context when an unrelated context declares a larger precision.
+Malformed explicit declarations cause `Unsupported`. The IFC attribute is
+optional and has no specified default; the application uses a minimum clearance
+of `1e-9` file units when declarations are absent or smaller, while the join
+tolerance is capped at `1e-9` and respects any smaller declaration. This is an
+application policy, not an IFC default. Existing loop-closure checks remain
+separate; a loose model-wide declaration does not permit larger closure gaps.
+
+Line endpoints and partial-arc chords must be distinguishable at the clearance,
+and arc radii must exceed it. A conservative area/perimeter resolution screen
+also rejects thin loops composed entirely of adjacent primitives. These checks
+may refuse small features that cannot be established at the model's precision.
+They are not a complete certificate of local feature size: a narrow wedge near
+an otherwise valid acute corner is not itself classified as a self-intersection.
+
+The validator spends at most 1,000,000 work units per profile across pair
+checks, interval refinement and containment, with at most 48 refinement levels
+per pair or ray interval. Exhaustion is reported as `Unsupported`. Numerically
+unresolved contacts, overflow and evaluations requiring angles outside the
+certified trigonometric domain also return `Unsupported`. Thus valid but ill-conditioned or
+very large profiles may be unavailable for analytic quantities; they are never
+silently certified or substituted with an approximation. Rendering is
+unaffected. This change makes no performance claim; an end-to-end base/branch
+performance verdict is required before merge.

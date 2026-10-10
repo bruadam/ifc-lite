@@ -17,20 +17,34 @@
  * check below — a documented gap, not an oversight.
  */
 import '@/test/setup-dom.js';
+import { clearContentDatabase, refuseContentWrites } from '@/test/content-fixture.js';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { act } from 'react';
 import type { SetResult, SpecificationResult, ValidationReport } from '@ifc-lite/ids';
 import { cleanup, click, render } from '@/test/render.js';
+import { installLayout } from '@/test/dom-layout.js';
 import { registerLocale, setLocale, type Catalogue } from '@/i18n';
 import { validationPanelEn } from '@/i18n/catalogues/validation-panel.en';
 import { useViewerStore } from '@/store';
 import { addRecentRuleSet } from '@/lib/validation/recent-rule-sets';
+import { setValidationSourceChoice } from '@/lib/validation/validation-source-choice';
 import { ValidationPanel, RunningState } from './ValidationPanel.js';
 import { IdsSummary } from './ValidationPanel.idsSummary.js';
+import { resetValidationPanelFixture } from './validation-test-fixture.js';
+import { emptyManualReportBlock } from '@/lib/document/manual-report';
+import { SavedReportSource } from '../document/SavedReportSource.js';
+import { DocumentPanel } from '../document/DocumentPanel.js';
+import { SaveValidationReportButton } from './SaveValidationReportButton.js';
+import { Toaster } from '@/components/ui/toast';
+import { validationReportSnapshot } from '@/lib/validation/reports/history';
+import { loadValidationReports } from '@/lib/validation/reports/persistence';
+
+installLayout();
 
 type Key = keyof typeof validationPanelEn;
-const ALL_KEYS = Object.keys(validationPanelEn) as Key[];
+const ALL_KEYS = Object.keys(validationPanelEn).filter(key => key.startsWith('validationPanel.')) as Key[];
 const STATIC_KEYS = ALL_KEYS.filter((key) => {
   const value = validationPanelEn[key];
   return typeof value === 'string' && !value.includes('{');
@@ -140,8 +154,57 @@ function reportFixture(): ValidationReport {
   };
 }
 
-function resetReport(): void {
-  useViewerStore.setState({ idsValidationReport: null, validationSource: null });
+/** Rendering oracle: use the same stated report fixture, but exercise the
+ * canonical writer's accepted, storage-refused and invalid-evidence outcomes
+ * so every new Save label is actually rendered under each locale (#6568). */
+async function mountSaveStates(collect: () => void): Promise<void> {
+  const land = async () => {
+    await act(async () => { await useViewerStore.getState().retryValidationReportsSave(); });
+    await clearContentDatabase();
+    localStorage.clear();
+    await loadValidationReports();
+    const report = reportFixture();
+    const snapshot = validationReportSnapshot(report, new Map(), 'locale-report');
+    act(() => {
+      useViewerStore.setState({ savedValidationReports: [], idsLoading: false });
+      useViewerStore.getState().setIdsValidationReport(report, snapshot);
+    });
+    return { report, snapshot };
+  };
+  const completed = await land();
+  const completedHost = render(<SaveValidationReportButton report={completed.report} />);
+  collect();
+  const save = completedHost.querySelector('button'); assert.ok(save);
+  click(save);
+  await waitFor(() => Object.values(useViewerStore.getState().validationReportsStorage.items).includes('saved'));
+  assert.equal((await loadValidationReports()).length, 1);
+  assert.equal(save.disabled, true);
+  collect();
+  cleanup();
+
+  const refused = await land();
+  const refusedHost = render(<SaveValidationReportButton report={refused.report} />);
+  const write = refuseContentWrites();
+  try {
+    const pendingSave = refusedHost.querySelector('button'); assert.ok(pendingSave);
+    click(pendingSave);
+    await waitFor(() => Object.values(useViewerStore.getState().validationReportsStorage.items).some(state => state !== 'saving' && state !== 'saved'));
+    assert.equal(Object.values(useViewerStore.getState().validationReportsStorage.items).some(state => state !== 'saving' && state !== 'saved'), true);
+    assert.equal((await loadValidationReports()).length, 0);
+    collect();
+  } finally { write.mock.restore(); }
+  cleanup();
+
+  const invalid = await land();
+  // The real writer validates evidence rather than accepting corrupt dates.
+  invalid.snapshot.generatedAt = 'not-a-date';
+  const rejectedHost = render(<><SaveValidationReportButton report={invalid.report} /><Toaster /></>);
+  const rejectSave = rejectedHost.querySelector('button'); assert.ok(rejectSave);
+  click(rejectSave);
+  assert.equal((await loadValidationReports()).length, 0);
+  collect();
+  for (const dismiss of rejectedHost.querySelectorAll('button[aria-label="Dismiss notification"]')) click(dismiss);
+  cleanup();
 }
 
 /**
@@ -165,7 +228,9 @@ async function mountAll(): Promise<Set<string>> {
   const found = new Set<string>();
   const collect = () => { for (const s of readableStrings(document.body)) found.add(s); };
 
-  resetReport();
+  (await mountSaveStates(collect));
+
+  resetValidationPanelFixture();
   addRecentRuleSet('Recent fixture', JSON.stringify({ version: 1, name: 'Recent fixture', rules: [] }));
   render(<ValidationPanel />);
   collect();
@@ -183,9 +248,9 @@ async function mountAll(): Promise<Set<string>> {
     'fixture.rules.json',
     { type: 'application/json' },
   );
-  resetReport();
+  resetValidationPanelFixture();
   const authoringHost = render(<ValidationPanel />);
-  const input = authoringHost.querySelector('input[type="file"]');
+  const input = authoringHost.querySelector('input[type="file"][accept=".rules.json,.json"]');
   assert.ok(input, 'expected the "Open .rules.json" hidden file input in the empty state');
   Object.defineProperty(input, 'files', { value: [fixtureFile], configurable: true });
   await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
@@ -193,6 +258,33 @@ async function mountAll(): Promise<Set<string>> {
   // file input to be replaced by the authoring view. Locale-independent
   // (unlike matching a button's text, which is marked under pseudo).
   await waitFor(() => !document.body.contains(input));
+  collect();
+  cleanup();
+
+  // #6567: the shared library controls are real reachable states, including
+  // a newly authored unnamed check and the original IDS download action.
+  // Exercise them under both locales rather than exempting catalogue keys.
+  const rulesHost = render(<ValidationPanel />);
+  const newRuleSet = [...rulesHost.querySelectorAll('button')].find(button =>
+    button.textContent?.includes(String(validationPanelEn['validationPanel.library.new'])));
+  assert.ok(newRuleSet, 'the active imported rule set exposes New rule set');
+  click(newRuleSet);
+  collect();
+  const copy = [...rulesHost.querySelectorAll('button')].find(button =>
+    button.textContent?.includes(String(validationPanelEn['validationPanel.library.copy'])));
+  assert.ok(copy);
+  click(copy);
+  collect();
+  cleanup();
+
+  setValidationSourceChoice('ids');
+  const idsHost = render(<ValidationPanel />);
+  const idsInput = idsHost.querySelector<HTMLInputElement>('input[accept=".ids,.xml"]');
+  assert.ok(idsInput, 'the canonical IDS import is available in its mounted panel');
+  const idsXml = readFileSync(new URL('../../../../public/samples/building-architecture.ids', import.meta.url), 'utf8');
+  Object.defineProperty(idsInput, 'files', { value: [new File([idsXml], 'building-architecture.ids')], configurable: true });
+  await act(async () => { idsInput.dispatchEvent(new Event('change', { bubbles: true })); });
+  await waitFor(() => idsHost.querySelector('select') !== null);
   collect();
   cleanup();
 
@@ -216,6 +308,37 @@ async function mountAll(): Promise<Set<string>> {
   collect();
   cleanup();
 
+  // #6500: history labels also appear in Manual validation and Documentation.
+  // Mount their real controls under both locales; they are reachable states,
+  // not gaps to exempt from the catalogue's coverage contract.
+  resetValidationPanelFixture();
+  (await useViewerStore.getState().saveValidationReport(emptyManualReportBlock('i18n-report'), 'Saved fixture'));
+  useViewerStore.setState({
+    manualChecklist: { version: 1, name: 'Manual fixture', groups: [] },
+    manualAnswers: {},
+    documents: [],
+    activeDocumentId: null,
+  });
+  setValidationSourceChoice('manual');
+  render(<ValidationPanel />);
+  collect();
+  cleanup();
+  render(<SavedReportSource block={emptyManualReportBlock('embedded')} onChange={() => {}} />);
+  collect();
+  cleanup();
+  const documentHost = render(<DocumentPanel />);
+  await act(async () => { await Promise.resolve(); });
+  const addBlock = [...documentHost.querySelectorAll('button')].find((button) => button.title === 'Add a block to the page');
+  assert.ok(addBlock, 'the Documentation add menu must be reachable');
+  act(() => {
+    addBlock.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    addBlock.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  });
+  collect();
+  cleanup();
+  useViewerStore.setState({ ...initial, idsValidationReport: null, validationSource: null });
+
+  resetValidationPanelFixture();
   useViewerStore.setState({ idsValidationReport: reportFixture(), validationSource: 'rules' });
   const resultsHost = render(<ValidationPanel />);
   // Set-level rows live inside the card's Collapsible content — expand it so
@@ -232,7 +355,7 @@ async function mountAll(): Promise<Set<string>> {
   }
   collect();
   cleanup();
-  resetReport();
+  resetValidationPanelFixture();
 
   return found;
 }
@@ -243,6 +366,7 @@ afterEach(() => {
   cleanup();
   setLocale('en');
   useViewerStore.setState({ ...initial, idsValidationReport: null, validationSource: null });
+  setValidationSourceChoice(null);
 });
 
 describe('ValidationPanel localization (#5138)', () => {
@@ -300,5 +424,27 @@ describe('ValidationPanel localization (#5138)', () => {
     assert.ok(runningText.includes(markPrefix('validationPanel.running.rule')), 'running.rule must retranslate');
     assert.ok(runningText.includes(markPrefix('validationPanel.running.requirements')), 'running.requirements must retranslate');
     assert.ok(runningText.includes(mark('validationPanel.cancel')), 'cancel must retranslate');
+
+    // #6568: the same mounted save control retranslates both before and
+    // after the real writer accepts its completion-time evidence.
+    cleanup();
+    setLocale('en');
+    localStorage.clear();
+    await loadValidationReports();
+    const report = reportFixture();
+    act(() => {
+      useViewerStore.setState({ savedValidationReports: [], idsLoading: false });
+      useViewerStore.getState().setIdsValidationReport(report, validationReportSnapshot(report, new Map(), 'live-locale'));
+    });
+    const saveHost = render(<SaveValidationReportButton report={report} />);
+    act(() => setLocale('validation-panel-pseudo-2'));
+    const save = saveHost.querySelector('button'); assert.ok(save);
+    assert.equal(save.textContent, mark('validationPanel.history.saveReport'));
+    click(save);
+    await waitFor(() => Object.values(useViewerStore.getState().validationReportsStorage.items).includes('saved'));
+  assert.equal((await loadValidationReports()).length, 1);
+    assert.equal(save.textContent, mark('validationPanel.history.saved'));
+    act(() => setLocale('en'));
+    assert.equal(save.textContent, validationPanelEn['validationPanel.history.saved']);
   });
 });
