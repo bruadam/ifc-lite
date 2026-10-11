@@ -41,7 +41,7 @@ function Slot({ label, commit, onClear }: { label: string; commit: SourceCommit 
       type="button"
       onClick={onClear}
       disabled={!commit}
-      className="min-w-0 flex-1 rounded border px-1.5 py-0.5 text-left text-[11px] disabled:opacity-60"
+      className="min-w-0 flex-1 rounded border px-1.5 py-0.5 text-left text-xs disabled:opacity-60"
       title={commit?.message ?? undefined}
     >
       <span className="mr-1 font-semibold">{label}</span>
@@ -59,14 +59,14 @@ export function HistoryCompareBar({ a, b, compare, onClearSlot, onShowIn3D, show
   return (
     <div className="border-b px-3 py-2">
       <div className="flex items-center gap-1.5">
-        <span className="shrink-0 text-[11px] text-muted-foreground">{t('history.compare.label')}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{t('history.compare.label')}</span>
         <Slot label={t('history.compare.slotA')} commit={a} onClear={() => onClearSlot('A')} />
         <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
         <Slot label={t('history.compare.slotB')} commit={b} onClear={() => onClearSlot('B')} />
         <Button
           variant="secondary"
           size="sm"
-          className="h-6 shrink-0 text-[11px]"
+          className="h-6 shrink-0 text-xs"
           onClick={onShowIn3D}
           disabled={!a || !b || showing3D}
         >
@@ -75,7 +75,7 @@ export function HistoryCompareBar({ a, b, compare, onClearSlot, onShowIn3D, show
       </div>
 
       {a && b && (
-        <div className="mt-1.5 text-[11px]">
+        <div className="mt-1.5 text-xs">
           {compare.calculating && <span className="text-muted-foreground">{t('history.compare.calculating')}</span>}
           {!compare.calculating && !compare.supported && (
             <span className="text-muted-foreground">{t('history.compare.unsupported')}</span>
@@ -93,7 +93,7 @@ export function HistoryCompareBar({ a, b, compare, onClearSlot, onShowIn3D, show
               <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto">
                 {compare.groups.map((group) => (
                   <li key={`${group.state}:${group.ifcType}`} className="flex items-baseline gap-1.5">
-                    <span className="w-16 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <span className="w-16 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
                       {t(GROUP_LABEL[group.state])}
                     </span>
                     {/* The IFC type verbatim — it is the class the user will
@@ -104,7 +104,7 @@ export function HistoryCompareBar({ a, b, compare, onClearSlot, onShowIn3D, show
                 ))}
               </ul>
               {compare.truncated > 0 && (
-                <div className="mt-0.5 text-[10px] text-muted-foreground">
+                <div className="mt-0.5 text-xs text-muted-foreground">
                   {t('history.compare.more', { count: compare.truncated })}
                 </div>
               )}

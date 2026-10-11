@@ -1,6 +1,6 @@
 # Commit history for IFClite: specs
 
-Status: draft for implementation. Location: `docs/architecture/commit-history/`.
+Status: v1 implementation available for review on `feat/commit-aware-sources`. The documents below retain the design contracts; see [Model history](../../guide/model-history.md) for the implemented viewer and CLI entry points.
 
 These specs add model version history to IFClite. A source can describe models as a chain of immutable commits. The viewer can open any commit, compare any two commits, show one element's history, and ask the user whether a newly opened file is a new version of a model it already knows.
 
@@ -51,3 +51,30 @@ Steps 3, 4, 8 and 11 can start in parallel with 1 and 2.
 - Loading a pre-parsed snapshot instead of the IFC file (`ifc-lite-cache` payload). Reserved in the format list; see 01 §9.
 - Automatic acceptance of resolver verdicts. The resolver always asks.
 - IFC5 layer-stack export of the full history. Outlined in the appendix of spec 04.
+
+## Reproducible implementation evidence
+
+Run `node tools/commit-history-evidence.mjs` after building the CLI and WASM and
+fetching `ara3d/AC20-FZK-Haus.ifc` with `pnpm fixtures`. The script starts with the
+catalogued Archicad 20 IFC4 delivery, changes only wall #15042's Name in a second
+version, and changes only that wall's GlobalId in a third. These are controlled
+edits to a real authoring-tool file, not a corpus of real consecutive deliveries.
+
+The [recorded receipt](evidence/archicad-controlled-edits.json) shows three commits,
+a likely revision verdict, creation history retained through the GlobalId change,
+and a Modified change-set state with the earlier GlobalId. All 107 geometry
+fingerprints are identical between the head delivery and each derived export.
+Original header descriptions remain present. Export digests vary between runs
+because the file header records export time.
+
+Unit and integration coverage includes IFC2X3 and IFC4 property round trips,
+identity swaps, nonadjacent comparisons, package integrity and artifact pinning,
+offline history without old payloads, source-head conflict reevaluation, local
+resolver confirmation, read-only mutation guards and teardown.
+
+Before release, calibrate the configurable matching thresholds on real consecutive
+project deliveries. This branch also depends on a repair to the published
+`dalux-build-api@2.5.0` tarball, which omits its compiled `dist` files. Local
+validation used the tested SDK build; a clean installation requires that SDK
+release to be repaired. OwnerHistory rewriting and IFC5 history layers remain
+explicitly deferred by spec 04.

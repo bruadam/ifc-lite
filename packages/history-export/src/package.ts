@@ -60,6 +60,13 @@ export async function buildHistoryPackage(input: HistoryPackageInput): Promise<B
     if (!chain.some(c => c.artifact.digest === parsed.base.hash) || !chain.some(c => c.artifact.digest === parsed.head.hash)) throw new Error('Lineage sidecar is pinned to another artifact');
     await add(`lineage/${i}.json`, json(parsed));
   }
+  if (input.deletedReports) {
+    const { baseCommitId, csv, bcf } = input.deletedReports;
+    if (!chain.some(c => c.id === baseCommitId) || baseCommitId === head.id) throw new Error('Deleted report needs an earlier commit');
+    const path = `changes/deleted-since-${pinName(baseCommitId)}`;
+    if (csv !== undefined) await add(`${path}.csv`, csv);
+    if (bcf) await add(`${path}.bcf`, await bcf.arrayBuffer());
+  }
   const included = new Set<string>();
   async function* artifacts() { yield* input.artifacts ?? []; if (input.pastArtifacts) yield* input.pastArtifacts; }
   for await (const [id, payload] of artifacts()) {

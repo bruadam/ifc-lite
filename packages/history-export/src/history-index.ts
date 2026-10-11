@@ -26,20 +26,21 @@ export function buildHistoryIndex(input: { readonly model: HistoryIndex['model']
     const diff = input.diffs.get(`${baseId}:${commit.id}`);
     if (!diff) { partial = true; elements.clear(); continue; }
     if (diff.head.commitId !== commit.id || diff.base.commitId !== baseId) throw new Error('Diff does not match its history edge');
-    const priorIdentity = new Map(diff.appliedIdentity.map(identity => [identity.base, elements.get(identity.base)]));
-    for (const identity of diff.appliedIdentity) if (identity.base !== identity.here) elements.delete(identity.base);
-    for (const identity of diff.appliedIdentity) {
-      const previous = priorIdentity.get(identity.base);
-      if (previous && identity.base !== identity.here) {
-        elements.set(identity.here, { ...previous, key: identity.here, previousKeys: [...previous.previousKeys, identity.base] });
-      }
+    // Resolve every move against the previous revision, including swapped keys.
+    const previousElements = new Map(elements);
+    const aliases = new Map(diff.appliedIdentity.map(identity => [identity.here, identity.base]));
+    for (const entry of diff.entries) if (entry.baseKey) aliases.set(entry.key, entry.baseKey);
+    for (const base of aliases.values()) elements.delete(base);
+    for (const entry of diff.entries) if (entry.state === 'deleted') elements.delete(entry.key);
+    for (const [here, base] of aliases) {
+      const previous = previousElements.get(base);
+      if (previous) elements.set(here, { ...previous, key: here, previousKeys: here === base ? previous.previousKeys : [...previous.previousKeys, base] });
     }
     for (const entry of diff.entries) {
       const key = entry.key;
-      if (entry.state === 'deleted') { elements.delete(key); continue; }
-      const oldKey = entry.baseKey ?? key;
-      const previous = elements.get(oldKey) ?? elements.get(key);
-      if (oldKey !== key) elements.delete(oldKey);
+      if (entry.state === 'deleted') continue;
+      const oldKey = entry.baseKey ?? aliases.get(key) ?? key;
+      const previous = entry.state === 'added' ? undefined : previousElements.get(oldKey);
       if (entry.state !== 'added' && !previous) { partial = true; continue; }
       elements.set(key, {
         key, createdCommitId: previous?.createdCommitId ?? commit.id, createdAt: previous?.createdAt ?? commit.createdAt,

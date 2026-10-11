@@ -3,13 +3,23 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /** File controls whose actions depend on the mounted ribbon file host. */
-import { RefreshCcw, Share2 } from 'lucide-react';
+import { History, RefreshCcw, Share2 } from 'lucide-react';
+import { useViewerStore } from '@/store';
 import type { SurfaceCommandContext, SurfaceCommandDefinition, SurfaceCommandState } from './surface-commands';
 
 const ribbonOnly = ['ribbon'] as const;
 const alwaysEnabled = (_state: SurfaceCommandState): boolean => true;
 
 export const RIBBON_FILE_SURFACE_COMMANDS = [
+  {
+    id: 'file:history-package', labelKey: 'history.export.package',
+    keywords: 'export model commit revision offline history package zip', category: 'File', icon: History,
+    surfaces: ['palette'], enabled: alwaysEnabled,
+    run: () => {
+      useViewerStore.getState().showWorkspacePanel('history', 'palette');
+      window.dispatchEvent(new Event('ifc-export-history-package'));
+    },
+  },
   {
     id: 'file:refresh', labelKey: 'ribbon.file.refresh',
     keywords: 'reload refresh model from disk', category: 'File', icon: RefreshCcw,

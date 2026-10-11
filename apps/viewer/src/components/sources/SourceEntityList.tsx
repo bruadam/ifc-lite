@@ -14,6 +14,7 @@ interface SourceEntityListProps<T extends { id: string; name: string }> {
   icon: ComponentType<{ className?: string }>;
   emptyLabel: string;
   onSelect: (item: T) => void;
+  onDropFiles?: (item: T, files: File[]) => void;
 }
 
 /** Shared list rendering for the 'projects' and 'file-areas' browsing steps — a flat, selectable list of named entities. */
@@ -23,6 +24,7 @@ export function SourceEntityList<T extends { id: string; name: string }>({
   icon: Icon,
   emptyLabel,
   onSelect,
+  onDropFiles,
 }: SourceEntityListProps<T>) {
   const { t } = useTranslation();
   if (loading) {
@@ -41,6 +43,8 @@ export function SourceEntityList<T extends { id: string; name: string }>({
           <button
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
             onClick={() => onSelect(item)}
+            onDragOver={onDropFiles ? event => { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy'; } : undefined}
+            onDrop={onDropFiles ? event => { event.preventDefault(); event.stopPropagation(); onDropFiles(item, Array.from(event.dataTransfer.files)); } : undefined}
           >
             <Icon className="h-4 w-4 text-muted-foreground" />
             <span className="truncate">{item.name}</span>

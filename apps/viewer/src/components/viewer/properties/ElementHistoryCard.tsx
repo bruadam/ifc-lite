@@ -62,7 +62,7 @@ function EntryRow({ entry }: { entry: ElementHistoryEntry }) {
       : t(STATE_LABEL[entry.state]);
 
   return (
-    <li className="flex gap-2 py-1 text-[11px]">
+    <li className="flex gap-2 py-1 text-xs">
       <span
         className={cn(
           'mt-1 h-1.5 w-1.5 shrink-0 rounded-full',
@@ -103,7 +103,7 @@ export function ElementHistoryCard({ modelId, elementKey }: ElementHistoryCardPr
         type="button"
         onClick={toggle}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-1.5 px-1 pb-0.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
+        className="flex w-full items-center gap-1.5 px-1 pb-0.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
       >
         {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         <History className="h-3 w-3" />
@@ -112,13 +112,13 @@ export function ElementHistoryCard({ modelId, elementKey }: ElementHistoryCardPr
 
       {expanded && (
         <div className="px-1">
-          {!history.supported && <p className="text-[11px] text-muted-foreground">{t('history.element.unsupported')}</p>}
-          {history.supported && history.error && <p className="text-[11px] text-destructive">{history.error}</p>}
+          {!history.supported && <p className="text-xs text-muted-foreground">{t('history.element.unsupported')}</p>}
+          {history.supported && history.error && <p className="text-xs text-destructive">{history.error}</p>}
           {history.supported && !history.error && history.loading && history.entries.length === 0 && (
-            <p className="text-[11px] text-muted-foreground">{t('history.state.loading')}</p>
+            <p className="text-xs text-muted-foreground">{t('history.state.loading')}</p>
           )}
           {history.supported && !history.error && !history.loading && history.entries.length === 0 && (
-            <p className="text-[11px] text-muted-foreground">{t('history.element.empty')}</p>
+            <p className="text-xs text-muted-foreground">{t('history.element.empty')}</p>
           )}
           {history.entries.length > 0 && (
             <ul className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60">
@@ -128,7 +128,7 @@ export function ElementHistoryCard({ modelId, elementKey }: ElementHistoryCardPr
             </ul>
           )}
           {history.hasMore && (
-            <button type="button" onClick={history.loadMore} className="mt-1 text-[11px] underline">
+            <button type="button" onClick={history.loadMore} className="mt-1 text-xs underline">
               {t('history.element.showAll')}
             </button>
           )}

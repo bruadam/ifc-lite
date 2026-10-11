@@ -9,13 +9,13 @@ import { toast } from '@/components/ui/toast';
 import { useHistoryExport, type HistoryExportSelection } from '@/hooks/history/useHistoryExport';
 import { useModelHistory } from '@/hooks/history/useModelHistory';
 
-export function HistoryExportSection({ modelId }: { modelId: string }) {
+export function HistoryExportSection({ modelId, initialMode = 'history' }: { modelId: string; initialMode?: HistoryExportSelection['mode'] }) {
   const { t } = useTranslation();
   const tag = useViewerStore(s => s.commitTags.get(modelId));
   const link = useViewerStore(s => s.localLineage.get(modelId));
   const history = useModelHistory(modelId);
   const run = useHistoryExport();
-  const [selection, setSelection] = useState<HistoryExportSelection>({ mode: 'history' });
+  const [selection, setSelection] = useState<HistoryExportSelection>({ mode: initialMode });
   const [digest, setDigest] = useState('');
   const [busy, setBusy] = useState(false);
   const abort = useRef<AbortController | null>(null);
@@ -25,10 +25,14 @@ export function HistoryExportSection({ modelId }: { modelId: string }) {
     <label className="block">{t('history.export.title')}<select className="ml-2 rounded border bg-background" value={selection.mode} onChange={e => setSelection({ ...selection, mode: e.target.value as HistoryExportSelection['mode'] })}>
       <option value="history">{t('history.export.stamp')}</option><option value="change-set">{t('history.export.changes')}</option><option value="package">{t('history.export.package')}</option>
     </select></label>
-    {selection.mode === 'change-set' && tag && <label>{t('history.export.changes')}<select aria-label={t('history.export.changes')} value={selection.baseId ?? ''} onChange={e => setSelection({ ...selection, baseId: e.target.value })}>
+    {(selection.mode === 'change-set' || selection.mode === 'package') && tag && <label>{t('history.export.changes')}<select aria-label={t('history.export.changes')} value={selection.baseId ?? ''} onChange={e => setSelection({ ...selection, baseId: e.target.value })}>
       <option value="">{t('history.resolver.choose')}</option>{history.commits.filter(c => c.id !== tag.commitId).map(c => <option key={c.id} value={c.id}>{c.message ?? c.id}</option>)}
     </select></label>}
-    {selection.mode !== 'package' && <label className="block">{t('history.export.pset')}<input className="ml-2 rounded border bg-background" value={selection.psetName ?? ''} placeholder={selection.mode === 'history' ? 'IfcLite_History' : 'IfcLite_Change'} onChange={e => setSelection({ ...selection, psetName: e.target.value || undefined })} /></label>}
+    {selection.mode !== 'history' && <>
+      <label className="block"><input type="checkbox" checked={selection.deletedBcf ?? selection.mode === 'change-set'} onChange={e => setSelection({ ...selection, deletedBcf: e.target.checked })} /> {t('history.export.deletedBcf')}</label>
+      <label className="block"><input type="checkbox" checked={selection.deletedCsv ?? selection.mode === 'change-set'} onChange={e => setSelection({ ...selection, deletedCsv: e.target.checked })} /> {t('history.export.deletedCsv')}</label>
+    </>}
+    {selection.mode !== 'package' && <label className="block">{t('history.export.pset')}<input className="ml-2 rounded border bg-background" value={selection.psetName ?? ''} placeholder={t(selection.mode === 'history' ? 'history.export.historyPset' : 'history.export.changePset')} onChange={e => setSelection({ ...selection, psetName: e.target.value || undefined })} /></label>}
     {selection.mode === 'package' && <label className="block"><input type="checkbox" checked={!!selection.allArtifacts} onChange={e => setSelection({ ...selection, allArtifacts: e.target.checked })} /> {t('history.export.artifacts')}</label>}
     {selection.mode === 'package' && <label className="block"><input type="checkbox" checked={!!selection.stampPackage} onChange={e => setSelection({ ...selection, stampPackage: e.target.checked })} /> {t('history.export.stamp')}</label>}
     {selection.mode === 'package' && <p>{t('history.export.size', { bytes: history.commits.reduce((total, c) => total + c.artifact.sizeBytes, 0) })}</p>}

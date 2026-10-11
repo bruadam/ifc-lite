@@ -105,6 +105,7 @@ export function SourceProjectsStep({ provider, ctx, onError, onSelect }: SourceP
               : t('sources.sourceProjectsStep.emptyDefault')
           }
           onSelect={onSelect}
+          onDropFiles={provider.manifest.capabilities.commits?.write ? (project, files) => window.dispatchEvent(new CustomEvent('ifc-upload-to-project', { detail: { providerId: provider.manifest.name, projectId: project.id, files } })) : undefined}
         />
         <LoadMoreRow
           hasMore={paged.hasMore}

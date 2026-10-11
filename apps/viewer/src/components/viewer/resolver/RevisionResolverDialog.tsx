@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+import { EvidenceList } from './EvidenceList';
 import { useState } from 'react';
 import type { MatchResult } from '@ifc-lite/model-match';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -19,7 +20,7 @@ export function RevisionResolverDialog({ results, labels, onConfirm, onLater }: 
         <option value="">{t('history.resolver.choose')}</option><option value="new">{t('history.resolver.new')}</option>
         {result.results.map(r => <option key={r.candidateId} value={r.candidateId}>{labels.get(r.candidateId)} · {r.verdict}</option>)}
       </select></label>
-      <ul className="text-xs text-muted-foreground">{(result.results.find(r => r.candidateId === choices[result.subjectId]) ?? result.results[0])?.reasons.map(reason => <li key={reason}>{t(`history.reason.${reason}`)}</li>)}</ul>
+      <EvidenceList result={result.results.find(r => r.candidateId === choices[result.subjectId]) ?? result.results[0]} />
     </div>)}
     <label><input type="checkbox" checked={hide} onChange={e => setHide(e.target.checked)} /> {t('history.resolver.hide')}</label>
     <label><input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} /> {t('history.resolver.compare')}</label>

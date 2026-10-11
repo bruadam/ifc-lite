@@ -47,6 +47,8 @@ export interface HistoryPackageInput {
   readonly pastArtifacts?: AsyncIterable<readonly [string, CommitPayload]>;
   readonly identity?: readonly IdentityRecordSet[];
   readonly lineage?: readonly LineageSidecar[];
+  /** Optional deleted-element reports for the chosen comparison base. */
+  readonly deletedReports?: { readonly baseCommitId: string; readonly csv?: string; readonly bcf?: Blob };
   readonly partial?: boolean;
   readonly omitAuthors?: boolean;
 }

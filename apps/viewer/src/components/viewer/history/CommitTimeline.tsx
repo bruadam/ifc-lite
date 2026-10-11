@@ -49,27 +49,13 @@ export function CommitTimeline({ rows, canOpen, hasMore, loadingMore, onAction, 
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
-      <div role="list" aria-label={t('history.timeline.label')}>
-        {virtualize ? (
-          <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-            {virtualizer.getVirtualItems().map((item) => (
-              <div
-                key={item.key}
-                ref={virtualizer.measureElement}
-                data-index={item.index}
-                className="absolute left-0 top-0 w-full"
-                style={{ transform: `translateY(${item.start}px)` }}
-              >
-                <CommitRow row={rows[item.index]} canOpen={canOpen} onAction={onAction} />
-              </div>
-            ))}
-          </div>
-        ) : (
-          rows.map((row) => (
-            <CommitRow key={row.commit.id} row={row} canOpen={canOpen} onAction={onAction} />
-          ))
-        )}
-      </div>
+      <ul className="relative w-full" aria-label={t('history.timeline.label')} style={virtualize ? { height: virtualizer.getTotalSize() } : undefined}>
+        {virtualize ? virtualizer.getVirtualItems().map(item => (
+          <CommitRow key={item.key} row={rows[item.index]} canOpen={canOpen} onAction={onAction}
+            measureRef={virtualizer.measureElement} index={item.index}
+            style={{ position: 'absolute', left: 0, top: 0, width: '100%', transform: `translateY(${item.start}px)` }} />
+        )) : rows.map(row => <CommitRow key={row.commit.id} row={row} canOpen={canOpen} onAction={onAction} />)}
+      </ul>
       {hasMore && (
         <div className="p-2 text-center">
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onLoadMore} disabled={loadingMore}>

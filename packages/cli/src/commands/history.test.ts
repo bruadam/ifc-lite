@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readBCF } from '@ifc-lite/bcf';
 import { readHistoryPackage, createHistoryPackageProvider } from '@ifc-lite/history-export';
 import { IfcParser, extractPropertiesOnDemand } from '@ifc-lite/parser';
 import { historyCommand } from './history.js';
@@ -65,7 +66,9 @@ describe('commit-history specs 03/04: CLI delivery workflow', () => {
     expect(change?.properties.find(p => p.name === 'ChangeState')?.value).toBe('Modified');
     expect(await readFile(csv, 'utf8')).toContain('0000000000000000000003');
     expect(await readFile(csv, 'utf8')).not.toContain('0000000000000000000001');
-    expect((await readFile(bcf)).byteLength).toBeGreaterThan(100);
+    const project = await readBCF(await fileBytes(bcf));
+    const topic = [...project.topics.values()][0];
+    expect(topic.viewpoints[0].components?.selection?.map(component => component.ifcGuid)).toEqual(['0000000000000000000003']);
   });
 
   it('refuses duplicate bytes instead of inventing two distinct commits', async () => {

@@ -33,12 +33,14 @@ export interface ModelCommitBadgeProps {
 export function ModelCommitBadge({ modelId }: ModelCommitBadgeProps) {
   const { t } = useTranslation();
   const pending = useViewerStore(s => s.resolverPending.has(modelId));
+  const baseName = useViewerStore(s => { const link = s.localLineage.get(modelId); return link ? s.models.get(link.baseModelId)?.name : undefined; });
   const tag = useViewerStore((s) => s.commitTags.get(modelId));
   const newHead = useViewerStore((s) => s.historyNewHeads.get(modelId));
   const showPanel = useViewerStore((s) => s.showWorkspacePanel);
   const setHistoryFocus = useViewerStore((s) => s.setHistoryFocus);
   const backToLatest = useBackToLatest();
 
+  if (!tag && baseName) return <button type="button" className="text-xs underline" onClick={event => { event.stopPropagation(); setHistoryFocus(modelId); showPanel('history'); }}>{t('history.local.versionOf', { name: baseName })}</button>;
   if (!tag) return pending ? <button className="text-xs underline" onClick={event => { event.stopPropagation(); setHistoryFocus(modelId); showPanel('history'); window.dispatchEvent(new Event('ifc-resolve-history')); }}>{t('history.resolver.pending')}</button> : null;
   const loadedOn = formatLocaleDate(getLocale(), tag.loadedAt, { day: 'numeric', month: 'short' });
 
@@ -54,7 +56,7 @@ export function ModelCommitBadge({ modelId }: ModelCommitBadgeProps) {
               showPanel('history');
             }}
             className={cn(
-              'flex items-center gap-1 rounded px-1 py-0.5 font-mono text-[10px]',
+              'flex items-center gap-1 rounded px-1 py-0.5 font-mono text-xs',
               tag.historical
                 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
                 : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
@@ -79,7 +81,7 @@ export function ModelCommitBadge({ modelId }: ModelCommitBadgeProps) {
             event.stopPropagation();
             backToLatest(modelId);
           }}
-          className="rounded px-1 py-0.5 text-[10px] underline decoration-dotted"
+          className="rounded px-1 py-0.5 text-xs underline decoration-dotted"
           title={t('history.action.backToLatest')}
         >
           {newHead ? t('history.newHead.open') : t('history.action.backToLatest')}

@@ -23,6 +23,7 @@ export function HistoryActions({ modelId }: { modelId: string }) {
     {pending && <Button variant="outline" onClick={() => window.dispatchEvent(new Event('ifc-resolve-history'))}>{t('history.resolver.resolve')}</Button>}
     {host?.list().some(p => p.manifest.capabilities.commits?.write) && <Button variant="outline" onClick={() => setUpload(true)}>{t('history.upload.title')}</Button>}
     {upload && <SourceUploadDialog modelId={modelId} onClose={() => setUpload(false)} />}
+    <Button variant="outline" onClick={() => window.dispatchEvent(new CustomEvent('ifc-export-history-package', { detail: modelId }))}>{t('history.export.package')}</Button>
     <HistoryExportSection modelId={modelId} />
   </div>;
 }

@@ -1,6 +1,8 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+import { SourceDropUpload, sourceUploadLoads } from '../resolver/SourceDropUpload';
+import { HistoryPackageDialog } from './HistoryPackageDialog';
 import { useEffect, useRef, useState } from 'react';
 import { matchModels, type MatchResult } from '@ifc-lite/model-match';
 import { createHistoryPackageProvider } from '@ifc-lite/history-export';
@@ -40,6 +42,7 @@ export function HistoryRuntime() {
     if (loading || running.current) return;
     const fresh = [...models.values()].filter(m => !seen.current.has(m.id) && m.sourceFile && m.ifcDataStore);
     if (!fresh.length) return;
+    const freshIds = new Set(fresh.map(model => model.id));
     running.current = true;
     void (async () => {
       const pending: MatchResult[] = [];
@@ -56,10 +59,10 @@ export function HistoryRuntime() {
           state.setCommitTag(model.id, { provider: name, projectId: head.projectId, sourceModelId: head.modelId, commitId: head.id, artifactDigest: head.artifact.digest, historical: !!pack.stamped, loadedAt: Date.now() });
           continue;
         }
-        if (state.commitTags.has(model.id) || state.sourceTags.has(model.id) || state.collabRole !== null || !state.resolverEnabled) continue;
+        if (sourceUploadLoads.has(model.id) || state.commitTags.has(model.id) || state.sourceTags.has(model.id) || state.collabRole !== null || !state.resolverEnabled) continue;
         const subject = await subjectFromModel(model);
         const candidates = [];
-        for (const candidate of models.values()) if (candidate.id !== model.id && candidate.ifcDataStore && candidate.loadedAt <= model.loadedAt) candidates.push({ ...await subjectFromModel(candidate), origin: 'loaded' as const });
+        for (const candidate of models.values()) if (!freshIds.has(candidate.id) && candidate.ifcDataStore && candidate.loadedAt <= model.loadedAt) candidates.push({ ...await subjectFromModel(candidate), origin: 'loaded' as const });
         if (!candidates.length || !state.models.has(model.id)) continue;
         const result = await matchModels(subject, candidates);
         if (!useViewerStore.getState().models.has(model.id)) continue;
@@ -91,5 +94,5 @@ export function HistoryRuntime() {
     if (choices?.some(c => c.compare && c.baseId !== 'new')) void runComparison();
     setResults([]);
   };
-  return results.length ? <RevisionResolverDialog key={results.map(r => r.subjectId).join('|')} results={results} labels={new Map([...models.values()].map(m => [m.id, m.name]))} onConfirm={finish} onLater={() => finish()} /> : null;
+  return <><HistoryPackageDialog /><SourceDropUpload />{results.length ? <RevisionResolverDialog key={results.map(r => r.subjectId).join('|')} results={results} labels={new Map([...models.values()].map(m => [m.id, m.name]))} onConfirm={finish} onLater={() => finish()} /> : null}</>;
 }

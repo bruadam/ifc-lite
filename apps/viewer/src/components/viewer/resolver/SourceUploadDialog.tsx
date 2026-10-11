@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+import { EvidenceList } from './EvidenceList';
 import { isDerivedHistoryExport } from '@ifc-lite/history-export';
 import { invalidateModelHistory } from '@/hooks/history/useModelHistory';
 import { useEffect, useRef, useState } from 'react';
@@ -15,18 +16,18 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/compone
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/i18n';
 
-export function SourceUploadDialog({ modelId, onClose }: { modelId: string; onClose: () => void }) {
+export function SourceUploadDialog({ modelId, onClose, initialProviderId, initialProjectId }: { modelId: string; onClose: () => void; initialProviderId?: string; initialProjectId?: string }) {
   const { t } = useTranslation(), host = useOptionalSourceHost();
   const providers = host?.list().filter(p => p.manifest.capabilities.commits?.write) ?? [];
-  const [providerId, setProviderId] = useState(providers[0]?.manifest.name ?? '');
+  const [providerId, setProviderId] = useState(initialProviderId ?? providers[0]?.manifest.name ?? '');
   const [projects, setProjects] = useState<SourceProject[]>([]), [projectId, setProjectId] = useState('');
   const [models, setModels] = useState<SourceModel[]>([]), [targetId, setTargetId] = useState('');
   const [match, setMatch] = useState<MatchResult | null>(null), [subject, setSubject] = useState<MatchSubject | null>(null);
-  const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
+  const [message, setMessage] = useState(() => `Upload ${useViewerStore.getState().models.get(modelId)?.sourceFile?.name ?? modelId}`), [error, setError] = useState(''), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
   const createdModel = useRef<SourceModel | null>(null);
   const request = useRef<AbortController | null>(null), key = useRef(crypto.randomUUID());
   useEffect(() => {
-    const abort = new AbortController(); setProjectId(''); setProjects([]);
+    const abort = new AbortController(); setProjectId(providerId === initialProviderId ? initialProjectId ?? '' : ''); setProjects([]);
     const provider = host?.get(providerId);
     if (provider && host) {
       const ctx = host.createContext(provider.manifest, loadResolvedSourcePrefs(provider.manifest));
@@ -37,7 +38,7 @@ export function SourceUploadDialog({ modelId, onClose }: { modelId: string; onCl
       })().catch(e => { if (!abort.signal.aborted) setError(String(e)); });
     }
     return () => abort.abort();
-  }, [host, providerId]);
+  }, [host, providerId, initialProviderId, initialProjectId]);
   useEffect(() => {
     createdModel.current = null; key.current = crypto.randomUUID();
     const abort = new AbortController(); setMatch(null); setTargetId(''); setModels([]); setError('');
@@ -46,7 +47,7 @@ export function SourceUploadDialog({ modelId, onClose }: { modelId: string; onCl
       setBusy(true);
       void (async () => {
         const subject = await subjectFromModel(model);
-        const found = await sourceCandidates(provider, host.createContext(provider.manifest, loadResolvedSourcePrefs(provider.manifest)), projectId, abort.signal);
+        const found = await sourceCandidates(provider, host.createContext(provider.manifest, loadResolvedSourcePrefs(provider.manifest)), projectId, abort.signal, subject);
         const result = await matchModels(subject, found.candidates, { signal: abort.signal });
         if (abort.signal.aborted) return;
         setSubject(subject); setModels(found.models); setMatch(result);
@@ -80,7 +81,7 @@ export function SourceUploadDialog({ modelId, onClose }: { modelId: string; onCl
     <label>{t('history.upload.source')}<select disabled={busy} value={providerId} onChange={e => setProviderId(e.target.value)}>{providers.map(p => <option key={p.manifest.name} value={p.manifest.name}>{p.manifest.title}</option>)}</select></label>
     <label>{t('history.upload.project')}<select disabled={busy} value={projectId} onChange={e => setProjectId(e.target.value)}><option value="">{t('history.resolver.choose')}</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     <label>{t('history.resolver.choose')}<select disabled={busy} value={targetId} onChange={e => { setTargetId(e.target.value); key.current = crypto.randomUUID(); }}><option value="">{t('history.resolver.choose')}</option><option value="new">{t('history.upload.new')}</option>{models.map(m => <option key={m.id} value={m.id}>{m.name} · {match?.results.find(r => r.candidateId === m.id)?.verdict}</option>)}</select></label>
-    <ul>{match?.results.find(r => r.candidateId === targetId)?.reasons.map(reason => <li key={reason}>{t(`history.reason.${reason}`)}</li>)}</ul>
+    <EvidenceList result={match?.results.find(r => r.candidateId === targetId) ?? match?.results[0]} />
     <label>{t('history.upload.message')}<input disabled={busy} value={message} onChange={e => { setMessage(e.target.value); key.current = crypto.randomUUID(); }} /></label>
     {busy && <progress value={progress} max={100} aria-label={t('history.upload.submit')} />}{error && <p role="alert">{error}</p>}
     <Button disabled={busy || !match || !targetId} onClick={() => { void upload(); }}>{t('history.upload.submit')}</Button>

@@ -21,7 +21,8 @@ commit author fields; history stamping likewise omits `LastChangedBy`. The IFC's
 original authoring metadata is preserved. Derived IFC exports must not be treated
 as original source deliveries.
 
-The current ZIP reader limits declared uncompressed content to 2 GB. ZIP creation
-and reading are in memory; large histories require enough memory for artifacts
-and compression. OwnerHistory rewriting and IFC5 history layers are deferred as
+Packages are limited to 2 GB of uncompressed content. Creation compresses past
+artifacts one at a time via `pastArtifacts`, retaining compressed output only.
+Reading checks the limit while inflating and retains the verified package in
+memory. Optional `deletedReports` adds CSV and BCF reports for a chosen base. OwnerHistory rewriting and IFC5 history layers are deferred as
 specified by the design.

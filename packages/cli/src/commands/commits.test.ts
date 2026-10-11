@@ -9,7 +9,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(
 it('commit-history CLI uses its bearer token without browser sign-in and preserves paging', async () => {
   vi.stubEnv('IFC_LITE_COMMIT_URL', 'https://source.example/api');
   vi.stubEnv('IFC_LITE_COMMIT_TOKEN', 'test-cli-token');
-  const requests: { url: string; headers: Headers; redirect?: RequestRedirect }[] = [];
+  const requests: { url: string; headers: Headers; redirect?: RequestInit['redirect'] }[] = [];
   vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input); requests.push({ url, headers: new Headers(init?.headers), redirect: init?.redirect });
     if (url.endsWith('/capabilities')) return Response.json({ payloadFormats: ['ifc-step'], fingerprints: false, storedDiffs: false, elementHistory: false, identityRecords: false, write: false, watch: false, modelIdsAreFileIds: false });

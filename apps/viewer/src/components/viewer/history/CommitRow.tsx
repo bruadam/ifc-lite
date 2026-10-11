@@ -12,7 +12,7 @@
  * can be edited.
  */
 
-import { useCallback } from 'react';
+import { useCallback, type CSSProperties, type Ref } from 'react';
 import { GitMerge, MoreHorizontal } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -43,6 +43,9 @@ export type CommitRowAction =
   | 'copy-id';
 
 export interface CommitRowProps {
+  readonly style?: CSSProperties;
+  readonly measureRef?: Ref<HTMLLIElement>;
+  readonly index?: number;
   readonly row: CommitRowModel;
   /** `false` disables the two open actions, with a tooltip saying why. */
   readonly canOpen: boolean;
@@ -53,7 +56,7 @@ function Badge({ label, tone }: { label: string; tone: 'head' | 'loaded' | 'warn
   return (
     <span
       className={cn(
-        'shrink-0 rounded px-1 text-[9px] font-semibold uppercase tracking-wide',
+        'shrink-0 rounded px-1 text-xs font-semibold uppercase tracking-wide',
         tone === 'head' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
         tone === 'loaded' && 'bg-sky-500/15 text-sky-700 dark:text-sky-400',
         tone === 'warn' && 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
@@ -64,7 +67,7 @@ function Badge({ label, tone }: { label: string; tone: 'head' | 'loaded' | 'warn
   );
 }
 
-export function CommitRow({ row, canOpen, onAction }: CommitRowProps) {
+export function CommitRow({ row, canOpen, onAction, style, measureRef, index }: CommitRowProps) {
   const { t } = useTranslation();
   const locale = getLocale();
   const { commit } = row;
@@ -74,8 +77,7 @@ export function CommitRow({ row, canOpen, onAction }: CommitRowProps) {
   const handle = useCallback((action: CommitRowAction) => () => onAction(action, row), [onAction, row]);
 
   return (
-    <div
-      role="listitem"
+    <li ref={measureRef} style={style} data-index={index}
       className={cn(
         'flex gap-2 border-b px-3 py-2 text-xs',
         row.isLoaded && 'bg-accent/40',
@@ -99,7 +101,7 @@ export function CommitRow({ row, canOpen, onAction }: CommitRowProps) {
           {commit.status === 'pending' && <Badge label={t('history.badge.pending')} tone="warn" />}
           {commit.status === 'rejected' && <Badge label={t('history.badge.rejected')} tone="warn" />}
         </div>
-        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
           {commit.author?.displayName && <span className="truncate">{commit.author.displayName}</span>}
           <span title={absoluteCommitTime(commit, locale)}>{relativeCommitTime(commit, locale)}</span>
           {stats && commit.stats && (
@@ -125,7 +127,7 @@ export function CommitRow({ row, canOpen, onAction }: CommitRowProps) {
           )}
         </div>
         {!included && <p className="text-xs text-muted-foreground">{t('history.package.unavailable')}</p>}
-        {row.isMerge && <div className="mt-0.5 text-[10px] text-muted-foreground">{t('history.timeline.mergeCommit')}</div>}
+        {row.isMerge && <div className="mt-0.5 text-xs text-muted-foreground">{t('history.timeline.mergeCommit')}</div>}
       </div>
 
       <DropdownMenu>
@@ -159,6 +161,6 @@ export function CommitRow({ row, canOpen, onAction }: CommitRowProps) {
           <DropdownMenuItem onSelect={handle('copy-id')}>{t('history.action.copyId')}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+    </li>
   );
 }

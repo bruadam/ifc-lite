@@ -170,7 +170,7 @@ describe('HistoryPanel states', () => {
     const { container } = mount();
     await advance(0);
 
-    const rows = [...container.querySelectorAll('[role="listitem"]')];
+    const rows = [...container.querySelectorAll('ul[aria-label] > li')];
     assert.equal(rows.length, 2);
     // c2 is the head; c1 is what the viewer has open.
     assert.match(rows[0].textContent ?? '', /HEAD/);

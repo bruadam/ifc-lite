@@ -197,7 +197,7 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
     body = (
       <div role="alert" className="p-3 text-xs">
         <div className="text-destructive">{history.error}</div>
-        <Button variant="secondary" size="sm" className="mt-2 h-6 text-[11px]" onClick={history.reload}>
+        <Button variant="secondary" size="sm" className="mt-2 h-6 text-xs" onClick={history.reload}>
           {t('history.state.retry')}
         </Button>
       </div>
@@ -235,7 +235,7 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
     <div className="flex h-full flex-col">
       {header}
       {model && (
-        <div className="border-b px-3 py-2 text-[11px]">
+        <div className="border-b px-3 py-2 text-xs">
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground">{t('history.panel.modelLabel')}</span>
             <select

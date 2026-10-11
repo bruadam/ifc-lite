@@ -41,7 +41,8 @@ export function createHistoryPackageProvider(pack: HistoryPackage, name: string)
       return payload;
     },
     getCommitDiff: async (_ctx, base, target) => {
-      get(base); get(target);
+      if (base.commitId) get(base); else checkModel(base);
+      get(target);
       return pack.diffs.find(d => d.base.commitId === base.commitId && d.head.commitId === target.commitId) ?? fail('unavailable', 'This comparison is not included in the package; load both artifacts to compare locally');
     },
     listIdentityRecords: async (_ctx, base, target) => {

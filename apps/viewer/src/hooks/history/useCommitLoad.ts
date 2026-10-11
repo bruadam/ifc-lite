@@ -12,6 +12,7 @@
  * `replaceModelId` that swaps a model rather than federating another.
  */
 
+import { verifyCommitPayload } from '@/lib/history/commitPayload';
 import { useCallback } from 'react';
 import { toast } from '@/components/ui/toast';
 import type { CommitPayloadFormat, CommitRef, SourceCommit } from '@ifc-lite/plugin-api';
@@ -66,10 +67,7 @@ export function useCommitLoad(): {
           // service that served the wrong commit's bytes would otherwise be
           // indistinguishable from one that served the right ones, and the
           // user would be looking at a model labelled as a version it is not.
-          if (payload.artifactDigest !== options.commit.artifact.digest) {
-            toast.error('The commit service returned bytes that do not match this version.');
-            return false;
-          }
+          await verifyCommitPayload(payload, options.commit);
           bytes = payload.bytes;
           fileName = payload.fileName;
           artifactDigest = payload.artifactDigest;

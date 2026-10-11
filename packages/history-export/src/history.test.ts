@@ -7,8 +7,8 @@ import { diffModels } from '@ifc-lite/diff';
 import { IfcParser, extractPropertiesOnDemand } from '@ifc-lite/parser';
 import { MutablePropertyView } from '@ifc-lite/mutations';
 import { StepExporter } from '@ifc-lite/export';
-import type { SourceCommit, StoredCommitDiff } from '@ifc-lite/plugin-api';
-import { artifactDigest, buildHistoryIndex, buildHistoryPackage, readHistoryPackage, stampHistory, markChangeSet, deletedElementsCsv, storeCommitDiff, historyKeyAliases } from './index.js';
+import type { PluginContext, SourceCommit, StoredCommitDiff } from '@ifc-lite/plugin-api';
+import { artifactDigest, buildHistoryIndex, buildHistoryPackage, readHistoryPackage, stampHistory, markChangeSet, deletedElementsCsv, storeCommitDiff, historyKeyAliases, createHistoryPackageProvider } from './index.js';
 const bytes = (schema = 'IFC4') => new TextEncoder().encode(`ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('ViewDefinition [CoordinationView]'),'2;1');\nFILE_NAME('wall.ifc','2026-01-01T00:00:00',(),(),'test','test','');\nFILE_SCHEMA(('${schema}'));\nENDSEC;\nDATA;\n#1=IFCPERSON($,$,'User',$,$,$,$,$);\n#2=IFCORGANIZATION($,'Org',$,$,$);\n#3=IFCPERSONANDORGANIZATION(#1,#2,$);\n#4=IFCAPPLICATION(#2,'1','Test','Test');\n#5=IFCOWNERHISTORY(#3,#4,$,.ADDED.,$,$,$,0);\n#10=IFCWALL('0000000000000000000001',#5,'Wall',$,$,$,$,$${schema === 'IFC2X3' ? '' : ',$'});\nENDSEC;\nEND-ISO-10303-21;`).buffer;
 const commit = (id: string, parents: string[] = []): SourceCommit => ({ id, parents, projectId: 'p', modelId: 'm', status: 'published', createdAt: '2026-01-01T00:00:00Z', author: { id: 'u', displayName: 'Author' }, artifact: { digest: id, fileName: 'wall.ifc', sizeBytes: 1 } });
 const ref = (id: string) => ({ projectId: 'p', modelId: 'm', commitId: id });
@@ -23,6 +23,15 @@ describe('commit-history spec 04: history survives export and transport', () => 
     expect(index.elements.get('new')).toMatchObject({ createdCommitId: 'a', lastChangedCommitId: 'b', changeCount: 2, previousKeys: [added.key] });
     expect(index.elements.has(added.key)).toBe(false);
     expect(buildHistoryIndex({ model: index.model, chain, diffs: new Map([[':a', ds[0]]]) }).partial).toBe(true);
+  });
+  it('preserves both histories when reviewed identities exchange keys', () => {
+    const chain = [commit('one'), commit('two', ['one']), commit('three', ['two'])];
+    const a = { ...added, key: 'a' }, b = { ...added, key: 'b' };
+    const swapped = { ...diff('two', 'three', [{ ...a, baseKey: 'b', state: 'modified' as const }]), appliedIdentity: [{ base: 'a', here: 'b', reason: 'reviewed' }, { base: 'b', here: 'a', reason: 'reviewed' }] };
+    const ds = [diff('', 'one', [a]), diff('one', 'two', [b]), swapped];
+    const index = buildHistoryIndex({ model: { projectId: 'p', modelId: 'm', name: 'Walls' }, chain, diffs: new Map(ds.map(d => [`${d.base.commitId}:${d.head.commitId}`, d])) });
+    expect(index.elements.get('a')).toMatchObject({ createdCommitId: 'two', changeCount: 2, previousKeys: ['b'] });
+    expect(index.elements.get('b')).toMatchObject({ createdCommitId: 'one', changeCount: 1, previousKeys: ['a'] });
   });
   it.each(['IFC2X3', 'IFC4'])('writes parseable history properties and preserves header items in %s', async schema => {
     const store = await new IfcParser().parseColumnar(bytes(schema));
@@ -48,6 +57,27 @@ describe('commit-history spec 04: history survives export and transport', () => 
     const zip = await JSZip.loadAsync(await blob.arrayBuffer()); zip.file('model/wall.ifc', 'tampered');
     await expect(readHistoryPackage(await zip.generateAsync({ type: 'arraybuffer' }))).rejects.toThrow('digest');
     await expect(buildHistoryPackage({ ...input, identity: [{ base: { ...ref(hash), artifactDigest: 'wrong' }, head: { ...ref(hash), artifactDigest: hash }, entries: [] }] })).rejects.toThrow('pinned');
+  });
+  it('streams original deliveries and serves history offline when past payloads are omitted', async () => {
+    const first = bytes(), last = new TextEncoder().encode(new TextDecoder().decode(first).replace("'Wall'", "'New wall'")).buffer;
+    const chain = await Promise.all([first, last].map(async (data, i) => ({ ...commit(String(i), i ? ['0'] : []), artifact: { digest: await artifactDigest(data), fileName: 'wall.ifc', sizeBytes: data.byteLength } })));
+    const payload = (data: ArrayBuffer, i: number) => ({ bytes: data, artifactDigest: chain[i].artifact.digest, fileName: 'wall.ifc', format: 'ifc-step' as const });
+    const input = { model: { name: 'Walls' }, chain, diffs: [diff('', '0', [added]), diff('0', '1', [{ ...added, state: 'modified' as const, changeKinds: ['data' as const] }])], modelFile: payload(last, 1), omitAuthors: true };
+    const pack = await readHistoryPackage(await (await buildHistoryPackage(input)).arrayBuffer());
+    const provider = createHistoryPackageProvider(pack, 'offline');
+    const ctx: PluginContext = { fetch, fetchPublic: fetch, getPreference: async () => undefined, storage: { get: async () => undefined, set: async () => {}, delete: async () => {}, keys: async () => [] }, log: { debug() {}, info() {}, warn() {}, error() {} } };
+    const page = await provider.listCommits!(ctx, ref('1'), { limit: 1 });
+    expect(page.items[0]).toMatchObject({ id: '1', meta: { historyPackageArtifactIncluded: true } });
+    expect(page.items[0].author).toBeUndefined();
+    expect((await provider.listCommits!(ctx, ref('1'), { cursor: page.cursor })).items[0].meta?.historyPackageArtifactIncluded).toBe(false);
+    await expect(provider.loadCommit!(ctx, ref('0'))).rejects.toThrow('Not included');
+    const history = await provider.listElementHistory!(ctx, { projectId: 'p', modelId: 'm', key: added.key });
+    expect(history.items.map(entry => entry.state)).toEqual(['modified', 'added']);
+    async function* deliveries() { yield ['0', payload(first, 0)] as const; yield ['1', payload(last, 1)] as const; }
+    const all = await readHistoryPackage(await (await buildHistoryPackage({ ...input, pastArtifacts: deliveries(), deletedReports: { baseCommitId: '0', csv: 'GlobalId,IfcType' } })).arrayBuffer());
+    expect(all.manifest.artifacts).toBe('all');
+    expect(all.artifacts?.get('0')?.bytes).toEqual(first);
+    expect(all.manifest.files.some(file => file.path === 'changes/deleted-since-0.csv')).toBe(true);
   });
   it('escapes deleted element values for spreadsheet import', () => {
     const csv = deletedElementsCsv(diff('a', 'b', [{ ...added, key: '=CMD()', state: 'deleted' }]), null);

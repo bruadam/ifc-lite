@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { CommitModelsStep } from './CommitModelsStep';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type {
   FileSourceProvider,
@@ -62,6 +63,7 @@ export function SourceBrowser({
   favouritesVersion = 0,
 }: SourceBrowserProps) {
   const capabilities = provider.manifest.capabilities;
+  const commitModels = !!capabilities.commits && !capabilities.commits.modelIdsAreFileIds && !!provider.listModels;
   const [step, setStep] = useState<Step>('projects');
   const [skipProjectsOnBack, setSkipProjectsOnBack] = useState(false);
   const [selectedProject, setSelectedProject] = useState<SourceProject | null>(null);
@@ -161,9 +163,9 @@ export function SourceBrowser({
       clearSearch();
       catalog.resetCatalog();
       projectIdRef.current = p.id;
-      fileAreasPaged.start();
+      if (!commitModels) fileAreasPaged.start();
     },
-    [catalog, clearSearch, fileAreasPaged],
+    [catalog, clearSearch, fileAreasPaged, commitModels],
   );
 
   const openFileArea = useCallback(
@@ -308,7 +310,8 @@ export function SourceBrowser({
         />
       )}
 
-      {step === 'file-areas' && (
+      {step === 'file-areas' && commitModels && selectedProject && <CommitModelsStep provider={provider} ctx={ctx} projectId={selectedProject.id} onError={setError} />}
+      {step === 'file-areas' && !commitModels && (
         <SourceFileAreasStep
           fileAreas={fileAreasPaged.items}
           loading={fileAreasPaged.loading}

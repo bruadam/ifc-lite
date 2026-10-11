@@ -49,7 +49,7 @@ export async function historyCommand(args: string[]): Promise<void> {
     const diff = await packageDiff(pack, base, head);
     markChangeSet(store, view, diff, base, head, { psetName: options.value('--pset') });
     if (options.value('--csv')) await writeFile(options.value('--csv')!, deletedElementsCsv(diff, null));
-    if (options.value('--bcf')) await writeBlob(options.value('--bcf')!, await deletedElementsBcf(diff, null, { base, head, modelName: pack.model.name }));
+    if (options.value('--bcf')) await writeBlob(options.value('--bcf')!, await deletedElementsBcf(diff, null, { base, head: options.has('--omit-authors') ? { ...head, author: undefined } : head, modelName: pack.model.name }));
   }
   const result = new StepExporter(store, view).export({ schema: store.schemaVersion, applyMutations: true, filename: basename(output), additionalDescriptions: [`ifc-lite-export(${command === 'stamp' ? 'history' : 'change-set'}); commit=${head.id}; base=${base?.id ?? ''}; source-digest=${head.artifact.digest}`] });
   await writeFile(output, result.content);
