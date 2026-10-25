@@ -53,18 +53,44 @@ pub enum NodeKind {
     Geometry = 5,
     /// A resolved name bag: materials or classification references.
     NameBag = 6,
+    /// One element's direct attributes, the `attr:core` component.
+    Attributes = 7,
+    /// An element's assigned types, by name and class.
+    TypeAssignment = 8,
+}
+
+/// What one field of a node holds.
+///
+/// A number is carried as an `f64` rather than pre-rendered text, so the
+/// encoder can write its raw bits (v0 section 3) and no rendering has to be
+/// chosen. `Absent` is distinct from `Text(String::new())` in both the
+/// encoding and the ordering.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldValue {
+    Absent,
+    Text(String),
+    Number(f64),
+    Bool(bool),
+}
+
+impl FieldValue {
+    /// Tag byte written before the payload, so no two variants can produce
+    /// the same bytes.
+    fn tag(&self) -> u8 {
+        match self {
+            FieldValue::Absent => 0,
+            FieldValue::Text(_) => 1,
+            FieldValue::Number(_) => 2,
+            FieldValue::Bool(_) => 3,
+        }
+    }
 }
 
 /// One scalar field of a node, as a name/value pair.
-///
-/// Values are already normalised to text by the caller. Numbers in particular
-/// must be rendered before they reach here, because a float's text form is a
-/// decision (ECMAScript rendering, in this repo's case) and not one this
-/// module should make silently.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Field {
     pub name: String,
-    pub value: Option<String>,
+    pub value: FieldValue,
 }
 
 /// One component of an element: a key and the address of the node carrying it.
@@ -80,7 +106,9 @@ pub struct Component {
 }
 
 /// A node, before it is addressed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// No `Eq`: a `Field` can hold an `f64`, which has no total equality. Node
+// identity is its address, not structural equality, so nothing needs `Eq`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     /// A fold of component addresses. **Carries no key** — see the module docs.
     Element {
@@ -111,6 +139,11 @@ pub enum Node {
 pub enum SetKind {
     Property,
     Quantity,
+    /// Direct attributes. A distinct kind rather than a reserved name, so a
+    /// property set legitimately called `core` cannot collide with it.
+    Attributes,
+    /// Assigned types, each member a class with its type name as the value.
+    TypeAssignment,
 }
 
 /// One relationship role and the nodes it points at.
@@ -127,6 +160,8 @@ impl Node {
             Node::Element { .. } => NodeKind::Element,
             Node::Set { kind: SetKind::Property, .. } => NodeKind::PropertySet,
             Node::Set { kind: SetKind::Quantity, .. } => NodeKind::QuantitySet,
+            Node::Set { kind: SetKind::Attributes, .. } => NodeKind::Attributes,
+            Node::Set { kind: SetKind::TypeAssignment, .. } => NodeKind::TypeAssignment,
             Node::Relationship { .. } => NodeKind::Relationship,
             Node::Geometry { .. } => NodeKind::Geometry,
             Node::NameBag { .. } => NodeKind::NameBag,
@@ -160,14 +195,24 @@ impl Node {
                 sorted.sort_by(|a, b| {
                     sort_key(&a.name)
                         .cmp(&sort_key(&b.name))
-                        .then_with(|| {
-                            optional_key(a.value.as_deref()).cmp(&optional_key(b.value.as_deref()))
-                        })
+                        .then_with(|| value_key(&a.value).cmp(&value_key(&b.value)))
                 });
                 w.u32(sorted.len() as u32);
                 for field in sorted {
                     w.string(&field.name);
-                    w.optional_string(field.value.as_deref());
+                    w.u32(u32::from(field.value.tag()));
+                    match &field.value {
+                        FieldValue::Absent => {}
+                        FieldValue::Text(text) => {
+                            w.string(text);
+                        }
+                        FieldValue::Number(number) => {
+                            w.f64_bits(*number);
+                        }
+                        FieldValue::Bool(flag) => {
+                            w.u32(u32::from(*flag));
+                        }
+                    }
                 }
             }
             Node::Relationship { ifc_type, roles } => {
@@ -211,15 +256,19 @@ impl Node {
     }
 }
 
-/// Sort key for an optional string that keeps absent and empty apart.
+/// Sort key for a field value, keeping the variants apart and total.
 ///
-/// `None` sorts below every `Some`, including `Some("")`. Collapsing the two
-/// would make a member's absence indistinguishable from an empty value in the
-/// ordering, which the encoding is careful to distinguish in its bytes.
-fn optional_key(value: Option<&str>) -> (u8, Vec<u8>) {
+/// `Absent` sorts below every present value, including empty text. Collapsing
+/// them would make a member's absence indistinguishable from an empty value in
+/// the ordering, which the encoding is careful to distinguish in its bytes. A
+/// number sorts by its bit pattern, which is total where `f64`'s own `Ord` is
+/// absent.
+fn value_key(value: &FieldValue) -> (u8, Vec<u8>, u64) {
     match value {
-        None => (0, Vec::new()),
-        Some(text) => (1, sort_key(text)),
+        FieldValue::Absent => (0, Vec::new(), 0),
+        FieldValue::Text(text) => (1, sort_key(text), 0),
+        FieldValue::Number(number) => (2, Vec::new(), number.to_bits()),
+        FieldValue::Bool(flag) => (3, Vec::new(), u64::from(*flag)),
     }
 }
 

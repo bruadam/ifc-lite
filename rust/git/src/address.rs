@@ -170,6 +170,19 @@ impl CanonicalWriter {
         self
     }
 
+    /// An `f64` as its raw IEEE-754 bit pattern, little-endian.
+    ///
+    /// v0's rule, and it avoids a decision rather than making one: encoding a
+    /// float as text means choosing a rendering, and two renderings of one
+    /// value hash differently. Bits have no such choice. `NaN` payloads are
+    /// the one residual — a signalling and a quiet `NaN` differ in bits while
+    /// comparing equal — so callers normalise a non-finite value before it
+    /// reaches here, as the fingerprint layer does.
+    pub fn f64_bits(&mut self, value: f64) -> &mut Self {
+        self.buffer.extend_from_slice(&value.to_bits().to_le_bytes());
+        self
+    }
+
     /// A 64-bit integer, for timestamps.
     pub fn i64(&mut self, value: i64) -> &mut Self {
         self.buffer.extend_from_slice(&value.to_le_bytes());

@@ -32,14 +32,14 @@
 
 use ifc_lite_git::address::Address;
 use ifc_lite_git::tree::{build_tree, TreeEntry};
-use ifc_lite_git::{Component, Field, Node, Role, SetKind};
+use ifc_lite_git::{Component, Field, FieldValue, Node, Role, SetKind};
 
 /// A placement component at a given X offset.
 fn placement_at(x: &str) -> Address {
     Node::Set {
         kind: SetKind::Property,
         name: "placement".to_owned(),
-        members: vec![Field { name: "X".to_owned(), value: Some(x.to_owned()) }],
+        members: vec![Field { name: "X".to_owned(), value: FieldValue::Text(x.to_owned()) }],
     }
     .address()
 }

@@ -43,9 +43,11 @@
 //! # What is not here yet
 //!
 //! The verb surface (`status`, `commit`, `branch`, `diff <a> <b>`, `log`,
-//! `pull`, `push`), a durable store, rebase, and the IFC-graph-to-node adapter.
-//! The object layer comes first because every one of those needs it.
+//! `pull`, `push`), a durable store, and rebase. [`adapter`] converts one
+//! entity's content projection; geometry and relationship nodes are not
+//! produced yet, because `DataFingerprintInput` carries neither.
 
+pub mod adapter;
 pub mod address;
 pub mod commit;
 pub mod node;
@@ -54,7 +56,8 @@ pub mod tree;
 
 pub use address::{Address, AddressError, ADDRESS_ALGORITHM};
 pub use commit::{AuthorStatus, Commit, CommitError, DiffSummary, Identity};
-pub use node::{Component, Field, Node, NodeKind, Role, SetKind};
+pub use adapter::{entity_nodes, AdapterError, EntityNodes};
+pub use node::{Component, Field, FieldValue, Node, NodeKind, Role, SetKind};
 pub use store::{
     MemoryObjectStore, MemoryRefStore, ObjectStore, RefError, RefKind, RefStore, RefTarget,
     StoreError,

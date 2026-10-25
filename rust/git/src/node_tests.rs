@@ -2,11 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{Component, Field, Node, NodeKind, Role, SetKind};
+use super::{Component, Field, FieldValue, Node, NodeKind, Role, SetKind};
 use crate::address::Address;
 
 fn field(name: &str, value: Option<&str>) -> Field {
-    Field { name: name.to_owned(), value: value.map(str::to_owned) }
+    Field {
+        name: name.to_owned(),
+        value: value.map_or(FieldValue::Absent, |text| FieldValue::Text(text.to_owned())),
+    }
 }
 
 fn pset(name: &str, members: &[(&str, Option<&str>)]) -> Node {
