@@ -1,0 +1,22 @@
+[package]
+name = "ifc-lite-git"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Graph-based version control for IFC: content-addressed nodes, trees, commits and refs"
+keywords = ["ifc", "bim", "versioning", "git", "aec"]
+categories = ["algorithms", "data-structures"]
+readme = "../../README.md"
+
+[dependencies]
+# Content addressing. Chosen over SHA-256 for throughput at model scale while
+# staying collision-resistant: a node address must not be forgeable from an
+# attacker-supplied IFC. Already this repo's content-address algorithm on the
+# TypeScript side (`computeLayerId` emits `blake3:<hex>`).
+# Licence: CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception.
+blake3 = "1.8"
+
+[lints]
+workspace = true
