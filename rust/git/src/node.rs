@@ -25,7 +25,7 @@
 //! `GlobalId`s, 39 added and 39 deleted when paired by key, nothing at all once
 //! identity is content-derived.
 
-use crate::address::{code_unit_key, Address, CanonicalWriter};
+use crate::address::{sort_key, Address, CanonicalWriter};
 
 /// Magic announcing this node format. A wire-format change mints a new one.
 pub const NODE_MAGIC: &[u8; 4] = b"IGN1";
@@ -136,15 +136,16 @@ impl Node {
     /// Canonical bytes and the resulting address.
     ///
     /// Sets are sorted; lists whose order is content are not. Sorting is by
-    /// UTF-16 code unit (see [`code_unit_key`]), so input order can never
-    /// reach the hash and two machines agree.
+    /// NFC-normalized UTF-8 bytes (see [`sort_key`]) — the same bytes the
+    /// encoder writes — so neither input order nor the producer's choice of
+    /// Unicode spelling can reach the hash.
     pub fn encode(&self) -> (Address, Vec<u8>) {
         let mut w = CanonicalWriter::new(NODE_MAGIC, self.kind() as u8, NODE_FORMAT_VERSION);
         match self {
             Node::Element { ifc_type, components } => {
                 w.string(ifc_type);
                 let mut sorted: Vec<&Component> = components.iter().collect();
-                sorted.sort_by_key(|c| code_unit_key(&c.key));
+                sorted.sort_by_key(|c| sort_key(&c.key));
                 w.u32(sorted.len() as u32);
                 for component in sorted {
                     w.string(&component.key);
@@ -157,8 +158,8 @@ impl Node {
                 // Name first, then value, so two members sharing a name are
                 // still totally ordered and input order cannot leak in.
                 sorted.sort_by(|a, b| {
-                    code_unit_key(&a.name)
-                        .cmp(&code_unit_key(&b.name))
+                    sort_key(&a.name)
+                        .cmp(&sort_key(&b.name))
                         .then_with(|| {
                             optional_key(a.value.as_deref()).cmp(&optional_key(b.value.as_deref()))
                         })
@@ -172,7 +173,7 @@ impl Node {
             Node::Relationship { ifc_type, roles } => {
                 w.string(ifc_type);
                 let mut sorted: Vec<&Role> = roles.iter().collect();
-                sorted.sort_by_key(|r| code_unit_key(&r.name));
+                sorted.sort_by_key(|r| sort_key(&r.name));
                 w.u32(sorted.len() as u32);
                 for role in sorted {
                     w.string(&role.name);
@@ -194,7 +195,7 @@ impl Node {
                 w.string(kind);
                 // Duplicates are kept: cardinality is content.
                 let mut sorted: Vec<&String> = names.iter().collect();
-                sorted.sort_by_key(|n| code_unit_key(n));
+                sorted.sort_by_key(|n| sort_key(n));
                 w.u32(sorted.len() as u32);
                 for name in sorted {
                     w.string(name);
@@ -215,10 +216,10 @@ impl Node {
 /// `None` sorts below every `Some`, including `Some("")`. Collapsing the two
 /// would make a member's absence indistinguishable from an empty value in the
 /// ordering, which the encoding is careful to distinguish in its bytes.
-fn optional_key(value: Option<&str>) -> (u8, Vec<u16>) {
+fn optional_key(value: Option<&str>) -> (u8, Vec<u8>) {
     match value {
         None => (0, Vec::new()),
-        Some(text) => (1, code_unit_key(text)),
+        Some(text) => (1, sort_key(text)),
     }
 }
 

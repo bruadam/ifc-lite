@@ -19,7 +19,7 @@
 //!   `packages/collab/src/snapshot/from-ifcx.ts`: "Absent reads as unknown;
 //!   invented gets trusted."
 
-use crate::address::{code_unit_key, Address, CanonicalWriter};
+use crate::address::{sort_key, Address, CanonicalWriter};
 
 /// Magic announcing the commit format.
 pub const COMMIT_MAGIC: &[u8; 4] = b"IGM1";
@@ -204,8 +204,8 @@ fn encode_identity(w: &mut CanonicalWriter, identity: &Identity) {
 }
 
 /// Sort key for an identity, where a listing needs a stable order.
-pub fn identity_key(identity: &Identity) -> Vec<u16> {
-    code_unit_key(
+pub fn identity_key(identity: &Identity) -> Vec<u8> {
+    sort_key(
         identity
             .key
             .as_deref()

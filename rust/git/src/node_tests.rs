@@ -245,18 +245,18 @@ fn encoding_is_deterministic_across_calls() {
 }
 
 #[test]
-fn astral_member_names_sort_by_code_unit() {
-    // The ordering choice, visible at the node level: under Rust's own string
-    // order these two would swap, producing a different address.
+fn astral_member_names_sort_by_normalized_utf8_bytes() {
+    // The ordering choice, visible at the node level. Member order must not
+    // reach the address either way...
     let forward = pset("P", &[("\u{E000}", Some("1")), ("\u{10000}", Some("2"))]);
     let reverse = pset("P", &[("\u{10000}", Some("2")), ("\u{E000}", Some("1"))]);
     assert_eq!(forward.address(), reverse.address());
 
-    // And the resulting byte stream puts the astral name first, as JavaScript
-    // would, not second as Rust's `Ord` would.
+    // ...and the encoding must put U+E000 first, which is UTF-8 byte order
+    // (node-hash v0's rule) and the reverse of UTF-16 code-unit order (which
+    // `rust/diff` uses to match V8). Getting this backwards is how an earlier
+    // draft of this crate silently diverged from v0.
     let (_, bytes) = forward.encode();
-    let astral_utf8 = "\u{10000}".as_bytes();
-    let private_utf8 = "\u{E000}".as_bytes();
     let find = |needle: &[u8]| {
         bytes
             .windows(needle.len())
@@ -264,7 +264,16 @@ fn astral_member_names_sort_by_code_unit() {
             .expect("member name present in the encoding")
     };
     assert!(
-        find(astral_utf8) < find(private_utf8),
-        "UTF-16 order puts the astral name first"
+        find("\u{E000}".as_bytes()) < find("\u{10000}".as_bytes()),
+        "normalized UTF-8 byte order puts U+E000 first"
     );
+}
+
+#[test]
+fn unicode_spelling_does_not_change_a_node_address() {
+    // Two authoring tools exporting the same property set with different
+    // Unicode normalization must produce one node.
+    let nfc = pset("Pset_B\u{e9}ton", &[("Styrke", Some("C30"))]);
+    let nfd = pset("Pset_Be\u{301}ton", &[("Styrke", Some("C30"))]);
+    assert_eq!(nfc.address(), nfd.address());
 }

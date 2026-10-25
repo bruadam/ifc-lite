@@ -18,5 +18,12 @@ readme = "../../README.md"
 # Licence: CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception.
 blake3 = "1.8"
 
+# NFC normalization, required by the canonical encoding rather than optional to
+# it: `packages/provenance/SPEC.md` §3 normalizes every string before hashing
+# AND sorts sets by those normalized bytes, because sorting raw while encoding
+# normalized lets the producer's spelling pick the order -- one canonical set
+# yielding two hashes. Licence: (MIT OR Apache-2.0) AND Unicode-3.0.
+unicode-normalization = "0.1"
+
 [lints]
 workspace = true

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{code_unit_key, Address, AddressError, CanonicalWriter, ADDRESS_ALGORITHM};
+use super::{canonical_bytes, sort_key, Address, AddressError, CanonicalWriter, ADDRESS_ALGORITHM};
 
 #[test]
 fn tagged_form_round_trips() {
@@ -82,22 +82,64 @@ fn absent_and_empty_strings_are_distinguishable() {
     );
 }
 
+/// The rule this crate got wrong in an earlier draft, now pinned.
 #[test]
-fn code_unit_key_is_utf16_order_not_rust_order() {
-    // The reason this helper exists. In JavaScript "\u{E000}" > "\u{10000}";
-    // under Rust's own `Ord` on `&str` the comparison flips, because a
-    // surrogate pair's code units sort below E000 while its codepoint sorts
-    // above. Verified against V8:
-    //   node -e 'console.log("" < "\u{10000}")'  ->  false
-    let private_use = "\u{E000}";
-    let astral = "\u{10000}";
-    assert!(code_unit_key(private_use) > code_unit_key(astral));
-    assert!(private_use < astral, "Rust's own order disagrees");
+fn strings_are_nfc_normalized_before_hashing() {
+    // `Pset_Béton` precomposed and decomposed is one string canonically and
+    // two byte sequences rawly: `...c3a9...` versus `...65cc81...`. Without
+    // normalization the two hash differently, so the same property set read
+    // from two authoring tools would look like a change.
+    let nfc = "Pset_B\u{e9}ton";
+    let nfd = "Pset_Be\u{301}ton";
+    assert_ne!(nfc.as_bytes(), nfd.as_bytes(), "raw bytes differ, as the premise requires");
+    assert_eq!(canonical_bytes(nfc), canonical_bytes(nfd));
+
+    let mut a = CanonicalWriter::new(b"IGN1", 1, 0);
+    a.string(nfc);
+    let mut b = CanonicalWriter::new(b"IGN1", 1, 0);
+    b.string(nfd);
+    assert_eq!(a.finish().0, b.finish().0, "spelling must not reach the hash");
 }
 
 #[test]
-fn code_unit_key_orders_ascii_conventionally() {
-    assert!(code_unit_key("A") < code_unit_key("a"));
-    assert!(code_unit_key("ab") < code_unit_key("abc"));
-    assert_eq!(code_unit_key("abc"), code_unit_key("abc"));
+fn sorting_uses_the_same_normalized_bytes_as_encoding() {
+    // The dual the spec calls "worse than a collision for a verifier": sorting
+    // raw while encoding normalized lets the spelling pick the order, so one
+    // canonical set yields two hashes. Both spellings must sort identically
+    // against a neighbour.
+    let nfc = "Pset_B\u{e9}ton";
+    let nfd = "Pset_Be\u{301}ton";
+    // The neighbour has to be one the comparison actually reaches the accent
+    // on. Against `Pset_Z` both spellings resolve at `B` vs `Z` and agree, so
+    // that choice would have made this test vacuous.
+    let other = "Pset_Bzton";
+    let order = |a: &str| sort_key(a) < sort_key(other);
+    assert_eq!(order(nfc), order(nfd), "the two spellings must order alike");
+
+    // Raw UTF-8 would NOT agree -- this is the bug being guarded.
+    assert_ne!(
+        nfc.as_bytes() < other.as_bytes(),
+        nfd.as_bytes() < other.as_bytes(),
+        "raw-byte ordering disagrees, which is why normalization comes first"
+    );
+}
+
+#[test]
+fn sort_key_is_utf8_byte_order_not_utf16_code_unit_order() {
+    // Deliberately the opposite of `rust/diff`'s rule. That crate sorts by
+    // UTF-16 code unit to reproduce V8's `JSON.stringify`; this one follows
+    // node-hash v0, which sorts normalized UTF-8 bytes. The two disagree above
+    // the BMP, so the choice has to be explicit rather than assumed.
+    let private_use = "\u{E000}";
+    let astral = "\u{10000}";
+    assert!(sort_key(private_use) < sort_key(astral), "UTF-8 byte order");
+    let utf16 = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+    assert!(utf16(private_use) > utf16(astral), "UTF-16 order is the reverse");
+}
+
+#[test]
+fn sort_key_orders_ascii_conventionally() {
+    assert!(sort_key("A") < sort_key("a"));
+    assert!(sort_key("ab") < sort_key("abc"));
+    assert_eq!(sort_key("abc"), sort_key("abc"));
 }

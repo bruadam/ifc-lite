@@ -26,7 +26,7 @@
 //! already solved; the design is reused, the code is not — git is GPL-2.0 and
 //! cannot enter an MPL-2.0 tree (see the spec set, index §6.2).
 
-use crate::address::{code_unit_key, Address, CanonicalWriter};
+use crate::address::{sort_key, Address, CanonicalWriter};
 
 /// Magic announcing the tree-chunk format.
 pub const CHUNK_MAGIC: &[u8; 4] = b"IGC1";
@@ -122,7 +122,7 @@ fn is_boundary(entry: &TreeEntry, target: usize) -> bool {
 
 /// Build a tree from entries, chunking on content-derived boundaries.
 ///
-/// Entries are sorted by key in UTF-16 code-unit order first, so the same set
+/// Entries are sorted by NFC-normalized key bytes first, so the same set
 /// of entries always produces the same tree regardless of the order the caller
 /// walked the model in.
 pub fn build_tree(mut entries: Vec<TreeEntry>) -> (Tree, Vec<TreeChunk>) {
@@ -136,8 +136,8 @@ pub fn build_tree_with_target(
     target: usize,
 ) -> (Tree, Vec<TreeChunk>) {
     entries.sort_by(|a, b| {
-        code_unit_key(&a.key)
-            .cmp(&code_unit_key(&b.key))
+        sort_key(&a.key)
+            .cmp(&sort_key(&b.key))
             // A duplicate key is a defect upstream, but the tree must still be
             // deterministic if one arrives, so tie-break on content.
             .then_with(|| a.node.cmp(&b.node))

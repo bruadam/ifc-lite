@@ -138,10 +138,14 @@ impl CanonicalWriter {
         CanonicalWriter { buffer }
     }
 
-    /// A UTF-8 string, length-prefixed with its byte length.
+    /// An NFC-normalized UTF-8 string, length-prefixed with its byte length.
+    ///
+    /// Normalization happens here, in the one place every string passes
+    /// through, so no caller can encode a raw spelling by forgetting to.
     pub fn string(&mut self, value: &str) -> &mut Self {
-        self.u32(value.len() as u32);
-        self.buffer.extend_from_slice(value.as_bytes());
+        let bytes = canonical_bytes(value);
+        self.u32(bytes.len() as u32);
+        self.buffer.extend_from_slice(&bytes);
         self
     }
 
@@ -185,21 +189,33 @@ impl CanonicalWriter {
     }
 }
 
-/// Sort key giving **UTF-16 code-unit order**.
+/// NFC-normalized UTF-8 bytes: the sort key, and the bytes the encoder writes.
 ///
-/// `Vec<u16>` compares lexicographically on code units, which is exactly
-/// JavaScript's string order — and deliberately not Rust's `Ord` on `&str`,
-/// which compares UTF-8 bytes and therefore disagrees above the BMP (a
-/// surrogate pair's units sort below `E000`, its codepoint above).
+/// This is v0's rule, and following it is a correctness requirement rather than
+/// a compatibility nicety. `packages/provenance/SPEC.md` §3 normalizes every
+/// string before hashing and sorts sets by **those same normalized bytes**,
+/// with the reason stated: sorting raw while encoding normalized lets the
+/// producer's *spelling* pick the order. `Pset_Béton` spelled NFC
+/// (`…c3a9…`) and NFD (`…65cc81…`) is one string canonically and two byte
+/// sequences rawly, so a raw sort against `Pset_Z` orders the same set two ways
+/// and one canonical input yields two hashes — "worse than a collision for a
+/// verifier", since recompute-and-compare then fails on honest data.
 ///
-/// Why pay for that here, when this format has no JavaScript counterpart to
-/// match: the spec set recommends promoting this encoding to `node-hash-v1.md`
-/// under `@ifc-lite/provenance`, which is TypeScript. A format sorted by UTF-8
-/// bytes could not be reimplemented there byte-identically, so the ordering is
-/// chosen now to keep that door open. `rust/diff`'s `utf16` module carries the
-/// full argument.
-pub fn code_unit_key(value: &str) -> Vec<u16> {
-    value.encode_utf16().collect()
+/// An earlier draft of this crate sorted by UTF-16 code unit and normalized
+/// nothing, on the mistaken belief that it was inheriting v0's rule. It was
+/// inheriting `rust/diff`'s, which is a different compatibility format: that
+/// one exists to reproduce V8's `JSON.stringify` byte for byte and has no
+/// bearing here.
+pub fn canonical_bytes(value: &str) -> Vec<u8> {
+    use unicode_normalization::UnicodeNormalization;
+    value.nfc().collect::<String>().into_bytes()
+}
+
+/// Sort key over [`canonical_bytes`]. Named separately because the call sites
+/// read better, and because sorting and encoding must demonstrably use one
+/// function — that identity is the whole point of the rule above.
+pub fn sort_key(value: &str) -> Vec<u8> {
+    canonical_bytes(value)
 }
 
 #[cfg(test)]
