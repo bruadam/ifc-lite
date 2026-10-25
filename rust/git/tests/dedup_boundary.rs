@@ -169,3 +169,54 @@ fn the_tree_preserves_cardinality_that_the_node_layer_collapses() {
     // This is exactly git's arrangement for two identical files, and it is why
     // the spec's cardinality claim holds at the layer that makes it.
 }
+
+/// Deleting one of two coincident duplicates is a change, and the emptiness
+/// test must see it.
+///
+/// Raised in review: if "the diff is empty" were evaluated over the set of
+/// *distinct* node addresses, this case would read as no change — the surviving
+/// duplicate still carries the same address, so the distinct set is identical.
+/// The test has to be over the tree's `key -> node` entries, where multiplicity
+/// is visible, which is what a keyed diff produces and what `DiffSummary`
+/// counts.
+#[test]
+fn deleting_one_coincident_duplicate_is_not_an_empty_diff() {
+    use ifc_lite_git::{AuthorStatus, Commit, CommitError, DiffSummary, Identity};
+
+    let shared = opening_at("0").address();
+    let entry = |key: &str| TreeEntry {
+        key: key.to_owned(),
+        node: shared,
+        ifc_type: "IfcOpeningElement".to_owned(),
+    };
+
+    let (before, _) = build_tree(vec![entry("OPENING-A"), entry("OPENING-B")]);
+    let (after, _) = build_tree(vec![entry("OPENING-A")]);
+
+    // The set of DISTINCT node addresses is identical across the two versions:
+    // one address, before and after. Judging emptiness on that would be wrong.
+    assert_eq!(before.entry_count, 2);
+    assert_eq!(after.entry_count, 1);
+    assert_ne!(before.address(), after.address());
+
+    // A keyed diff sees the deletion, so the commit is accepted.
+    let deletion = Commit {
+        tree: after.address(),
+        parents: vec![Address::of(b"parent")],
+        blob: None,
+        author: Identity::default(),
+        author_status: AuthorStatus::Unresolved,
+        committer: Identity { name: Some("sync".to_owned()), ..Identity::default() },
+        intent: "remove a duplicate opening".to_owned(),
+        created_at: 0,
+        software: "test".to_owned(),
+        diff: DiffSummary { added: 0, modified: 0, deleted: 1, unchanged: 1 },
+    };
+    assert_eq!(deletion.validate(), Ok(()));
+
+    // And the same tree pair with an empty summary is still refused, so the
+    // guard is the summary rather than the tree pair.
+    let mut empty = deletion.clone();
+    empty.diff = DiffSummary { added: 0, modified: 0, deleted: 0, unchanged: 2 };
+    assert_eq!(empty.validate(), Err(CommitError::Empty));
+}
