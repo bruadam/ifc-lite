@@ -23,13 +23,21 @@ readme = "../../README.md"
 # Also already this repo's content-address algorithm on the TypeScript side
 # (`computeLayerId` emits `blake3:<hex>`), so one algorithm covers both.
 #
-# Not yet measured: wasm32. BLAKE3 1.x ships SSE/AVX and NEON backends but no
-# simd128 one, so the browser path runs its portable implementation while
-# `.cargo/config.toml` enables simd128 for everything else. Measure before any
-# claim about browser diff throughput rests on this.
+# `wasm32_simd` is opt-in and we take it. An earlier version of this comment
+# claimed BLAKE3 had no wasm SIMD backend; that was wrong. 1.8.7 ships
+# `src/wasm32_simd.rs` behind this feature, and without it the browser path
+# would run the portable implementation while `.cargo/config.toml` enables
+# `+simd128` for every other wasm32 build in the repo. The feature is a no-op
+# off wasm32 -- blake3's build script guards it with
+# `if is_wasm32() && is_wasm32_simd()` -- so enabling it unconditionally costs
+# host builds nothing. It does assume simd128 is available, which that same
+# config guarantees.
+#
+# Still unmeasured: the wasm ratio itself. Only the native numbers above are
+# measured, so no browser-diff throughput claim should rest on them.
 #
 # Licence: CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception.
-blake3 = "1.8"
+blake3 = { version = "1.8", features = ["wasm32_simd"] }
 
 # NFC normalization, required by the canonical encoding rather than optional to
 # it: `packages/provenance/SPEC.md` §3 normalizes every string before hashing
