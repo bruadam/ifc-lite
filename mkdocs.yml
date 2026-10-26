@@ -319,6 +319,15 @@ nav:
         - Review Workflow: architecture/layer-prs/08-review.md
         - CLI & CI: architecture/layer-prs/09-cli.md
         - Registry: architecture/layer-prs/10-registry.md
+    - CDE Lite:
+        - Overview: architecture/cde-lite/index.md
+        - OpenCDE Research: architecture/cde-lite/01-research-opencde.md
+        - ISO 19650: architecture/cde-lite/02-iso19650.md
+        - Version Control: architecture/cde-lite/03-version-control.md
+        - API Design: architecture/cde-lite/04-api-design.md
+        - Multi-Tenancy: architecture/cde-lite/05-multitenancy.md
+        - Viewer UX: architecture/cde-lite/06-viewer-ux.md
+        - Self-Hosting: architecture/cde-lite/07-self-hosting.md
   - API Reference:
     - Search API symbols: api/reference.md
     - TypeScript API: api/typescript.md
