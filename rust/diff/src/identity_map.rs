@@ -11,6 +11,13 @@ pub const CONTENT_MATCH_REASON_PREFIX: &str = "content-match:";
 pub const SUCCESSOR_REASON_PREFIX: &str = "successor:";
 pub const ACCEPTED_AMBIGUOUS_REASON: &str = "accepted:ambiguous";
 
+/// Remappings the content matcher is entitled to claim: one base key to one
+/// head key, for `renamed`, `moved`, `reshaped` and `respecified` only.
+///
+/// `duplicated`, `deduplicated` and `ambiguous` matches, and any match that is
+/// not one-to-one, emit nothing. That is deliberate rather than a gap: those
+/// kinds are the matcher abstaining, and a remapping derived from an
+/// abstention would be a fabricated identity claim.
 pub fn identity_map_from_content_matches<R>(matches: &[ContentMatch<'_, R>]) -> Vec<IdentityMapEntry> {
     matches.iter().filter_map(|m| {
         let name = match m.kind {

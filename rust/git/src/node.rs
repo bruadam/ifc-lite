@@ -47,7 +47,8 @@ pub enum NodeKind {
     PropertySet = 2,
     /// A named set of quantities. Same argument.
     QuantitySet = 3,
-    /// A named IFC relationship. Its identity is its endpoints.
+    /// A named IFC relationship. Its identity is its endpoints, which are node
+    /// addresses — see [`Node::Relationship`] for what that drops.
     Relationship = 4,
     /// Tessellated or parametric geometry for one element, by tier.
     Geometry = 5,
@@ -123,6 +124,16 @@ pub enum Node {
         members: Vec<Field>,
     },
     /// A relationship: a class and its roles, each role a set of targets.
+    ///
+    /// Targets are **node addresses**, which keeps the node content-only and
+    /// is also where this encoding drops information the source records: two
+    /// coincident duplicates have distinct `GlobalId`s and the source
+    /// relationship names one of them, but they share one address, so a
+    /// relationship naming either names both. Whether such duplicates are one
+    /// node or must be separated — and by what, if not a `GlobalId` — is the
+    /// spec set's **open** equivalence policy (`02-graph-object-model.md`
+    /// §2.8); node-address endpoints are the current proposal, not a decision.
+    /// `rust/git/tests/dedup_boundary.rs` measures the boundary.
     Relationship {
         ifc_type: String,
         roles: Vec<Role>,

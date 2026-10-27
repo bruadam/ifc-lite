@@ -9,8 +9,11 @@
 //! key that names it is here. So a from-scratch re-export that regenerates
 //! every `GlobalId` rewrites tree **keys** and leaves every node address
 //! untouched — the version reads as unchanged content under a key remapping,
-//! which is the rename case `@ifc-lite/diff`'s content-matching tiers already
-//! resolve.
+//! which is the rename case `@ifc-lite/diff`'s content-matching tiers resolve
+//! for one-to-one matches. They deliberately abstain where a match is not
+//! one-to-one — a group of re-GUIDed coincident duplicates yields no remapping
+//! at all — which is the same open case as relationship endpoints under
+//! deduplication (`crate::node::Node::Relationship`).
 //!
 //! # Chunking
 //!

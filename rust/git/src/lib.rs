@@ -46,6 +46,14 @@
 //! `pull`, `push`), a durable store, and rebase. [`adapter`] converts one
 //! entity's content projection; geometry and relationship nodes are not
 //! produced yet, because `DataFingerprintInput` carries neither.
+//!
+//! Also not settled: the equivalence policy for coincident duplicates. A
+//! [`node::Node::Relationship`] names its endpoints by node address, so two
+//! occurrences identical in every component share one endpoint even though
+//! the source names them by distinct `GlobalId`s. That is information dropped
+//! in projection, and the spec set holds the policy **open**
+//! (`02-graph-object-model.md` §2.8); it also makes the no-empty-commit rule
+//! in [`commit`] conditional (§2.7).
 
 pub mod adapter;
 pub mod address;

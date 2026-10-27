@@ -28,7 +28,11 @@
 //! Geometry and relationships. `DataFingerprintInput` carries neither — a
 //! geometry hash reaches the diff engine through `EntityFingerprint`, from the
 //! mesh pass, and relationships reach it only as derived components. Both want
-//! their own adapter and are deferred rather than approximated here.
+//! their own adapter and are deferred rather than approximated here. The
+//! relationship adapter also has a decision to wait for: endpoints by node
+//! address drop which of two coincident duplicates the source named, and the
+//! spec set holds that equivalence policy open (`02-graph-object-model.md`
+//! §2.8).
 
 use ifc_lite_diff::input::{DataFingerprintInput, PropertyEntryInput, PropertyValue};
 use ifc_lite_diff::JsString;

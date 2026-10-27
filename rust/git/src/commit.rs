@@ -12,6 +12,17 @@
 //!   unchanged re-export is the *common* case, not an edge one. The caller is
 //!   expected to record the source revision as pointing at the existing
 //!   commit, so a scheduled sync is idempotent without inventing history.
+//!
+//!   **The rule is conditional, not unconditional.** "Empty diff" means the
+//!   keyed diff over the tree's `key -> node` entries records no change, and
+//!   there is a change that diff cannot see: with relationship endpoints
+//!   stored as node addresses, retargeting a relationship from one coincident
+//!   duplicate to its twin leaves every key, every node address and every
+//!   tree entry identical. Until the spec set's equivalence policy is decided
+//!   (`02-graph-object-model.md` §2.8, OPEN), "empty diff ⇒ no commit" holds
+//!   only for models containing no coincident duplicates, and a caller must
+//!   either detect that condition or refuse to claim idempotence (§2.7).
+//!   `rust/git/tests/dedup_boundary.rs` pins the case.
 //! - **Author is not committer.** The author is responsible for the content and
 //!   is resolved from the file; the committer performed the upload. An
 //!   unresolved author stays **empty** rather than being filled in with the
@@ -61,8 +72,13 @@ pub struct DiffSummary {
 }
 
 impl DiffSummary {
-    /// Did anything change? A commit whose summary is empty must not be
-    /// written — see [`CommitError::Empty`].
+    /// Does the keyed diff record a change? A commit whose summary is empty
+    /// must not be written — see [`CommitError::Empty`].
+    ///
+    /// "Empty" is a statement about the tree entries the diff was taken over,
+    /// not about the source model: a change this encoding cannot see (the
+    /// module docs name one) produces an empty summary for a model that
+    /// changed.
     pub fn is_empty(&self) -> bool {
         self.added == 0 && self.modified == 0 && self.deleted == 0
     }
@@ -99,8 +115,10 @@ pub struct Commit {
 /// Why a commit was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitError {
-    /// Nothing changed against the parent. The caller should point the source
-    /// revision at the existing commit instead.
+    /// The diff summary records no change against the parent. The caller
+    /// should point the source revision at the existing commit instead —
+    /// subject to the condition in the module docs, because an empty summary
+    /// is not proof that the source model is unchanged.
     Empty,
     /// A commit must say why it exists.
     MissingIntent,
@@ -116,7 +134,7 @@ impl std::fmt::Display for CommitError {
         match self {
             CommitError::Empty => write!(
                 f,
-                "refusing an empty commit: nothing changed against the parent"
+                "refusing an empty commit: the diff records no change against the parent"
             ),
             CommitError::MissingIntent => write!(f, "a commit needs a non-empty intent"),
             CommitError::AuthorStatusWithoutAuthor => write!(
@@ -145,6 +163,12 @@ impl Commit {
         }
         // An empty diff is only refusable against a parent. A first commit
         // legitimately has nothing to compare with.
+        //
+        // This is where "empty diff => no commit" is assumed, and it is
+        // assumed on the caller's summary alone. The rule holds only for
+        // models with no coincident duplicates until the spec set's
+        // equivalence policy (§2.8) is decided; refusing here is the stated
+        // behaviour, not a proof that nothing changed. See the module docs.
         if !self.parents.is_empty() && self.diff.is_empty() {
             return Err(CommitError::Empty);
         }
