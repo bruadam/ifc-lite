@@ -133,6 +133,12 @@ treated as settled by the documents that follow.
    the second; operational sanity argues for the first. `07` §3.
 5. **Does acceptance require ifc-git maturity first?** Stated plainly: yes, and
    it is the main sequencing risk (§9).
+6. **Can cde-lite claim "nothing changed" at all?** Not unconditionally, and
+   this is not cde-lite's decision to make. ifc-git's occurrence-equivalence
+   policy is open (`../ifc-git/02-graph-object-model.md` §2.8), and until it is
+   decided the diff-is-empty test is silent on a real change in any model
+   containing coincident duplicates — see `03-version-control.md` §2, which is
+   the feature this whole research set is built on.
 
 ## 7. Relationship to the spec sets that already exist
 
@@ -167,6 +173,11 @@ Rows 2 and 3 are the ones that must be right. Everything after is additive.
 
 ## 9. Risks, stated rather than discovered later
 
+- **The differentiator is gated on someone else's open decision.** The
+  no-revision-for-a-no-op-re-export behaviour is the product thesis, and it is
+  conditional on ifc-git's occurrence-equivalence policy being resolved. That is
+  a maintainer decision in another spec set. A research set may depend on an
+  open question; a roadmap may not, and this one does.
 - **Sequencing.** ifc-git decided its digest on 2026-10-26; storage and refs are
   not built. Building a CDE on an immature versioning core multiplies risk
   instead of adding it. Row 3 above should not start before ifc-git's object

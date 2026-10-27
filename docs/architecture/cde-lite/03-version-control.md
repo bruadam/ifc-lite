@@ -48,6 +48,38 @@ Every mainstream CDE would record that as a new revision requiring review.
 This single behaviour is worth more to a reviewer's time than any feature in the
 rest of this research set.
 
+### And it has a hole, which a product claim must not hide
+
+Maintainer review of the ifc-git spec established that the no-empty-commit rule
+is **not unconditional**, and the consequence lands hardest exactly here —
+because this is the feature cde-lite would be sold on.
+
+The counter-case: retarget a void from one occurrence to its **coincident
+duplicate** twin. Both occurrences keep their keys and their shared node
+address, the relationship node's endpoint set does not move, every tree entry is
+identical, and the diff is empty. So the model changed and cde-lite would record
+**no revision at all** — the same answer it gives for a no-op re-export, and
+therefore indistinguishable from it.
+
+The earlier justification for tolerating this was that the question "which of
+two coincident occurrences does this relationship target" has no observable
+answer. **That was false.** Coincident duplicates have distinct `GlobalId`s and
+the source relationships name one or the other; the model records the
+association and the node-address encoding discards it in projection.
+
+What this means for cde-lite, stated rather than discovered by a user:
+
+- The headline behaviour holds for models **containing no coincident
+  duplicates**, which is the overwhelming majority and includes every case the
+  corpus measures.
+- For models that do contain them, "no revision" is **not** a safe assertion,
+  and an acceptance gate must either detect that condition or decline to claim
+  that nothing changed. A CDE silently losing a revision is worse than a CDE
+  that records a redundant one, because the audit trail is the product.
+- This is **blocked on ifc-git's open equivalence policy**
+  (`02-graph-object-model.md` §2.8), not on anything cde-lite can decide. It
+  belongs in §6's open decisions and is listed there.
+
 ## 3. Acceptance as a merge gate
 
 The code-forge analogy earns its keep here. Advancing the Published ref is a
@@ -101,7 +133,9 @@ Stated plainly because it is the sequencing risk in `index.md` §9:
 | Object store, loose and packed tiers | `07-storage.md` planned, not written |
 | Refs with compare-and-swap | Designed; `MemoryRefStore` only, no persistence |
 | Commit, branch, log operations | Designed, not implemented |
-| Digest and canonical encoding | **Decided** — BLAKE3, specified in `rust/git` |
+| Digest | **Decided** — BLAKE3 |
+| Where the canonical encoding lives | **Proposed only** — `rust/git` rather than `@ifc-lite/provenance`; not accepted, and that crate is not proposed upstream |
+| Occurrence equivalence policy | **Open** — see §2 above; it gates the no-revision claim |
 | Node and tree model | Implemented on an external branch |
 | Diff as the commit computer | In-tree and byte-exact (#8042) |
 
