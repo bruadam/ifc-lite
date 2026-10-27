@@ -1688,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "ifc-lite-git"
-version = "23.6.2"
+version = "25.0.0"
 dependencies = [
  "blake3",
  "ifc-lite-diff",
