@@ -41,18 +41,34 @@
 //!
 //! # Scope of this PR
 //!
-//! [`tree`] (the keyed, chunked tree that carries entity keys outside the
-//! nodes) and [`adapter`] (one entity's content projection to nodes), on top of
-//! [`address`] and [`node`]. The commit object follows in the next PR on the
-//! same issue; the object store and refs are **not** coming here, because
-//! #8217 placed them with Layer PRs.
+//! [`commit`] — the commit object over a tree address, with its author status
+//! and diff summary — completing the object layer, plus the `dedup_boundary`
+//! integration suite that pins the open equivalence policy.
+//!
+//! The object store and refs are **not** here, because #8217 placed history
+//! storage, refs, merge and review with Layer PRs. A commit in this crate is
+//! an addressed object in the graph model (`02-graph-object-model.md`), not a
+//! history mechanism: nothing here writes a ref or walks a parent chain.
+//!
+//! # One open policy this layer rests on
+//!
+//! The equivalence policy for coincident duplicates is **open**
+//! (`02-graph-object-model.md` §2.8). A [`node::Node::Relationship`] names its
+//! endpoints by node address, so two occurrences identical in every component
+//! share one endpoint even though the source names them by distinct
+//! `GlobalId`s. That is information dropped in projection, and it makes
+//! [`commit`]'s no-empty-commit rule conditional (§2.7). `tests/dedup_boundary.rs`
+//! pins the current behaviour either way, so a policy decision changes a test
+//! rather than being discovered in production.
 
 pub mod adapter;
 pub mod address;
+pub mod commit;
 pub mod node;
 pub mod tree;
 
 pub use adapter::{entity_nodes, AdapterError, EntityNodes};
 pub use address::{Address, AddressError, ADDRESS_ALGORITHM};
+pub use commit::{AuthorStatus, Commit, CommitError, DiffSummary, Identity};
 pub use node::{Component, Field, FieldValue, Node, NodeKind, Role, SetKind};
 pub use tree::{build_tree, Tree, TreeChunk, TreeEntry};
