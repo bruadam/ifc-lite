@@ -310,6 +310,7 @@ nav:
         - Overview: architecture/ifc-git/index.md
         - Concepts: architecture/ifc-git/01-concepts.md
         - Graph Object Model: architecture/ifc-git/02-graph-object-model.md
+        - Diff: architecture/ifc-git/03-diff.md
   - API Reference:
     - Search API symbols: api/reference.md
     - TypeScript API: api/typescript.md

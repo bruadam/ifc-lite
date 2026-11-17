@@ -273,8 +273,9 @@ Two rules:
   (planned, index §5).
 - **Geometry node granularity.** `geometry:<tier>` is a component key here, but
   whether a tier is one node or several, and how it relates to the geometry
-  pass's existing hashes, needs the geometry pipeline's view and is deferred to
-  `03-diff.md`.
+  pass's existing hashes, needs the geometry pipeline's view. `03-diff.md`
+  §3.6 sets out what the geometry pass provides and the options, and records
+  the choice as open.
 - **Relationship endpoints under deduplication — OPEN. The equivalence policy
   is undecided, and an earlier draft of this bullet both overstated the
   resolution and rested on a false premise.**

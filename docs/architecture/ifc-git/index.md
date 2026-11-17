@@ -2,24 +2,24 @@
 
 **Spec set: Draft v0.1, for discussion. Owner: Bruno Adam. Tracking: [#8038](https://github.com/LTplus-AG/ifc-lite/issues/8038).**
 
-> **Status: early draft.** `01-concepts.md` and `02-graph-object-model.md` are
-> written; the rest of the reading map below is planned. This document states
-> the direction and names the decisions that still have to be made. Read §6
-> first if you are short of time: it is the part that needs an answer.
+> **Status: early draft.** `01-concepts.md`, `02-graph-object-model.md` and
+> `03-diff.md` are written; the rest of the reading map below is planned. This
+> document states the direction and names the decisions that still have to be
+> made. Read §6 first if you are short of time: it is the part that needs an
+> answer.
 >
-> **In-tree:** the Rust diff engine, landed under #8042 while this was in draft
-> (§8). That is the only part of this spec set implemented on `main`.
+> **In-tree:** the Rust diff engine, landed under #8042 (§8, documented in
+> `03-diff.md`), and the `rust/git` node layer (`ifc-lite-git`): content-addressed
+> nodes (#8265) and the keyed tree with the entity → node adapter (#9331). The
+> adapter covers an entity's data projection only; geometry, placement and
+> relationship nodes, and the commit object, are not implemented (`03-diff.md`
+> §3.9).
 >
-> **Not in this tree, and cited by revision rather than claimed:** a `rust/git`
-> crate exists on an external branch —
+> **Cited by revision:** the §6.1 benchmark and the `wasm32_simd` build
+> observations were made on
 > [`bruadam/ifc-lite@65b5982b7`](https://github.com/bruadam/ifc-lite/commit/65b5982b77c0794df588734c59cdd22c8e950c58),
-> branch `feat/rust-git-object-model`, not proposed upstream yet. Every
-> statement here about node encoding, chunk boundaries, the `wasm32_simd` build
-> or a measured count refers to **that revision** and **cannot be verified from
-> this PR**, whose tree contains no `rust/git`. Where such a claim appears it
-> names the file it came from. No runtime, browser or external-branch benchmark
-> is claimed: the §6.1 figures are a native micro-benchmark on one machine,
-> reported as such.
+> the branch `rust/git` was proposed from. They are a native micro-benchmark on
+> one machine, reported as such; no runtime or browser benchmark is claimed.
 
 ## 1. North star
 
@@ -219,14 +219,14 @@ The commit-aware source work stays parked and is **not a dependency**.
 
 ## 5. Reading map
 
-`01-concepts.md` and `02-graph-object-model.md` are written. The rest are
-planned, and land one per PR in roughly this order.
+`01-concepts.md`, `02-graph-object-model.md` and `03-diff.md` are written. The
+rest are planned, and land one per PR in roughly this order.
 
 | Doc | Contents |
 | --- | --- |
 | [`01-concepts.md`](01-concepts.md) | Glossary: org, repo, commit, tree, blob, ref, branch. Repo kinds. What maps onto git and what cannot. |
 | [`02-graph-object-model.md`](02-graph-object-model.md) | The node DAG. Node kinds and component keys. Canonical encoding. Why this is GUID-agnostic. |
-| `03-diff.md` | Diff as the delta-layer computer. Graph diff and change localisation. The Rust port and its parity contract. |
+| [`03-diff.md`](03-diff.md) | Diff as the delta-layer computer. Graph diff and change localisation. The Rust port and its parity contract. |
 | `04-authorship.md` | The schema-neutral authorship record and its per-schema adapters. Resolution ladder, warning codes, and the rule against fabricated attribution. |
 | `05-layer-adapter.md` | The hand-over: emitting a delta layer against a party's previous delivery, and recording the match in `identity_map`. |
 | `06-relationship-to-layer-prs.md` | The boundary in detail, and what ifc-git owes Layer PRs at the hand-over. |
@@ -538,7 +538,7 @@ WASM bindings and adapters (#8081), UTF-16-preserving document serde (#8104),
 and lossless typed fingerprint projections (#8105). `@ifc-lite/diff` now
 depends on `@ifc-lite/wasm` for that staged backend.
 
-So `03-diff.md` will document what shipped rather than proposing it, and the
+So `03-diff.md` documents what shipped rather than proposing it, and the
 GUID-agnostic identity of §2.2 builds on an engine whose behaviour is already
 pinned by parity fixtures.
 
@@ -546,9 +546,9 @@ pinned by parity fixtures.
 | --- | --- | --- |
 | 1 | **This docs skeleton** (`index.md` + mkdocs nav) | done |
 | 2 | Rust diff engine, ported byte-exact under #8042 | **done** (#8043 → #8105) |
-| 3 | `01-concepts.md`, `02-graph-object-model.md` | this PR |
-| 4 | `03-diff.md`, documenting the engine that landed in 2 | next |
-| 5 | Graph node model in Rust: GUID-agnostic node identity, with the shipped content-match tiers as its reconciliation fallback | after 4; §6.1 answered |
+| 3 | `01-concepts.md`, `02-graph-object-model.md` | done (#8039) |
+| 4 | `03-diff.md`, documenting the engine that landed in 2 | this PR |
+| 5 | Graph node model in Rust: GUID-agnostic node identity, with the shipped content-match tiers as its reconciliation fallback | **in progress**: nodes (#8265), tree and data adapter (#9331) done; geometry, placement and relationship nodes and the commit object open (`03-diff.md` §3.9, §3.10) |
 | 6 | Authorship extraction across the four schemas | after 5 |
 | 7 | ~~**Per-property change tracking**, replacing set-level `pset:<Name>` keys~~ | **struck** — not a prerequisite, and the writer is already member-level (§6.3) |
 | 8 | **Delivery → layer adapter**: emit a delta layer against the party's previous delivery, with the match recorded in `identity_map` | after 6; the hand-over point to Layer PRs |
