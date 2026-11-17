@@ -63,6 +63,7 @@ export function buildHelp(version: string): string {
     diff      <f1.ifc> <f2.ifc>                   Compare two IFC files
               [--by-content] [--identity-out F] [--identity-in F]  Match re-GUIDed elements by content; save/replay the identity map
               [--geometry] [--split-merge] [--successors]  Wasm mesh pass: world geometry hashes/boxes/volumes; split/merge + successor claims
+              [--json --changes]                  List every changed entity: key, state, change kinds, changed components
               [--lineage-out F] [--lineage-in F] [--accept F] [--key-from Tag|Pset.Prop]  Lineage for rekeying external data; authored key
     rekey     <table.csv|json> --lineage F --out F  Carry a table keyed on old element keys across a revision
     validate  <file.ifc>                          Structural validation checks

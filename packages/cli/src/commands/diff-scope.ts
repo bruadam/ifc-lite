@@ -169,6 +169,12 @@ export function* comparableEntities(store: IfcDataStore): Generator<ComparableEn
         // plan. Its GlobalId is in the STEP record, so read it there.
         source = readRootAttributes(extractor, store, expressId);
         globalId = source?.globalId ?? '';
+      } else if (globalId) {
+        // In the table, but the columnar parser fills Description and
+        // ObjectType only for groups (#1075) and leaves them '' for every
+        // product. The fingerprint hashes both, so read them from the STEP
+        // record too: otherwise an edit to either is invisible to the diff.
+        source = readRootAttributes(extractor, store, expressId);
       }
       // Still nothing: the entity is not an IfcRoot at all (a placement, a
       // profile, a representation item), so it has no cross-file identity.

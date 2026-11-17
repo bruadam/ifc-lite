@@ -654,6 +654,7 @@ ifc-lite diff model-v1.ifc model-v2.ifc --json
 | `--lineage-out <file>` | Write the lineage this run establishes (implies `--by-content`) |
 | `--lineage-in <file>` | Replay a lineage's 1:1 entries as key aliases and carry it forward (implies `--by-content`) |
 | `--accept <map.json>` | Fold reviewed claims into lineage: `successor:*` reasons become `replaced`; other accepted identities become `identity` |
+| `--changes` | With `--json`: add a `changes` array, one record per added, modified or deleted entity with its `key`, `state`, `ifcType`, `changeKinds` and `changedComponents` (implies `--by-content`) |
 | `--json` | JSON output |
 
 Without `--by-entity`, the command reports the schema, entity count, entity-count delta, and the per-type differences (sorted by the size of the delta). With `--by-entity` it adds the count of GlobalIds added, removed, and common between the two files.

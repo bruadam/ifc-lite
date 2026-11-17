@@ -1130,6 +1130,7 @@ Reports:
 | `--lineage-out <file>` | Write the lineage this comparison establishes, for `rekey` (implies `--by-content`) |
 | `--lineage-in <file>` | Replay a lineage's one-to-one entries and carry the rest forward (implies `--by-content`) |
 | `--accept <map.json>` | Fold reviewed claims into lineage: `successor:*` reasons become `replaced`; other accepted identities become `identity` |
+| `--changes` | With `--json`: add a `changes` array, one record per added, modified or deleted entity with its `key`, `state`, `ifcType`, `changeKinds` and `changedComponents` (implies `--by-content`) |
 | `--json` | JSON output |
 
 Both comparison modes cover the same entities: every `IfcObjectDefinition` in the file. See [what gets compared](#what-gets-compared) below.

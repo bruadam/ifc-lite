@@ -100,6 +100,7 @@ describe('diffCommand', () => {
         geometry: false,
         splitMerge: false,
         successors: false,
+        changes: false,
         json: false,
       });
     });
@@ -127,8 +128,30 @@ describe('diffCommand', () => {
         geometry: false,
         splitMerge: false,
         successors: false,
+        changes: false,
         json: true,
       });
+    });
+
+    it('routes --json --changes to the engine path with changes on', async () => {
+      await diffCommand(['a.ifc', 'b.ifc', '--json', '--changes']);
+      expect(contentDiffCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ changes: true, json: true }),
+      );
+    });
+
+    it('refuses --changes without --json: the records exist only in the JSON report', async () => {
+      const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`exit ${code}`);
+      }) as never);
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await expect(diffCommand(['a.ifc', 'b.ifc', '--changes'])).rejects.toThrow(/exit/);
+        expect(contentDiffCommand).not.toHaveBeenCalled();
+      } finally {
+        exit.mockRestore();
+        stderr.mockRestore();
+      }
     });
 
     it('implies the engine path from --identity-in alone', async () => {

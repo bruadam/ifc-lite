@@ -91,11 +91,15 @@ export async function diffCommand(args: string[]): Promise<void> {
   const geometry = hasFlag(args, '--geometry');
   const splitMerge = hasFlag(args, '--split-merge');
   const successors = hasFlag(args, '--successors');
+  // `--changes` lists each changed entity; it only exists on the engine path.
+  const changes = hasFlag(args, '--changes');
+  if (changes && !jsonOutput) fatal('--changes requires --json');
   if (
     hasFlag(args, '--by-content') ||
     geometry ||
     splitMerge ||
     successors ||
+    changes ||
     [identityOut, identityIn, lineageOut, lineageIn, accept, keyFrom].some((v) => v !== undefined)
   ) {
     await contentDiffCommand({
@@ -110,6 +114,7 @@ export async function diffCommand(args: string[]): Promise<void> {
       geometry,
       splitMerge,
       successors,
+      changes,
       json: jsonOutput,
     });
     return;

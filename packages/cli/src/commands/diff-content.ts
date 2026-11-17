@@ -59,6 +59,7 @@ import { readModel, refuseOverwritingAnInput, unwrapModel } from './diff-content
 import { resolveGeometryScope } from './diff-geometry.js';
 import { mergeAliases, mergeLineage, readVerifiedLineage } from './diff-lineage-io.js';
 import { printReport } from './diff-content-report.js';
+import { changeRecords } from './diff-content-changes.js';
 
 export interface ContentDiffOptions {
   basePath: string;
@@ -86,6 +87,8 @@ export interface ContentDiffOptions {
   /** `--successors`: opt in to the successor-match detector. Only produces
    *  claims together with `--geometry` (issue #4956). */
   successors?: boolean;
+  /** `--changes`: add one record per changed entity to the JSON output. */
+  changes?: boolean;
   json: boolean;
 }
 
@@ -265,6 +268,8 @@ export async function contentDiffCommand(options: ContentDiffOptions): Promise<v
       },
       keyProperty: keyProperty ?? null,
       duplicateAuthoredKeys: [...duplicateAuthoredKeys.keys()],
+      // Opt-in: absent unless asked for, so the default document is unchanged.
+      changes: options.changes ? changeRecords(diff) : undefined,
     });
     return;
   }
