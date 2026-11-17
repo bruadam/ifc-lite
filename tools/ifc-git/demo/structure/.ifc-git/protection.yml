@@ -1,0 +1,7 @@
+branches:
+  main:
+    require_pull_request: true
+    required_checks:
+      - structural-checks/validate
+      - structural-checks/ids
+    required_approvals: 1

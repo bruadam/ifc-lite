@@ -1,0 +1,6 @@
+{
+  "models": ["../models/house.ifc"],
+  "structural": true,
+  "ids": ["../specs/architecture.ids"],
+  "rules": ["../rules/naming.rules.json"]
+}

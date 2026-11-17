@@ -1,0 +1,4 @@
+name: house-architecture
+discipline: architecture
+models:
+  - models/house.ifc

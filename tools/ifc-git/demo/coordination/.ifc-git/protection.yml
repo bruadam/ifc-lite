@@ -1,0 +1,6 @@
+branches:
+  main:
+    require_pull_request: true
+    required_checks:
+      - coordination/federated-clash
+    required_approvals: 1

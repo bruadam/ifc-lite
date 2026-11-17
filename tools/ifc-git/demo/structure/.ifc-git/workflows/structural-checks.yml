@@ -1,0 +1,29 @@
+name: Structural checks
+
+on:
+  push:
+    paths: ['**/*.ifc', 'specs/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    steps:
+      - uses: ifc-lite/validate
+        with:
+          model: ${{ project.models }}
+
+  ids:
+    needs: validate
+    steps:
+      - uses: ifc-lite/ids
+        with:
+          model: ${{ project.models }}
+          ids: specs/structure.ids
+
+  changes:
+    if: ${{ event == 'pull_request' }}
+    steps:
+      - uses: ifc-lite/diff
+        with:
+          model: ${{ project.models }}

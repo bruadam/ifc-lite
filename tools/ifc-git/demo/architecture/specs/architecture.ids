@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ids xmlns="http://standards.buildingsmart.org/IDS" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://standards.buildingsmart.org/IDS http://standards.buildingsmart.org/IDS/1.0/ids.xsd">
+  <info>
+    <title>House architecture: information requirements</title>
+    <description>Demo IDS for the ifc-git workflow walkthrough.</description>
+    <author>ifc-lite@example.com</author>
+  </info>
+  <specifications>
+    <specification name="Spaces are named" ifcVersion="IFC4">
+      <applicability>
+        <entity><name><simpleValue>IFCSPACE</simpleValue></name></entity>
+      </applicability>
+      <requirements>
+        <attribute><name><simpleValue>Name</simpleValue></name></attribute>
+      </requirements>
+    </specification>
+    <specification name="Walls state whether they are external" ifcVersion="IFC4">
+      <applicability>
+        <entity><name><simpleValue>IFCWALL</simpleValue></name></entity>
+      </applicability>
+      <requirements>
+        <property dataType="IFCBOOLEAN">
+          <propertySet><simpleValue>Pset_WallCommon</simpleValue></propertySet>
+          <baseName><simpleValue>IsExternal</simpleValue></baseName>
+        </property>
+      </requirements>
+    </specification>
+    <specification name="Building element proxies declare an ObjectType" ifcVersion="IFC4">
+      <applicability>
+        <entity><name><simpleValue>IFCBUILDINGELEMENTPROXY</simpleValue></name></entity>
+      </applicability>
+      <requirements>
+        <attribute><name><simpleValue>ObjectType</simpleValue></name></attribute>
+      </requirements>
+    </specification>
+  </specifications>
+</ids>

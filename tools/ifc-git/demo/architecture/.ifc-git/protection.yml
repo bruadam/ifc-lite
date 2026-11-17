@@ -1,0 +1,16 @@
+# Branch protection, read from the base branch: a pull request cannot relax
+# the rules that gate it.
+branches:
+  main:
+    require_pull_request: true
+    required_checks:
+      - model-checks/validate
+      - model-checks/ids
+      - model-checks/consistency
+    required_approvals: 1
+    dismiss_stale_approvals: true
+  release/**:
+    require_pull_request: true
+    required_checks:
+      - model-checks/ids
+    required_approvals: 1

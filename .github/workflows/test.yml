@@ -511,6 +511,8 @@ jobs:
               - 'tools/ifc-git-corpus/**'
               # The history walker and its fast-lane Node guard tests.
               - 'tools/ifc-history/**'
+              # The ifc-git workflow runner and its fast-lane Node guard tests.
+              - 'tools/ifc-git/**'
               - 'tests/integration.test.ts'
               # The tsconfig BOTH `pnpm test:integration` and `pnpm test:api`
               # compile against (`tsx --tsconfig tests/tsconfig.json`). Same
@@ -2016,6 +2018,8 @@ jobs:
       # The scripts/ test catch-all runs in its own job, `scripts-tests`.
       - name: Exercise IFC git history walk against the real CLI
         run: node --test tools/ifc-history/*.test.mjs
+      - name: Exercise ifc-git workflows against the real CLI
+        run: node --test tools/ifc-git/*.test.mjs
       # Committed codegen output (packages/codegen/generated/**,
       # packages/parser/src/generated/**, packages/data/src/ifc-schema/
       # generated/**) had no CI freshness gate at all — a generator bug fixed

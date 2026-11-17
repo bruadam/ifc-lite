@@ -1,0 +1,49 @@
+name: Model checks
+
+on:
+  push:
+    paths: ['**/*.ifc', 'specs/**', 'rules/**', '.ifc-git/**']
+  pull_request:
+    branches: [main, 'release/**']
+
+jobs:
+  # Is each model a well-formed IFC file? One variant per delivered model.
+  validate:
+    strategy:
+      matrix:
+        model: ${{ project.models }}
+    steps:
+      - uses: ifc-lite/validate
+        with:
+          model: ${{ matrix.model }}
+
+  # Does the model carry the information the project requires (buildingSMART IDS)?
+  ids:
+    needs: validate
+    steps:
+      - uses: ifc-lite/ids
+        with:
+          model: ${{ project.models }}
+          ids: specs/architecture.ids
+
+  # Project consistency rules, the same engine as the viewer's Data Validation panel.
+  consistency:
+    needs: validate
+    steps:
+      - uses: ifc-lite/check
+        with:
+          model: ${{ project.models }}
+          rules: rules/naming.rules.json
+
+  # On a pull request: what does this delivery change, element by element?
+  changes:
+    if: ${{ event == 'pull_request' }}
+    steps:
+      - uses: ifc-lite/diff
+        with:
+          model: ${{ project.models }}
+      - name: Count walls in the proposed model
+        run: |
+          walls=$(ifc-lite query models/house.ifc --type IfcWall --count)
+          echo "walls=$walls" >> "$IFC_GIT_OUTPUT"
+          echo "the proposed model has $walls walls"

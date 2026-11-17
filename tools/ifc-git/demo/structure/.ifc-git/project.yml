@@ -1,0 +1,4 @@
+name: house-structure
+discipline: structure
+models:
+  - models/structure.ifc

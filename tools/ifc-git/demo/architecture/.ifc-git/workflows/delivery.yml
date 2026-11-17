@@ -1,0 +1,14 @@
+name: Delivery package
+
+# A release branch is a formal delivery (a design stage, a permit submission).
+# Pushing it runs the full, versioned delivery recipe and keeps the HTML report.
+on:
+  push:
+    branches: ['release/**']
+
+jobs:
+  delivery:
+    steps:
+      - uses: ifc-lite/delivery
+        with:
+          recipe: delivery/recipe.json

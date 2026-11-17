@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "name": "Naming consistency",
+  "description": "Demo rule set for the ifc-git walkthrough: every wall and slab carries a non-empty Name.",
+  "rules": [
+    {
+      "id": "wall-name-required",
+      "name": "Walls must have a non-empty Name",
+      "applicability": {
+        "groups": [
+          { "rules": [{ "kind": "ifcType", "values": ["IfcWall"], "op": "in" }], "combinator": "AND" }
+        ],
+        "authoredAs": "chips"
+      },
+      "requirement": {
+        "kind": "element",
+        "block": {
+          "groups": [
+            { "rules": [{ "kind": "name", "op": "ne", "value": "" }], "combinator": "AND" }
+          ],
+          "authoredAs": "chips"
+        }
+      }
+    },
+    {
+      "id": "slab-name-required",
+      "name": "Slabs must have a non-empty Name",
+      "applicability": {
+        "groups": [
+          { "rules": [{ "kind": "ifcType", "values": ["IfcSlab"], "op": "in" }], "combinator": "AND" }
+        ],
+        "authoredAs": "chips"
+      },
+      "requirement": {
+        "kind": "element",
+        "block": {
+          "groups": [
+            { "rules": [{ "kind": "name", "op": "ne", "value": "" }], "combinator": "AND" }
+          ],
+          "authoredAs": "chips"
+        }
+      }
+    }
+  ]
+}

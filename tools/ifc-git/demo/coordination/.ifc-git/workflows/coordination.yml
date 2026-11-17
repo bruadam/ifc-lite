@@ -1,0 +1,36 @@
+name: Coordination
+
+# Runs on the exact deliveries pinned in .ifc-git/federation.lock.json.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  federated-clash:
+    steps:
+      - id: federate
+        uses: ifc-lite/federate
+        with:
+          from-lock: true
+          out: federated.ifc
+          unit-reconciliation: normalize
+      - uses: ifc-lite/clash
+        with:
+          model: ${{ steps.federate.outputs.path }}
+          a: 'IfcBeam*|IfcColumn*'
+          b: 'IfcWall*|IfcSlab*|IfcRoof*'
+          bcf: clashes.bcfzip
+
+  federated-validate:
+    steps:
+      - uses: ifc-lite/federate
+        id: federate
+        with:
+          from-lock: true
+          out: federated.ifc
+          unit-reconciliation: normalize
+      - uses: ifc-lite/validate
+        with:
+          model: ${{ steps.federate.outputs.path }}

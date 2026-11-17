@@ -1,0 +1,12 @@
+# The discipline repositories this coordination model federates. Each one is
+# pinned to an exact commit in federation.lock.json; moving a pin is a pull
+# request, opened by `ifc-git federation update`.
+projects:
+  architecture:
+    repo: ../architecture
+    branch: main
+    models: [models/house.ifc]
+  structure:
+    repo: ../structure
+    branch: main
+    models: [models/structure.ifc]
